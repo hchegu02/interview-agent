@@ -1,6 +1,6 @@
 # Interview Agent
 
-> 自研轻量 Graph 驱动的智能面试评估系统 | Go · Gin · PostgreSQL+pgvector · Redis · LLM/RAG
+>  Graph 驱动的智能面试评估系统 | Go · Gin · PostgreSQL+pgvector · Redis · LLM/RAG
 
 智能面试训练 Agent，通过 LLM + RAG 解决求职者备战面试时缺乏针对性训练、反馈滞后的痛点。系统围绕岗位画像、个性化出题、动态评估和复盘报告构建完整模拟面试流程。
 
@@ -17,15 +17,11 @@
 - 会话 API：`GET /api/interview/sessions`、`GET /api/interview/sessions/:session_id`
 - SSE 流式响应：`GET /api/interview/stream?session_id=...`，支持 snapshot、heartbeat 和 `Last-Event-ID`
 - Redis Streams 事件总线：设置 `INTERVIEW_REDIS_URL` 后启用
-- Redis session coordinator：支持 session snapshot、lease、跨实例 takeover 和 lease 冲突 409
 - PG session store：配置 `INTERVIEW_POSTGRES_DSN` 后保存到 `sessions.state_json`
-- Real LLM 保护：进程内并发 limiter、熔断器、入口 start/answer 背压
-- SSE 长连接背压：`server.max_streams` 独立限制 `/api/interview/stream`
-- Demo CLI：`cmd/demo` 可用 YAML 脚本驱动完整 graph，输出 `run.json` 和 `report.md`
 - 离线题库工具：`cmd/reindex`
 - Smoke 脚本：`make demo` 调用 `scripts/smoke.sh`，覆盖健康检查与 start/answer
 
-仍未完成：Prometheus / OTel metrics、跨多次 demo 的 prompt regression diff。
+仍未完成：Redis session 快照/接管、限流/熔断/背压、压测脚本和真实端到端演示。
 
 ## 快速启动
 
@@ -43,31 +39,6 @@ curl http://localhost:8080/api/ping
 ```
 
 `make demo` 会构建并启动本地服务，然后检查 `/healthz`、`/readyz`、`/api/ping`，并用 mock 模式跑一轮 `interview/start`、`sessions/:id`、`interview/answer`、`sessions?user_id=...`。
-
-结构化端到端 demo 可直接跑 CLI，不启 HTTP，也不依赖 PG / Redis：
-
-```bash
-make demo-mock
-```
-
-Windows / PowerShell 没有 `make` 时可用等价命令：
-
-```powershell
-$env:INTERVIEW_LLM_MODE="mock"
-$env:INTERVIEW_EMBEDDING_MODE="mock"
-go run ./cmd/demo -config config/config.yaml.example -script testdata/demo/example.yaml
-```
-
-真实 LLM demo 需要操作者本地设置 provider 环境变量：
-
-```bash
-export INTERVIEW_LLM_API_KEY=sk-xxx
-export INTERVIEW_LLM_BASE_URL=https://...
-export INTERVIEW_LLM_MODEL=qwen-plus
-make demo-real
-```
-
-demo 产物默认写到 `tmp/demos/{timestamp}/run.json` 和 `tmp/demos/{timestamp}/report.md`，用于检查 LLM latency、token、schema retry、节点耗时、熔断状态和最终报告质量。
 
 如果服务已经手动启动，可只跑 HTTP 检查：
 
@@ -166,7 +137,7 @@ curl "http://localhost:8080/api/interview/sessions/demo-1?user_id=u1"
 Redis session coordinator 已接入 `InterviewService`：设置 `INTERVIEW_REDIS_URL` 后，`start` 会获取 session lease 并写 snapshot，`get/answer` 在本地 store miss 时会从 Redis snapshot 恢复，`answer` 会续约或重新获取过期 lease，成功后更新 snapshot；会话完成后释放 lease。Redis lease 冲突会返回 HTTP 409，并带 `Retry-After` / `retry_after_seconds`。
 Redis snapshot 写入失败不会打断 start/answer 主流程；服务会在 `WorkingMemory.DegradedReasons["redis_snapshot"]` 记录原因，并继续依赖 PG / 内存 session store。Redis lease acquire / renew 失败仍会阻断，因为它关系到多实例所有权。
 Redis / memory event hub 会记录 publish 失败和慢消费者丢事件计数；事件推送失败不阻断 interview 主流程。
-Real LLM 模式会套进程内并发限制和熔断器：`llm.max_concurrency` 默认 4；等待并发闸门时会尊重 request context；breaker open 时 `/readyz` 返回 degraded 而不是 503。HTTP 入口背压覆盖 `start` / `answer`，超限返回 503 + `Retry-After`。SSE 长连接使用独立 `server.max_streams`，避免长连接占用短请求容量。
+Real LLM 模式会套进程内并发限制，配置项为 `llm.max_concurrency`，默认 4；等待并发闸门时会尊重请求 context。
 
 ## 测试
 
@@ -208,21 +179,7 @@ make migrate-up
 go run ./cmd/reindex -seed seeds/question_bank.json -mode mock
 ```
 
-Real embedding 模式需要设置 `INTERVIEW_EMBEDDING_API_KEY`，且 embedding 维度必须和 `question_bank.embedding` 的 `vector(N)` 一致。当前 migration 使用 `vector(1024)`，默认模型为 DashScope `text-embedding-v4`。
-
-本地 BGE-M3 也可以用，只要服务暴露 OpenAI-compatible `/embeddings`：
-
-```powershell
-$env:INTERVIEW_EMBEDDING_MODE="real"
-$env:INTERVIEW_EMBEDDING_API_KEY="dummy"
-$env:INTERVIEW_EMBEDDING_BASE_URL="http://localhost:8000/v1"
-$env:INTERVIEW_EMBEDDING_MODEL="BAAI/bge-m3"
-$env:INTERVIEW_EMBEDDING_DIMENSION="1024"
-
-go run ./cmd/reindex -seed seeds/question_bank.json -mode real -base-url http://localhost:8000/v1 -model BAAI/bge-m3 -dim 1024
-```
-
-题库 reindex 和服务查询必须使用同一个 embedding 模型；不要在同一张 `question_bank` 表里混不同模型的向量。
+Real embedding 模式需要设置 `INTERVIEW_EMBEDDING_API_KEY`，且 embedding 维度必须和 `question_bank.embedding` 的 `vector(N)` 一致。
 
 ## 目录索引
 
