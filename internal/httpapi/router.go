@@ -42,6 +42,8 @@ func (s *Server) Router() *gin.Engine {
 	r := gin.New()
 	r.Use(TraceIDMiddleware(), gin.Recovery())
 
+	s.registerWebRoutes(r)
+
 	r.GET("/healthz", s.healthz)
 	r.GET("/readyz", s.readyz)
 

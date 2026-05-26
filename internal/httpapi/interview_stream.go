@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+
+	"interview-agent/internal/domain"
 )
 
 const interviewSSEHeartbeatInterval = 15 * time.Second
@@ -88,7 +90,8 @@ func writeInterviewSSE(w http.ResponseWriter, event InterviewEvent) error {
 	if event.Type == "" {
 		event.Type = interviewEventSnapshot
 	}
-	raw, err := json.Marshal(event)
+	publicEvent := buildInterviewStreamEvent(event)
+	raw, err := json.Marshal(publicEvent)
 	if err != nil {
 		return err
 	}
@@ -97,13 +100,71 @@ func writeInterviewSSE(w http.ResponseWriter, event InterviewEvent) error {
 			return err
 		}
 	}
-	if _, err := fmt.Fprintf(w, "event: %s\n", event.Type); err != nil {
+	if _, err := fmt.Fprintf(w, "event: %s\n", publicEvent.Type); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(w, "data: %s\n\n", raw); err != nil {
 		return err
 	}
 	return nil
+}
+
+type interviewStreamEvent struct {
+	ID        string                  `json:"id,omitempty"`
+	Type      string                  `json:"type"`
+	SessionID string                  `json:"session_id"`
+	UserID    string                  `json:"user_id,omitempty"`
+	Mode      string                  `json:"mode,omitempty"`
+	Status    string                  `json:"status,omitempty"`
+	Phase     string                  `json:"phase,omitempty"`
+	Progress  []interviewProgressStep `json:"progress,omitempty"`
+	Question  *interviewQuestion      `json:"question,omitempty"`
+	Rounds    []interviewRound        `json:"rounds,omitempty"`
+	Report    *domain.Report          `json:"report,omitempty"`
+	Error     string                  `json:"error,omitempty"`
+	CreatedAt time.Time               `json:"created_at,omitempty"`
+	UpdatedAt time.Time               `json:"updated_at,omitempty"`
+	At        time.Time               `json:"at"`
+}
+
+func buildInterviewStreamEvent(event InterviewEvent) interviewStreamEvent {
+	eventType := publicInterviewEventType(event.Type)
+	out := interviewStreamEvent{
+		ID:        event.ID,
+		Type:      eventType,
+		SessionID: event.SessionID,
+		UserID:    event.UserID,
+		Mode:      normalizeInterviewMode(event.Mode),
+		Status:    event.Status,
+		Phase:     event.Phase,
+		Progress:  event.Progress,
+		Question:  buildInterviewQuestion(event.Question, false),
+		Rounds:    event.Rounds,
+		Report:    cloneReport(event.Report),
+		CreatedAt: event.CreatedAt,
+		UpdatedAt: event.UpdatedAt,
+		At:        event.At,
+	}
+	if out.Phase == "" {
+		out.Phase = "preparing"
+	}
+	if event.Type == interviewEventSessionFailed || event.Type == interviewEventNodeError {
+		out.Error = "面试流程暂时无法继续，请稍后重试"
+	}
+	return out
+}
+
+func publicInterviewEventType(eventType string) string {
+	switch eventType {
+	case interviewEventSnapshot:
+		return "snapshot"
+	case interviewEventSessionCompleted:
+		return "interview.completed"
+	case interviewEventSessionFailed, interviewEventNodeError:
+		return "interview.failed"
+	default:
+		return "interview.progress"
+	}
 }
 
 func writeInterviewSSEComment(w http.ResponseWriter, comment string) error {

@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 
@@ -88,6 +91,58 @@ func TestBuildInterviewService_NoPostgresUsesMemoryStore(t *testing.T) {
 	defer cleanupSvc()
 	if svc == nil {
 		t.Fatal("expected service")
+	}
+}
+
+func TestBuildInterviewService_IgnoresTypedNilCoordinator(t *testing.T) {
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.PostgresDSN = ""
+	cfg.LLM.Mode = "mock"
+	cfg.Embedding.Mode = "mock"
+
+	events := httpapi.NewMemoryInterviewEventHub(16)
+	deps, cleanupDeps, err := buildAppDeps(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("build deps: %v", err)
+	}
+	defer cleanupDeps()
+
+	runner, cleanupRunner, err := buildInterviewRunner(context.Background(), cfg, deps, events)
+	if err != nil {
+		t.Fatalf("build runner: %v", err)
+	}
+	defer cleanupRunner()
+
+	var nilCoordinator *httpapi.RedisSessionCoordinator
+	svc, cleanupSvc, err := buildInterviewService(context.Background(), cfg, deps, runner.runner, events, nilCoordinator)
+	if err != nil {
+		t.Fatalf("build service: %v", err)
+	}
+	defer cleanupSvc()
+
+	server := httpapi.NewServerWithInterview(cfg, svc)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/interview/start", bytes.NewBufferString(`{
+		"session_id":"typed-nil-coordinator",
+		"user_id":"u1",
+		"jd_text":"需要 Go 后端工程师",
+		"resume_text":"两年 Go 后端经验"
+	}`))
+	req.Header.Set("Content-Type", "application/json")
+	server.Router().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("start should ignore typed nil coordinator: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	sess, err := svc.Get(context.Background(), "typed-nil-coordinator")
+	if err != nil {
+		t.Fatalf("get session: %v", err)
+	}
+	if sess.WorkingMemory.DegradedReasons["redis_snapshot"] != "" {
+		t.Fatalf("typed nil coordinator should not mark redis degraded: %+v", sess.WorkingMemory.DegradedReasons)
 	}
 }
 

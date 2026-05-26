@@ -46,8 +46,9 @@ func (s SessionStatus) Validate() error {
 //   - 加 PendingDecision：pick_next 决策后等用户答题时挂在这里
 //   - 加 CandidatePool：retrieve_rag 召回的题库候选（Agent 从中选）
 type Session struct {
-	ID          string        `json:"id"`           // ULID
+	ID          string        `json:"id"` // ULID
 	UserID      string        `json:"user_id"`
+	Mode        string        `json:"mode,omitempty"` // exam | practice，前端业务模式
 	Status      SessionStatus `json:"status"`
 	CurrentNode string        `json:"current_node"` // graph 节点名，断点恢复用
 
@@ -103,12 +104,12 @@ type JobProfile struct {
 
 // CandidateProfile 是候选人画像，由 LLM 从简历文本中抽取。
 type CandidateProfile struct {
-	Years         int               `json:"years"`
-	Skills        []string          `json:"skills"`
-	WeakSkills    []string          `json:"weak_skills"`     // 与 JobProfile.KeySkills 取差集
-	Projects      []ResumeProject   `json:"projects"`        // 简历项目经历
-	Highlights    []string          `json:"highlights"`      // 可被 dynamic probing 的"亮点"短语
-	ResumeRawText string            `json:"resume_raw_text"`
+	Years         int             `json:"years"`
+	Skills        []string        `json:"skills"`
+	WeakSkills    []string        `json:"weak_skills"` // 与 JobProfile.KeySkills 取差集
+	Projects      []ResumeProject `json:"projects"`    // 简历项目经历
+	Highlights    []string        `json:"highlights"`  // 可被 dynamic probing 的"亮点"短语
+	ResumeRawText string          `json:"resume_raw_text"`
 }
 
 // ResumeProject 是简历里一段项目经历，给 dynamic probing 节点用。
@@ -159,7 +160,7 @@ type GapReport struct {
 // Question 是一道面试题。
 // Source 标识来源："rag-<id>" 表示题库种子，"llm-generated" 表示 LLM 改编。
 type Question struct {
-	ID         string   `json:"id"`         // ULID 或题库 ID
+	ID         string   `json:"id"` // ULID 或题库 ID
 	Content    string   `json:"content"`
 	Tags       []string `json:"tags"`
 	Difficulty int      `json:"difficulty"` // 1-5
@@ -175,7 +176,7 @@ type Question struct {
 // Evaluation 是单题评估结果。
 type Evaluation struct {
 	QuestionID string   `json:"question_id"`
-	Score      int      `json:"score"`      // 0-100
+	Score      int      `json:"score"` // 0-100
 	Strengths  []string `json:"strengths"`
 	Weaknesses []string `json:"weaknesses"`
 	Suggestion string   `json:"suggestion"`

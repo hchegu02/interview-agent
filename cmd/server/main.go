@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"reflect"
 	"syscall"
 	"time"
 
@@ -151,16 +152,27 @@ func buildAppDeps(ctx context.Context, cfg *config.Config) (appDeps, func(), err
 }
 
 func buildInterviewService(ctx context.Context, cfg *config.Config, deps appDeps, runner *graph.Runnable, events httpapi.InterviewEventHub, coordinators ...httpapi.SessionCoordinator) (*httpapi.InterviewService, func(), error) {
-	var coordinator httpapi.SessionCoordinator
-	if len(coordinators) > 0 {
-		coordinator = coordinators[0]
-	}
+	coordinator := firstNonNilCoordinator(coordinators)
 	ownerID := hostnameOwnerID()
 	if deps.PGPool == nil {
 		return httpapi.NewInterviewServiceWithStoreEventsAndCoordinator(runner, httpapi.NewMemorySessionStore(), events, coordinator, ownerID), func() {}, nil
 	}
 	store := httpapi.NewPGSessionStore(deps.PGPool, 24*time.Hour)
 	return httpapi.NewInterviewServiceWithStoreEventsAndCoordinator(runner, store, events, coordinator, ownerID), func() {}, nil
+}
+
+func firstNonNilCoordinator(coordinators []httpapi.SessionCoordinator) httpapi.SessionCoordinator {
+	for _, coordinator := range coordinators {
+		if coordinator == nil {
+			continue
+		}
+		v := reflect.ValueOf(coordinator)
+		if v.Kind() == reflect.Pointer && v.IsNil() {
+			continue
+		}
+		return coordinator
+	}
+	return nil
 }
 
 func buildInterviewEventHub(ctx context.Context, cfg *config.Config) (httpapi.InterviewEventHub, func(), error) {
