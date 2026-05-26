@@ -1,0 +1,54 @@
+job_profile:
+  jd_text: |
+    Go 后端工程师（中级），1-3 年经验。
+    必需技能：Go、Redis、PostgreSQL、HTTP/gRPC、Linux。
+    加分项：Kafka、Kubernetes、可观测性（Prometheus / OpenTelemetry）。
+    日常工作：维护订单与用户中心服务、做接口性能优化、参与稳定性建设。
+candidate:
+  resume_text: |
+    工作经历：
+    - 2024 年至今，X 公司，后端开发工程师，主要用 Go 写订单服务。
+      负责接口性能优化（P99 从 800ms 降到 120ms），用了 Redis 缓存 + 异步任务。
+    - 项目：基于 Go + Redis + Postgres 的库存秒杀系统，QPS 5k，使用 Lua 脚本做原子扣减。
+    技能栈：Go、Redis、PostgreSQL、Kafka 基础、Linux 调优、Prometheus 监控。
+answers:
+  - |
+    GMP 调度模型：G 是 goroutine，运行用户代码；M 是操作系统线程，真正跑指令；
+    P 是处理器逻辑单元，持有可运行 G 的本地队列。M 必须绑定 P 才能跑 G。
+    P 的数量等于 GOMAXPROCS。runtime 用 work-stealing 把 G 调度到空闲 P 上跑，
+    解决了纯 GM 模型下的全局锁争用问题。
+  - |
+    具体来说，当一个 P 的本地队列为空时，它会先尝试从全局队列取一批 G；
+    如果全局队列也空，就随机从其他 P 的本地队列偷一半。这样保证负载均衡。
+    另外 network poller 会把就绪的 G 放到全局队列，不阻塞任何 P。
+    系统调用时 M 会和 P 解绑，P 可以被其他 M 抢走继续跑 G。
+  - |
+    Redis 缓存击穿主要靠：1) 互斥锁 / singleflight 让一个请求回源、其他等结果；
+    2) 永不过期 + 后台异步刷新；3) 提前预热。我们订单服务用 singleflight 做。
+    缓存雪崩用过期时间加随机抖动避免同时失效。穿透用布隆过滤器拦空 key。
+  - |
+    singleflight 的实现原理是用 sync.Mutex + map[key]*call 做请求合并。
+    第一个请求真正执行，后续相同 key 的请求阻塞在同一个 WaitGroup 上。
+    完成后唤醒所有等待者共享结果。我们用 golang.org/x/sync/singleflight 包。
+    需要注意超时控制：如果回源太慢，所有等待者都会卡住，所以要配合 context 超时。
+  - |
+    秒杀场景下扣减库存的关键是原子性 + 限流。我们的做法：
+    Lua 脚本里先 GET 库存、判断 >0、再 DECR，整个动作原子。
+    Lua 之外用本地 token bucket + Redis cluster 做分布式限流。
+    最后写订单走异步队列（Kafka），保证 Redis 扣减成功就立刻返回成功。
+  - |
+    Kafka 消费端保证幂等：每条消息带唯一订单号，消费者先查 DB 是否已处理。
+    用 PostgreSQL 的 INSERT ON CONFLICT DO NOTHING 做去重。
+    消费失败走 DLQ（死信队列），人工告警兜底。offset 手动提交，处理完一批才 commit。
+    分区策略按 user_id hash，保证同用户订单顺序消费。
+  - |
+    PostgreSQL 慢查询优化经验：先用 EXPLAIN ANALYZE 看执行计划，确认是否走索引。
+    常见问题是 Seq Scan 出现在大表上——加合适的 B-tree 或复合索引。
+    我们把订单表按月做了分区（range partition on created_at），查询只扫描相关分区。
+    连接池用 pgbouncer，transaction mode，避免后端连接数爆炸。
+  - |
+    接口性能优化 P99 从 800ms 降到 120ms 的做法：
+    1) 数据库层加索引 + 去掉 N+1 查询改为 batch IN 查询；
+    2) 热点数据加 Redis 缓存，TTL 30s + singleflight 防击穿；
+    3) 非核心路径走异步（写审计日志用 channel + 后台 goroutine 批写）；
+    4) 用 pprof 发现 JSON 序列化占 15% CPU，换成 sonic 库后降到 3%。

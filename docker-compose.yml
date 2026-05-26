@@ -1,0 +1,61 @@
+# Compose Spec 不再要求 version 字段，去掉以消除 obsolete 警告。
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: interview
+      POSTGRES_PASSWORD: interview
+      POSTGRES_DB: interview
+    ports: ["5432:5432"]
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U interview"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports: ["6379:6379"]
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # 多实例模拟：app1/app2/app3 共享 PG + Redis，前置 nginx 做轮询
+  # 阶段 8 压测时跑：docker compose --profile cluster up
+  app1: &app
+    profiles: ["cluster"]
+    build: .
+    environment:
+      INTERVIEW_POSTGRES_DSN: postgres://interview:interview@postgres:5432/interview?sslmode=disable
+      INTERVIEW_REDIS_ADDR: redis:6379
+      INTERVIEW_LLM_MODE: mock
+      INTERVIEW_RATELIMIT_BACKEND: redis_lua
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  app2:
+    <<: *app
+
+  app3:
+    <<: *app
+
+  nginx:
+    profiles: ["cluster"]
+    image: nginx:1.27-alpine
+    ports: ["8080:80"]
+    volumes:
+      - ./chaos/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on: [app1, app2, app3]
+
+volumes:
+  pgdata:

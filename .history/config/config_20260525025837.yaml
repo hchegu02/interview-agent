@@ -1,0 +1,43 @@
+server:
+  addr: ":8080"
+  read_timeout: 15s
+  write_timeout: 60s        # SSE 长连接需要较大
+  shutdown_grace: 30s
+  max_in_flight: 200        # 入口背压阈值
+
+postgres:
+  max_conns: 50             # ≈ 单机 LLM 并发 × 1.5
+  min_conns: 5
+  max_conn_lifetime: 30m
+  health_check_period: 1m
+
+redis:
+  db: 0
+  pool_size: 400            # SSE + state + 限流 ≈ MaxInFlight × 2
+  min_idle_conns: 20
+  dial_timeout: 3s
+  key_prefix: "interview:"
+
+llm:
+  mode: mock                # mock | real（real 模式必须设 INTERVIEW_LLM_API_KEY）
+  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  model: "qwen-plus"
+  fallback_model: "qwen-turbo"
+  timeout: 30s
+  max_tokens: 1200
+  max_retries: 2
+  max_concurrency: 4        # 单进程 LLM 并发上限，保护上游 provider
+
+embedding:
+  mode: mock
+  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  model: "text-embedding-v2"
+  dimension: 768            # 必须与 migrations/001_init.sql vector(768) 一致
+  timeout: 10s
+
+rate_limit:
+  backend: local            # local | redis_lua（多实例部署用 redis_lua）
+  per_user_qps: 0.5         # LLM 调用昂贵，单用户 2s 一次
+  per_user_burst: 3
+  global_qps: 20
+  global_burst: 40

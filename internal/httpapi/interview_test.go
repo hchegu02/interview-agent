@@ -1,0 +1,1185 @@
+package httpapi
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"interview-agent/internal/config"
+	"interview-agent/internal/domain"
+)
+
+type fakeInterviewRunner struct{}
+
+func (fakeInterviewRunner) Invoke(ctx context.Context, sess *domain.Session) error {
+	sess.CurrentNode = "pick_next"
+	sess.Rounds = append(sess.Rounds, domain.AnswerRound{
+		RoundID: "r1",
+		Question: domain.Question{
+			ID:      "q1",
+			Content: "讲一下 Go GMP",
+			Tags:    []string{"go"},
+		},
+	})
+	return nil
+}
+
+func (fakeInterviewRunner) Resume(ctx context.Context, sess *domain.Session) error {
+	sess.Status = domain.StatusCompleted
+	sess.Report = &domain.Report{
+		SessionID:      sess.ID,
+		OverallScore:   80,
+		SkillBreakdown: map[string]int{"go": 80},
+		Highlights:     []string{"Go 基础清楚"},
+		Improvements:   []string{"补充调度细节"},
+		NextSteps:      []string{"继续练习并发题"},
+	}
+	return nil
+}
+
+type fakeSessionCoordinator struct {
+	acquireOK bool
+	renewOK   bool
+	snapshot  *domain.Session
+	saveErr   error
+
+	acquired []string
+	renewed  []string
+	saved    []string
+	released []string
+}
+
+func (c *fakeSessionCoordinator) SaveSnapshot(ctx context.Context, sess *domain.Session, ttl time.Duration) error {
+	c.saved = append(c.saved, sess.ID+":"+string(sess.Status))
+	return c.saveErr
+}
+
+func (c *fakeSessionCoordinator) LoadSnapshot(ctx context.Context, sessionID string) (*domain.Session, error) {
+	if c.snapshot == nil || c.snapshot.ID != sessionID {
+		return nil, fmt.Errorf("snapshot %q not found", sessionID)
+	}
+	return c.snapshot, nil
+}
+
+func (c *fakeSessionCoordinator) AcquireLease(ctx context.Context, sessionID, ownerID string, ttl time.Duration) (bool, error) {
+	c.acquired = append(c.acquired, sessionID+":"+ownerID)
+	return c.acquireOK, nil
+}
+
+func (c *fakeSessionCoordinator) RenewLease(ctx context.Context, sessionID, ownerID string, ttl time.Duration) (bool, error) {
+	c.renewed = append(c.renewed, sessionID+":"+ownerID)
+	return c.renewOK, nil
+}
+
+func (c *fakeSessionCoordinator) ReleaseLease(ctx context.Context, sessionID, ownerID string) (bool, error) {
+	c.released = append(c.released, sessionID+":"+ownerID)
+	return true, nil
+}
+
+func TestInterviewStart_ReturnsFirstQuestion(t *testing.T) {
+	svc := NewInterviewService(fakeInterviewRunner{})
+	server := NewServerWithInterview(&config.Config{}, svc)
+
+	body := bytes.NewBufferString(`{
+		"session_id":"s1",
+		"user_id":"u1",
+		"jd_text":"需要 Go 后端",
+		"resume_text":"两年 Go 经验"
+	}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/interview/start", body)
+	req.Header.Set("Content-Type", "application/json")
+
+	server.Router().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var got interviewResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.SessionID != "s1" {
+		t.Errorf("session_id = %q, want s1", got.SessionID)
+	}
+	if got.Question == nil || got.Question.ID != "q1" {
+		t.Fatalf("question = %+v, want q1", got.Question)
+	}
+	if got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() {
+		t.Fatalf("timestamps should be returned: %+v", got)
+	}
+	if got.Report != nil {
+		t.Fatalf("report should be empty before answer, got %+v", got.Report)
+	}
+}
+
+func TestInterviewService_StartAcquiresLeaseAndSavesSnapshot(t *testing.T) {
+	coord := &fakeSessionCoordinator{acquireOK: true, renewOK: true}
+	svc := NewInterviewServiceWithStoreEventsAndCoordinator(
+		fakeInterviewRunner{},
+		NewMemorySessionStore(),
+		NewMemoryInterviewEventHub(8),
+		coord,
+		"owner-a",
+	)
+
+	sess, err := svc.Start(context.Background(), startInterviewRequest{
+		SessionID:  "lease-start",
+		UserID:     "u1",
+		JDText:     "jd",
+		ResumeText: "resume",
+	})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if sess.ID != "lease-start" {
+		t.Fatalf("session id = %q", sess.ID)
+	}
+	if len(coord.acquired) != 1 || coord.acquired[0] != "lease-start:owner-a" {
+		t.Fatalf("acquired = %+v", coord.acquired)
+	}
+	if len(coord.saved) != 1 || coord.saved[0] != "lease-start:running" {
+		t.Fatalf("saved snapshots = %+v", coord.saved)
+	}
+}
+
+func TestInterviewService_StartDegradesWhenSnapshotSaveFails(t *testing.T) {
+	coord := &fakeSessionCoordinator{acquireOK: true, renewOK: true, saveErr: errors.New("redis down")}
+	svc := NewInterviewServiceWithStoreEventsAndCoordinator(
+		fakeInterviewRunner{},
+		NewMemorySessionStore(),
+		NewMemoryInterviewEventHub(8),
+		coord,
+		"owner-a",
+	)
+
+	sess, err := svc.Start(context.Background(), startInterviewRequest{
+		SessionID:  "snapshot-start-degraded",
+		UserID:     "u1",
+		JDText:     "jd",
+		ResumeText: "resume",
+	})
+	if err != nil {
+		t.Fatalf("start should not fail on snapshot error: %v", err)
+	}
+	if sess.WorkingMemory.DegradedReasons["redis_snapshot"] == "" {
+		t.Fatalf("expected redis_snapshot degraded reason, got %+v", sess.WorkingMemory.DegradedReasons)
+	}
+	stored, err := svc.Get(context.Background(), "snapshot-start-degraded")
+	if err != nil {
+		t.Fatalf("session should still be saved to primary store: %v", err)
+	}
+	if stored.WorkingMemory.DegradedReasons["redis_snapshot"] == "" {
+		t.Fatalf("stored session should include degraded reason, got %+v", stored.WorkingMemory.DegradedReasons)
+	}
+}
+
+func TestInterviewService_AnswerRenewsLeaseAndSavesSnapshot(t *testing.T) {
+	coord := &fakeSessionCoordinator{acquireOK: true, renewOK: true}
+	svc := NewInterviewServiceWithStoreEventsAndCoordinator(
+		fakeInterviewRunner{},
+		NewMemorySessionStore(),
+		NewMemoryInterviewEventHub(8),
+		coord,
+		"owner-a",
+	)
+
+	if _, err := svc.Start(context.Background(), startInterviewRequest{
+		SessionID:  "lease-answer",
+		UserID:     "u1",
+		JDText:     "jd",
+		ResumeText: "resume",
+	}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if _, err := svc.Answer(context.Background(), answerInterviewRequest{
+		SessionID: "lease-answer",
+		UserID:    "u1",
+		Answer:    "answer",
+	}); err != nil {
+		t.Fatalf("answer: %v", err)
+	}
+
+	if len(coord.renewed) != 1 || coord.renewed[0] != "lease-answer:owner-a" {
+		t.Fatalf("renewed = %+v", coord.renewed)
+	}
+	if len(coord.saved) != 2 || coord.saved[1] != "lease-answer:completed" {
+		t.Fatalf("saved snapshots = %+v", coord.saved)
+	}
+	if len(coord.released) != 1 || coord.released[0] != "lease-answer:owner-a" {
+		t.Fatalf("released = %+v", coord.released)
+	}
+}
+
+func TestInterviewService_AnswerDegradesWhenSnapshotSaveFails(t *testing.T) {
+	coord := &fakeSessionCoordinator{acquireOK: true, renewOK: true}
+	svc := NewInterviewServiceWithStoreEventsAndCoordinator(
+		fakeInterviewRunner{},
+		NewMemorySessionStore(),
+		NewMemoryInterviewEventHub(8),
+		coord,
+		"owner-a",
+	)
+	if _, err := svc.Start(context.Background(), startInterviewRequest{
+		SessionID:  "snapshot-answer-degraded",
+		UserID:     "u1",
+		JDText:     "jd",
+		ResumeText: "resume",
+	}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	coord.saveErr = errors.New("redis down")
+	sess, err := svc.Answer(context.Background(), answerInterviewRequest{
+		SessionID: "snapshot-answer-degraded",
+		UserID:    "u1",
+		Answer:    "answer",
+	})
+	if err != nil {
+		t.Fatalf("answer should not fail on snapshot error: %v", err)
+	}
+	if sess.WorkingMemory.DegradedReasons["redis_snapshot"] == "" {
+		t.Fatalf("expected redis_snapshot degraded reason, got %+v", sess.WorkingMemory.DegradedReasons)
+	}
+	stored, err := svc.Get(context.Background(), "snapshot-answer-degraded")
+	if err != nil {
+		t.Fatalf("get stored session: %v", err)
+	}
+	if stored.WorkingMemory.DegradedReasons["redis_snapshot"] == "" {
+		t.Fatalf("stored session should include degraded reason, got %+v", stored.WorkingMemory.DegradedReasons)
+	}
+}
+
+func TestInterviewService_AnswerAcquiresExpiredLease(t *testing.T) {
+	coord := &fakeSessionCoordinator{acquireOK: true, renewOK: false}
+	svc := NewInterviewServiceWithStoreEventsAndCoordinator(
+		fakeInterviewRunner{},
+		NewMemorySessionStore(),
+		NewMemoryInterviewEventHub(8),
+		coord,
+		"owner-a",
+	)
+
+	if _, err := svc.Start(context.Background(), startInterviewRequest{
+		SessionID:  "lease-expired",
+		UserID:     "u1",
+		JDText:     "jd",
+		ResumeText: "resume",
+	}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if _, err := svc.Answer(context.Background(), answerInterviewRequest{
+		SessionID: "lease-expired",
+		UserID:    "u1",
+		Answer:    "answer",
+	}); err != nil {
+		t.Fatalf("answer should acquire expired lease: %v", err)
+	}
+
+	if len(coord.renewed) != 1 || coord.renewed[0] != "lease-expired:owner-a" {
+		t.Fatalf("renewed = %+v", coord.renewed)
+	}
+	if len(coord.acquired) != 2 || coord.acquired[1] != "lease-expired:owner-a" {
+		t.Fatalf("acquired = %+v", coord.acquired)
+	}
+}
+
+func TestInterviewService_AnswerLoadsRedisSnapshotWhenStoreMisses(t *testing.T) {
+	snapshot := &domain.Session{
+		ID:            "takeover-answer",
+		UserID:        "u1",
+		Status:        domain.StatusRunning,
+		CurrentNode:   "pick_next",
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+		WorkingMemory: domain.NewWorkingMemory(),
+		Rounds: []domain.AnswerRound{
+			{
+				RoundID: "r1",
+				Question: domain.Question{
+					ID:      "q1",
+					Content: "讲一下 Go GMP",
+					Tags:    []string{"go"},
+				},
+			},
+		},
+	}
+	coord := &fakeSessionCoordinator{acquireOK: true, renewOK: false, snapshot: snapshot}
+	svc := NewInterviewServiceWithStoreEventsAndCoordinator(
+		fakeInterviewRunner{},
+		NewMemorySessionStore(),
+		NewMemoryInterviewEventHub(8),
+		coord,
+		"owner-b",
+	)
+
+	sess, err := svc.Answer(context.Background(), answerInterviewRequest{
+		SessionID: "takeover-answer",
+		UserID:    "u1",
+		Answer:    "answer",
+	})
+	if err != nil {
+		t.Fatalf("answer: %v", err)
+	}
+	if sess.Status != domain.StatusCompleted {
+		t.Fatalf("status = %q, want completed", sess.Status)
+	}
+	if len(coord.acquired) != 1 || coord.acquired[0] != "takeover-answer:owner-b" {
+		t.Fatalf("acquired = %+v", coord.acquired)
+	}
+
+	got, err := svc.Get(context.Background(), "takeover-answer")
+	if err != nil {
+		t.Fatalf("get recovered session from local store: %v", err)
+	}
+	if got.Report == nil {
+		t.Fatal("recovered session should be saved back to local store after answer")
+	}
+}
+
+func TestInterviewService_GetLoadsRedisSnapshotWhenStoreMisses(t *testing.T) {
+	snapshot := &domain.Session{
+		ID:            "takeover-get",
+		UserID:        "u1",
+		Status:        domain.StatusRunning,
+		CurrentNode:   "pick_next",
+		WorkingMemory: domain.NewWorkingMemory(),
+	}
+	coord := &fakeSessionCoordinator{acquireOK: true, renewOK: true, snapshot: snapshot}
+	svc := NewInterviewServiceWithStoreEventsAndCoordinator(
+		fakeInterviewRunner{},
+		NewMemorySessionStore(),
+		NewMemoryInterviewEventHub(8),
+		coord,
+		"owner-b",
+	)
+
+	got, err := svc.Get(context.Background(), "takeover-get")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.ID != "takeover-get" {
+		t.Fatalf("id = %q, want takeover-get", got.ID)
+	}
+	got, err = svc.store.Get(context.Background(), "takeover-get")
+	if err != nil {
+		t.Fatalf("snapshot should be saved back to local store: %v", err)
+	}
+	if got.UserID != "u1" {
+		t.Fatalf("user id = %q, want u1", got.UserID)
+	}
+}
+
+func TestInterviewService_StartReturnsLeaseConflict(t *testing.T) {
+	coord := &fakeSessionCoordinator{acquireOK: false, renewOK: true}
+	svc := NewInterviewServiceWithStoreEventsAndCoordinator(
+		fakeInterviewRunner{},
+		NewMemorySessionStore(),
+		NewMemoryInterviewEventHub(8),
+		coord,
+		"owner-a",
+	)
+
+	_, err := svc.Start(context.Background(), startInterviewRequest{
+		SessionID:  "lease-conflict",
+		UserID:     "u1",
+		JDText:     "jd",
+		ResumeText: "resume",
+	})
+	if !errors.Is(err, ErrSessionLeaseConflict) {
+		t.Fatalf("err = %v, want ErrSessionLeaseConflict", err)
+	}
+}
+
+func TestInterviewStart_LeaseConflictReturnsHTTP409(t *testing.T) {
+	coord := &fakeSessionCoordinator{acquireOK: false, renewOK: true}
+	svc := NewInterviewServiceWithStoreEventsAndCoordinator(
+		fakeInterviewRunner{},
+		NewMemorySessionStore(),
+		NewMemoryInterviewEventHub(8),
+		coord,
+		"owner-a",
+	)
+	server := NewServerWithInterview(&config.Config{}, svc)
+
+	body := bytes.NewBufferString(`{
+		"session_id":"lease-http-conflict",
+		"user_id":"u1",
+		"jd_text":"需要 Go 后端",
+		"resume_text":"两年 Go 经验"
+	}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/interview/start", body)
+	req.Header.Set("Content-Type", "application/json")
+
+	server.Router().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409, body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Retry-After"); got != "1" {
+		t.Fatalf("Retry-After = %q, want 1", got)
+	}
+	if !strings.Contains(rec.Body.String(), `"retry_after_seconds":1`) {
+		t.Fatalf("body should include retry_after_seconds=1, got %s", rec.Body.String())
+	}
+}
+
+func TestInterviewAnswer_LeaseConflictReturnsHTTP409(t *testing.T) {
+	store := NewMemorySessionStore()
+	if err := store.Save(context.Background(), &domain.Session{
+		ID:            "lease-answer-http-conflict",
+		UserID:        "u1",
+		Status:        domain.StatusRunning,
+		CurrentNode:   "pick_next",
+		CreatedAt:     time.Now(),
+		UpdatedAt:     time.Now(),
+		WorkingMemory: domain.NewWorkingMemory(),
+		Rounds: []domain.AnswerRound{
+			{
+				RoundID: "r1",
+				Question: domain.Question{
+					ID:      "q1",
+					Content: "讲一下 Go GMP",
+					Tags:    []string{"go"},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("seed store: %v", err)
+	}
+	coord := &fakeSessionCoordinator{acquireOK: false, renewOK: false}
+	svc := NewInterviewServiceWithStoreEventsAndCoordinator(
+		fakeInterviewRunner{},
+		store,
+		NewMemoryInterviewEventHub(8),
+		coord,
+		"owner-a",
+	)
+	server := NewServerWithInterview(&config.Config{}, svc)
+
+	body := bytes.NewBufferString(`{
+		"session_id":"lease-answer-http-conflict",
+		"user_id":"u1",
+		"answer":"answer"
+	}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/interview/answer", body)
+	req.Header.Set("Content-Type", "application/json")
+
+	server.Router().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409, body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Retry-After"); got != "1" {
+		t.Fatalf("Retry-After = %q, want 1", got)
+	}
+	if !strings.Contains(rec.Body.String(), `"retry_after_seconds":1`) {
+		t.Fatalf("body should include retry_after_seconds=1, got %s", rec.Body.String())
+	}
+}
+
+func TestIntegration_InterviewService_RedisCoordinatorSnapshots(t *testing.T) {
+	coord := openRedisSessionCoordinatorForIntegration(t)
+	svc := NewInterviewServiceWithStoreEventsAndCoordinator(
+		fakeInterviewRunner{},
+		NewMemorySessionStore(),
+		NewMemoryInterviewEventHub(8),
+		coord,
+		"owner-service-it",
+	)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	sessionID := "svc-coord-" + time.Now().Format("150405.000000000")
+	t.Cleanup(func() {
+		_ = coord.DeleteSnapshot(context.Background(), sessionID)
+		_, _ = coord.ReleaseLease(context.Background(), sessionID, "owner-service-it")
+	})
+
+	if _, err := svc.Start(ctx, startInterviewRequest{
+		SessionID:  sessionID,
+		UserID:     "u1",
+		JDText:     "jd",
+		ResumeText: "resume",
+	}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	startSnapshot, err := coord.LoadSnapshot(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("load start snapshot: %v", err)
+	}
+	if startSnapshot.Status != domain.StatusRunning {
+		t.Fatalf("start snapshot status = %q, want running", startSnapshot.Status)
+	}
+
+	if _, err := svc.Answer(ctx, answerInterviewRequest{
+		SessionID: sessionID,
+		UserID:    "u1",
+		Answer:    "answer",
+	}); err != nil {
+		t.Fatalf("answer: %v", err)
+	}
+	answerSnapshot, err := coord.LoadSnapshot(ctx, sessionID)
+	if err != nil {
+		t.Fatalf("load answer snapshot: %v", err)
+	}
+	if answerSnapshot.Status != domain.StatusCompleted {
+		t.Fatalf("answer snapshot status = %q, want completed", answerSnapshot.Status)
+	}
+	if answerSnapshot.Report == nil {
+		t.Fatal("answer snapshot should include report")
+	}
+}
+
+func TestIntegration_InterviewService_TakeoverFromRedisSnapshot(t *testing.T) {
+	coord := openRedisSessionCoordinatorForIntegration(t)
+	sessionID := "svc-takeover-" + time.Now().Format("150405.000000000")
+	t.Cleanup(func() {
+		_ = coord.DeleteSnapshot(context.Background(), sessionID)
+		_, _ = coord.ReleaseLease(context.Background(), sessionID, "owner-a")
+		_, _ = coord.ReleaseLease(context.Background(), sessionID, "owner-b")
+	})
+
+	svcA := NewInterviewServiceWithStoreEventsAndCoordinator(
+		fakeInterviewRunner{},
+		NewMemorySessionStore(),
+		NewMemoryInterviewEventHub(8),
+		coord,
+		"owner-a",
+	)
+	svcA.leaseTTL = 50 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if _, err := svcA.Start(ctx, startInterviewRequest{
+		SessionID:  sessionID,
+		UserID:     "u1",
+		JDText:     "jd",
+		ResumeText: "resume",
+	}); err != nil {
+		t.Fatalf("start on owner-a: %v", err)
+	}
+	time.Sleep(80 * time.Millisecond)
+
+	svcB := NewInterviewServiceWithStoreEventsAndCoordinator(
+		fakeInterviewRunner{},
+		NewMemorySessionStore(),
+		NewMemoryInterviewEventHub(8),
+		coord,
+		"owner-b",
+	)
+	got, err := svcB.Answer(ctx, answerInterviewRequest{
+		SessionID: sessionID,
+		UserID:    "u1",
+		Answer:    "answer",
+	})
+	if err != nil {
+		t.Fatalf("answer on owner-b: %v", err)
+	}
+	if got.Status != domain.StatusCompleted {
+		t.Fatalf("status = %q, want completed", got.Status)
+	}
+	if got.Report == nil {
+		t.Fatal("takeover answer should generate report")
+	}
+}
+
+func TestInterviewAnswer_ReturnsReport(t *testing.T) {
+	svc := NewInterviewService(fakeInterviewRunner{})
+	server := NewServerWithInterview(&config.Config{}, svc)
+	router := server.Router()
+
+	startBody := bytes.NewBufferString(`{"session_id":"s2","jd_text":"jd","resume_text":"resume"}`)
+	startReq := httptest.NewRequest(http.MethodPost, "/api/interview/start", startBody)
+	startReq.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(httptest.NewRecorder(), startReq)
+
+	answerBody := bytes.NewBufferString(`{"session_id":"s2","answer":"G 是 goroutine"}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/interview/answer", answerBody)
+	req.Header.Set("Content-Type", "application/json")
+
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var got interviewResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Report == nil || got.Report.OverallScore != 80 {
+		t.Fatalf("report = %+v, want score 80", got.Report)
+	}
+	if got.Question != nil {
+		t.Fatalf("question should be empty after completed report, got %+v", got.Question)
+	}
+}
+
+func TestInterviewAnswer_UserMismatch(t *testing.T) {
+	svc := NewInterviewService(fakeInterviewRunner{})
+	server := NewServerWithInterview(&config.Config{}, svc)
+	router := server.Router()
+
+	startReq := httptest.NewRequest(http.MethodPost, "/api/interview/start",
+		bytes.NewBufferString(`{"session_id":"s-answer-user-check","user_id":"u1","jd_text":"jd","resume_text":"resume"}`))
+	startReq.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(httptest.NewRecorder(), startReq)
+
+	answerBody := bytes.NewBufferString(`{"session_id":"s-answer-user-check","user_id":"u2","answer":"answer"}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/interview/answer", answerBody)
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestInterviewService_MaintainsTimestamps(t *testing.T) {
+	svc := NewInterviewService(fakeInterviewRunner{})
+	sess, err := svc.Start(context.Background(), startInterviewRequest{
+		SessionID:  "ts-1",
+		UserID:     "u1",
+		JDText:     "jd",
+		ResumeText: "resume",
+	})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if sess.CreatedAt.IsZero() {
+		t.Fatal("CreatedAt should be set on start")
+	}
+	if sess.UpdatedAt.IsZero() {
+		t.Fatal("UpdatedAt should be set on start")
+	}
+	createdAt := sess.CreatedAt
+	updatedAt := sess.UpdatedAt
+
+	sess, err = svc.Answer(context.Background(), answerInterviewRequest{
+		SessionID: "ts-1",
+		Answer:    "answer",
+	})
+	if err != nil {
+		t.Fatalf("answer: %v", err)
+	}
+	if !sess.CreatedAt.Equal(createdAt) {
+		t.Fatalf("CreatedAt changed: got %v want %v", sess.CreatedAt, createdAt)
+	}
+	if !sess.UpdatedAt.After(updatedAt) && sess.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("UpdatedAt should advance on answer: before=%v after=%v", updatedAt, sess.UpdatedAt)
+	}
+}
+
+func TestInterviewListSessions_ReturnsUserSessions(t *testing.T) {
+	svc := NewInterviewService(fakeInterviewRunner{})
+	server := NewServerWithInterview(&config.Config{}, svc)
+	router := server.Router()
+
+	for _, body := range []string{
+		`{"session_id":"s-list-1","user_id":"u-list","jd_text":"jd","resume_text":"resume"}`,
+		`{"session_id":"s-list-2","user_id":"u-list","jd_text":"jd","resume_text":"resume"}`,
+		`{"session_id":"s-list-other","user_id":"other","jd_text":"jd","resume_text":"resume"}`,
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/api/interview/start", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(httptest.NewRecorder(), req)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/interview/sessions?user_id=u-list&limit=10", nil)
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Sessions []interviewResponse `json:"sessions"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(got.Sessions) != 2 {
+		t.Fatalf("len = %d, want 2: %+v", len(got.Sessions), got.Sessions)
+	}
+	for _, sess := range got.Sessions {
+		if sess.SessionID == "s-list-other" {
+			t.Fatalf("should not include other user's session: %+v", got.Sessions)
+		}
+		if sess.UpdatedAt.IsZero() {
+			t.Fatalf("list response should include UpdatedAt: %+v", sess)
+		}
+	}
+	if len(got.Sessions) == 2 && got.Sessions[0].UpdatedAt.Before(got.Sessions[1].UpdatedAt) {
+		t.Fatalf("sessions should be ordered by updated_at desc: %+v", got.Sessions)
+	}
+}
+
+func TestInterviewListSessions_CapsLimit(t *testing.T) {
+	svc := NewInterviewService(fakeInterviewRunner{})
+	server := NewServerWithInterview(&config.Config{}, svc)
+	router := server.Router()
+
+	for i := 0; i < 105; i++ {
+		body := fmt.Sprintf(`{"session_id":"s-cap-%03d","user_id":"u-cap","jd_text":"jd","resume_text":"resume"}`, i)
+		req := httptest.NewRequest(http.MethodPost, "/api/interview/start", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(httptest.NewRecorder(), req)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/interview/sessions?user_id=u-cap&limit=1000", nil)
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Sessions []interviewResponse `json:"sessions"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(got.Sessions) != 100 {
+		t.Fatalf("len = %d, want cap 100", len(got.Sessions))
+	}
+}
+
+func TestInterviewGetSession_ReturnsSession(t *testing.T) {
+	svc := NewInterviewService(fakeInterviewRunner{})
+	server := NewServerWithInterview(&config.Config{}, svc)
+	router := server.Router()
+
+	startReq := httptest.NewRequest(http.MethodPost, "/api/interview/start",
+		bytes.NewBufferString(`{"session_id":"s-get","user_id":"u1","jd_text":"jd","resume_text":"resume"}`))
+	startReq.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(httptest.NewRecorder(), startReq)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/interview/sessions/s-get", nil)
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var got interviewResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.SessionID != "s-get" {
+		t.Fatalf("session_id = %q, want s-get", got.SessionID)
+	}
+	if got.Question == nil || got.Question.ID != "q1" {
+		t.Fatalf("question = %+v, want q1", got.Question)
+	}
+}
+
+func TestInterviewGetSession_NotFound(t *testing.T) {
+	svc := NewInterviewService(fakeInterviewRunner{})
+	server := NewServerWithInterview(&config.Config{}, svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/interview/sessions/missing", nil)
+	server.Router().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestInterviewGetSession_UserMismatch(t *testing.T) {
+	svc := NewInterviewService(fakeInterviewRunner{})
+	server := NewServerWithInterview(&config.Config{}, svc)
+	router := server.Router()
+
+	startReq := httptest.NewRequest(http.MethodPost, "/api/interview/start",
+		bytes.NewBufferString(`{"session_id":"s-user-check","user_id":"u1","jd_text":"jd","resume_text":"resume"}`))
+	startReq.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(httptest.NewRecorder(), startReq)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/interview/sessions/s-user-check?user_id=u2", nil)
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestMemoryInterviewEventHub_PublishSubscribe(t *testing.T) {
+	hub := NewMemoryInterviewEventHub(1)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch, unsubscribe, err := hub.Subscribe(ctx, "sess-evt", "")
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer unsubscribe()
+
+	hub.Publish(context.Background(), InterviewEvent{
+		Type:      interviewEventSessionUpdated,
+		SessionID: "sess-evt",
+	})
+
+	select {
+	case got := <-ch:
+		if got.SessionID != "sess-evt" {
+			t.Fatalf("session_id = %q, want sess-evt", got.SessionID)
+		}
+		if got.Type != interviewEventSessionUpdated {
+			t.Fatalf("type = %q, want %q", got.Type, interviewEventSessionUpdated)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for event")
+	}
+}
+
+func TestMemoryInterviewEventHub_ReplayBeforeLiveEvents(t *testing.T) {
+	hub := NewMemoryInterviewEventHub(4)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	first := hub.Publish(context.Background(), InterviewEvent{
+		Type:      interviewEventSessionUpdated,
+		SessionID: "sess-replay-order",
+	})
+	replayed := hub.Publish(context.Background(), InterviewEvent{
+		Type:      interviewEventSessionCompleted,
+		SessionID: "sess-replay-order",
+	})
+
+	ch, unsubscribe, err := hub.Subscribe(ctx, "sess-replay-order", first.ID)
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer unsubscribe()
+
+	live := hub.Publish(context.Background(), InterviewEvent{
+		Type:      interviewEventSessionFailed,
+		SessionID: "sess-replay-order",
+	})
+
+	for _, want := range []InterviewEvent{replayed, live} {
+		select {
+		case got := <-ch:
+			if got.ID != want.ID {
+				t.Fatalf("event id = %q, want %q", got.ID, want.ID)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for %s", want.ID)
+		}
+	}
+}
+
+func TestMemoryInterviewEventHub_CloseStopsSubscribers(t *testing.T) {
+	hub := NewMemoryInterviewEventHub(4)
+	ch, unsubscribe, err := hub.Subscribe(context.Background(), "sess-close", "")
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer unsubscribe()
+
+	if err := hub.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	select {
+	case _, ok := <-ch:
+		if ok {
+			t.Fatal("subscriber channel should be closed")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for closed channel")
+	}
+
+	_, _, err = hub.Subscribe(context.Background(), "sess-close", "")
+	if err == nil {
+		t.Fatal("subscribe after close should fail")
+	}
+}
+
+func TestMemoryInterviewEventHub_CloseWhilePublishingDoesNotPanic(t *testing.T) {
+	hub := NewMemoryInterviewEventHub(16)
+	for i := 0; i < 8; i++ {
+		ch, unsubscribe, err := hub.Subscribe(context.Background(), "sess-race", "")
+		if err != nil {
+			t.Fatalf("subscribe: %v", err)
+		}
+		defer unsubscribe()
+		go func() {
+			for range ch {
+			}
+		}()
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			hub.Publish(context.Background(), InterviewEvent{
+				Type:      interviewEventSessionUpdated,
+				SessionID: "sess-race",
+			})
+		}
+	}()
+	if err := hub.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	wg.Wait()
+}
+
+func TestMemoryInterviewEventHub_RecordsDroppedEvents(t *testing.T) {
+	hub := NewMemoryInterviewEventHub(1)
+	ch, unsubscribe, err := hub.Subscribe(context.Background(), "sess-drop", "")
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer unsubscribe()
+
+	hub.Publish(context.Background(), InterviewEvent{Type: interviewEventSessionUpdated, SessionID: "sess-drop"})
+	hub.Publish(context.Background(), InterviewEvent{Type: interviewEventSessionCompleted, SessionID: "sess-drop"})
+
+	if stats := hub.Stats(); stats.DroppedEvents != 1 {
+		t.Fatalf("dropped events = %d, want 1", stats.DroppedEvents)
+	}
+	<-ch
+}
+
+func TestBuildInterviewEvent_ClonesMutableSessionData(t *testing.T) {
+	sess := &domain.Session{
+		ID:          "sess-clone",
+		Status:      domain.StatusCompleted,
+		CurrentNode: "report",
+		Report: &domain.Report{
+			SessionID:      "sess-clone",
+			OverallScore:   80,
+			SkillBreakdown: map[string]int{"go": 80},
+			Highlights:     []string{"clear"},
+			Improvements:   []string{"more detail"},
+			NextSteps:      []string{"practice"},
+		},
+		Rounds: []domain.AnswerRound{
+			{
+				Question: domain.Question{
+					ID:             "q-clone",
+					Content:        "question",
+					Tags:           []string{"go"},
+					ExpectedPoints: []string{"scheduler"},
+				},
+			},
+		},
+	}
+
+	event := buildInterviewEvent(interviewEventSessionCompleted, sess, "", "")
+	sess.Report.SkillBreakdown["go"] = 10
+	sess.Report.Highlights[0] = "mutated"
+	sess.Rounds[0].Question.Tags[0] = "mutated"
+	sess.Rounds[0].Question.ExpectedPoints[0] = "mutated"
+
+	if event.Report.SkillBreakdown["go"] != 80 {
+		t.Fatalf("report score was mutated: %+v", event.Report.SkillBreakdown)
+	}
+	if event.Report.Highlights[0] != "clear" {
+		t.Fatalf("report highlights were mutated: %+v", event.Report.Highlights)
+	}
+	if event.Question != nil && event.Question.Tags[0] == "mutated" {
+		t.Fatalf("question tags were mutated: %+v", event.Question.Tags)
+	}
+	if event.Question != nil && event.Question.ExpectedPoints[0] == "mutated" {
+		t.Fatalf("question expected points were mutated: %+v", event.Question.ExpectedPoints)
+	}
+}
+
+func TestInterviewStream_ReturnsSnapshotAndLiveEvent(t *testing.T) {
+	hub := NewMemoryInterviewEventHub(8)
+	svc := NewInterviewServiceWithStoreAndEvents(fakeInterviewRunner{}, NewMemorySessionStore(), hub)
+	server := NewServerWithInterview(&config.Config{}, svc)
+
+	sess, err := svc.Start(context.Background(), startInterviewRequest{
+		SessionID:  "s-stream",
+		UserID:     "u-stream",
+		JDText:     "jd",
+		ResumeText: "resume",
+	})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	ts := httptest.NewServer(server.Router())
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/interview/stream?session_id=s-stream", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("stream request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+
+	reader := bufio.NewReader(resp.Body)
+	first := readSSEBlock(t, reader)
+	if !strings.Contains(first, "event: snapshot") {
+		t.Fatalf("first event = %q, want snapshot", first)
+	}
+	if !strings.Contains(first, `"session_id":"s-stream"`) {
+		t.Fatalf("first event missing session id: %q", first)
+	}
+
+	hub.Publish(context.Background(), buildInterviewEvent(interviewEventSessionUpdated, sess, "", ""))
+	second := readSSEBlock(t, reader)
+	if !strings.Contains(second, "event: session.updated") {
+		t.Fatalf("second event = %q, want session.updated", second)
+	}
+}
+
+func TestInterviewStream_BackpressureRejectsSecondLongConnection(t *testing.T) {
+	hub := NewMemoryInterviewEventHub(8)
+	svc := NewInterviewServiceWithStoreAndEvents(fakeInterviewRunner{}, NewMemorySessionStore(), hub)
+	server := NewServerWithInterview(&config.Config{
+		Server: config.ServerConfig{MaxStreams: 1},
+	}, svc)
+
+	if _, err := svc.Start(context.Background(), startInterviewRequest{
+		SessionID:  "s-stream-limit",
+		UserID:     "u-stream",
+		JDText:     "jd",
+		ResumeText: "resume",
+	}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+
+	ts := httptest.NewServer(server.Router())
+	defer ts.Close()
+
+	firstCtx, firstCancel := context.WithCancel(context.Background())
+	defer firstCancel()
+	firstReq, err := http.NewRequestWithContext(firstCtx, http.MethodGet, ts.URL+"/api/interview/stream?session_id=s-stream-limit", nil)
+	if err != nil {
+		t.Fatalf("new first request: %v", err)
+	}
+	firstResp, err := http.DefaultClient.Do(firstReq)
+	if err != nil {
+		t.Fatalf("first stream request: %v", err)
+	}
+	defer firstResp.Body.Close()
+	if firstResp.StatusCode != http.StatusOK {
+		t.Fatalf("first status = %d, want 200", firstResp.StatusCode)
+	}
+	firstBlock := readSSEBlock(t, bufio.NewReader(firstResp.Body))
+	if !strings.Contains(firstBlock, "event: snapshot") {
+		t.Fatalf("first block = %q, want snapshot", firstBlock)
+	}
+
+	secondResp, err := http.Get(ts.URL + "/api/interview/stream?session_id=s-stream-limit")
+	if err != nil {
+		t.Fatalf("second stream request: %v", err)
+	}
+	defer secondResp.Body.Close()
+	if secondResp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("second status = %d, want 503", secondResp.StatusCode)
+	}
+	if got := secondResp.Header.Get("Retry-After"); got != "1" {
+		t.Fatalf("Retry-After = %q, want 1", got)
+	}
+}
+
+func TestInterviewStream_ReplaysAfterLastEventID(t *testing.T) {
+	hub := NewMemoryInterviewEventHub(8)
+	svc := NewInterviewServiceWithStoreAndEvents(fakeInterviewRunner{}, NewMemorySessionStore(), hub)
+	server := NewServerWithInterview(&config.Config{}, svc)
+
+	sess, err := svc.Start(context.Background(), startInterviewRequest{
+		SessionID:  "s-stream-replay",
+		UserID:     "u-stream",
+		JDText:     "jd",
+		ResumeText: "resume",
+	})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	first := hub.Publish(context.Background(), buildInterviewEvent(interviewEventSessionUpdated, sess, "", ""))
+	lastID := first.ID
+	second := hub.Publish(context.Background(), buildInterviewEvent(interviewEventSessionCompleted, sess, "", ""))
+
+	ts := httptest.NewServer(server.Router())
+	defer ts.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/interview/stream?session_id=s-stream-replay&last_event_id="+lastID, nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("stream request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+
+	reader := bufio.NewReader(resp.Body)
+	firstBlock := readSSEBlock(t, reader)
+	if !strings.Contains(firstBlock, "event: snapshot") {
+		t.Fatalf("first block = %q, want snapshot", firstBlock)
+	}
+	secondBlock := readSSEBlock(t, reader)
+	if !strings.Contains(secondBlock, "event: session.completed") {
+		t.Fatalf("second block = %q, want session.completed replay", secondBlock)
+	}
+	if !strings.Contains(secondBlock, second.ID) {
+		t.Fatalf("second block = %q, want replay id %q", secondBlock, second.ID)
+	}
+}
+
+func TestWriteInterviewSSEComment(t *testing.T) {
+	rec := httptest.NewRecorder()
+
+	if err := writeInterviewSSEComment(rec, "ping"); err != nil {
+		t.Fatalf("write comment: %v", err)
+	}
+
+	if got := rec.Body.String(); got != ": ping\n\n" {
+		t.Fatalf("comment = %q, want ping comment", got)
+	}
+}
+
+func readSSEBlock(t *testing.T, r *bufio.Reader) string {
+	t.Helper()
+	var lines []string
+	for {
+		line, err := r.ReadString('\n')
+		if err != nil {
+			t.Fatalf("read sse block: %v", err)
+		}
+		line = strings.TrimRight(line, "\r\n")
+		if line == "" {
+			break
+		}
+		lines = append(lines, line)
+	}
+	return strings.Join(lines, "\n")
+}

@@ -1,0 +1,116 @@
+# =========================
+# Env / config
+# =========================
+.env
+.env.*
+!.env.example
+
+config/config.yaml
+!config/config.example.yaml
+
+# Sensitive files
+*api_key*
+*apikey*
+*.pem
+
+# =========================
+# Go
+# =========================
+bin/
+dist/
+build/
+*.exe
+*.test
+*.out
+
+coverage.out
+coverage.*
+*.cover
+*.prof
+
+.gocache/
+
+# =========================
+# Python / embedding-server
+# =========================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+.venv/
+venv/
+env/
+embedding-server/.venv/
+tools/bge_server/.venv/
+
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# =========================
+# Logs / temp
+# =========================
+*.log
+logs/
+tmp/
+temp/
+
+# Demo CLI artifacts
+tmp/demos/
+
+# =========================
+# Model / AI cache
+# =========================
+.cache/
+models/
+model-cache/
+huggingface/
+.huggingface/
+sentence_transformers/
+torch_cache/
+
+# =========================
+# Database / local runtime
+# =========================
+*.db
+*.sqlite
+*.sqlite3
+
+redis-data/
+postgres-data/
+
+# =========================
+# IDE / editor
+# =========================
+.idea/
+
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+
+.history/
+
+*.swp
+
+# =========================
+# Node, if any
+# =========================
+node_modules/
+npm-debug.log*
+pnpm-lock.yaml.tmp
+
+# =========================
+# AI coding tools / temp artifacts
+# =========================
+.cursor/
+.continue/
+.aider*
+.vibecoding/
+
+# =========================
+# OS
+# =========================
+.DS_Store
+Thumbs.db
