@@ -5,6 +5,7 @@
 //   - up 和 down 配对
 //   - up 里 CREATE 的表，down 里都有 DROP
 //   - 关键扩展 / 索引声明存在
+//
 // 真正的"能跑通"验证靠 Stage 1.4 的 docker integration 测试。
 package migrations
 
@@ -103,5 +104,15 @@ func TestSeedFile(t *testing.T) {
 	}
 	if !strings.Contains(seed, "ON CONFLICT (id) DO NOTHING") {
 		t.Error("seed should be idempotent via ON CONFLICT")
+	}
+}
+
+func TestQuestionBankExpectedPointsColumn(t *testing.T) {
+	up := read(t, "001_init.up.sql")
+	if !strings.Contains(up, "expected_points") {
+		t.Fatal("question_bank should store expected_points from seed data")
+	}
+	if !strings.Contains(up, "expected_points  text[]") && !strings.Contains(up, "expected_points text[]") {
+		t.Fatal("expected_points should be a text[] column")
 	}
 }

@@ -14,14 +14,14 @@ import (
 //
 // 两阶段检索（route D，docs/design.md 第 4.3 节）：
 //
-//   stage 1（PG 端）：召回候选集
-//     - vector_candidates：HNSW 索引 + 距离算子 ORDER BY，难度软过滤 ±2
-//     - tag_candidates：GIN 索引扫 tags && query_tags
-//     - UNION 去重，返回原始特征（vec_dist / tag_overlap）
+//	stage 1（PG 端）：召回候选集
+//	  - vector_candidates：HNSW 索引 + 距离算子 ORDER BY，难度软过滤 ±2
+//	  - tag_candidates：GIN 索引扫 tags && query_tags
+//	  - UNION 去重，返回原始特征（vec_dist / tag_overlap）
 //
-//   stage 2（Go 端）：Fusion 打分
-//     - LinearFusion 加权三路特征
-//     - 排序取 top-K
+//	stage 2（Go 端）：Fusion 打分
+//	  - LinearFusion 加权三路特征
+//	  - 排序取 top-K
 //
 // 这种切法 PG 只走两条索引扫描（HNSW + GIN），不做表达式排序——避免破坏 HNSW
 // 索引利用率。打分逻辑在 Go 里，权重可热调，A-B 实验时无需改 SQL。
@@ -50,11 +50,12 @@ func NewPGVectorRetriever(pool *pgxpool.Pool, fusion Fusion) *PGVectorRetriever 
 // retrieveSQL 是两阶段召回的 SQL 模板。
 //
 // 参数：
-//   $1 = query embedding (vector)
-//   $2 = canonical query tags (text[])
-//   $3 = target difficulty (smallint)
-//   $4 = vector candidate limit (int)
-//   $5 = tag candidate limit (int)
+//
+//	$1 = query embedding (vector)
+//	$2 = canonical query tags (text[])
+//	$3 = target difficulty (smallint)
+//	$4 = vector candidate limit (int)
+//	$5 = tag candidate limit (int)
 //
 // 关键 design notes：
 //   - vector_candidates 用 MATERIALIZED 强制物化，避免 PG 把 CTE 内联导致
@@ -85,7 +86,7 @@ candidates AS (
     SELECT id FROM tag_candidates
 )
 SELECT
-    q.id, q.content, q.tags, q.difficulty, q.skill_category,
+    q.id, q.content, q.tags, q.difficulty, q.skill_category, q.expected_points,
     COALESCE(vc.vec_dist, q.embedding <=> $1::vector) AS vec_dist,
     (SELECT count(*)::int FROM unnest(q.tags) t WHERE t = ANY($2::text[])) AS tag_overlap
 FROM candidates c
@@ -158,7 +159,7 @@ func (r *PGVectorRetriever) Retrieve(ctx context.Context, q Query) ([]Result, er
 	for rows.Next() {
 		var c Candidate
 		if err := rows.Scan(&c.ID, &c.Content, &c.Tags, &c.Difficulty,
-			&c.Category, &c.VecDist, &c.TagOverlap); err != nil {
+			&c.Category, &c.ExpectedPoints, &c.VecDist, &c.TagOverlap); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		c.QueryTagCount = len(canonical)

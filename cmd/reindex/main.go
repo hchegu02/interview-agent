@@ -216,13 +216,14 @@ func embedBatched(ctx context.Context, e embedding.Embedder, texts []string, bat
 // 重跑 reindex 不更新 created_at——保留首次入库时间，符合"种子题库"语义。
 // 若后续要追审计时间戳，加一列 last_reindex_at 比改 created_at 干净。
 const upsertSQL = `
-INSERT INTO question_bank (id, content, tags, skill_category, difficulty, embedding)
-VALUES ($1, $2, $3, $4, $5, $6::vector)
+INSERT INTO question_bank (id, content, tags, skill_category, difficulty, expected_points, embedding)
+VALUES ($1, $2, $3, $4, $5, $6, $7::vector)
 ON CONFLICT (id) DO UPDATE SET
     content        = EXCLUDED.content,
     tags           = EXCLUDED.tags,
     skill_category = EXCLUDED.skill_category,
     difficulty     = EXCLUDED.difficulty,
+    expected_points = EXCLUDED.expected_points,
     embedding      = EXCLUDED.embedding;
 `
 
@@ -231,7 +232,7 @@ func upsertAll(ctx context.Context, pool *pgxpool.Pool, rows []seedRow, vectors 
 	for i, r := range rows {
 		vecLit := vectorLiteral(vectors[i])
 		if _, err := pool.Exec(ctx, upsertSQL,
-			r.ID, r.Content, r.Tags, r.SkillCategory, r.Difficulty, vecLit); err != nil {
+			r.ID, r.Content, r.Tags, r.SkillCategory, r.Difficulty, r.ExpectedPoints, vecLit); err != nil {
 			return fmt.Errorf("row %s: %w", r.ID, err)
 		}
 	}

@@ -10,13 +10,14 @@
 | 文件 | 作用 |
 |---|---|
 | `001_init.up.sql` | 创建 sessions / question_bank / idempotency_keys / events 表 + pgvector + HNSW 索引 |
+| `002_question_bank_expected_points.up.sql` | 给 question_bank 增加 expected_points，用于模拟模式要点反馈 |
 | `seed_question_bank.sql` | 演示种子数据（15 道题），不走版本控制，可重复执行 |
 
 ## 本地开发：用 docker-compose 跑
 
 ```bash
 make docker-up           # 启动 pg + redis
-make migrate-up          # 应用 001_init.up.sql
+make migrate-up          # 应用 001_init.up.sql + 后续增量迁移
 psql -h localhost -U interview -d interview -f migrations/seed_question_bank.sql
 ```
 
@@ -26,6 +27,9 @@ psql -h localhost -U interview -d interview -f migrations/seed_question_bank.sql
 psql "postgres://interview:interview@localhost:5432/interview" \
     -v ON_ERROR_STOP=1 \
     -f migrations/001_init.up.sql
+psql "postgres://interview:interview@localhost:5432/interview" \
+    -v ON_ERROR_STOP=1 \
+    -f migrations/002_question_bank_expected_points.up.sql
 ```
 
 ## CI / 生产

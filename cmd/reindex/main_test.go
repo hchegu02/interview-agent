@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	"interview-agent/internal/embedding"
@@ -26,5 +27,14 @@ func TestBuildEmbedderRealUsesConstructorDefaults(t *testing.T) {
 	}
 	if real.BaseDelay <= 0 {
 		t.Fatalf("BaseDelay = %v, want positive", real.BaseDelay)
+	}
+}
+
+func TestUpsertSQLWritesExpectedPoints(t *testing.T) {
+	if !strings.Contains(upsertSQL, "expected_points") {
+		t.Fatal("upsert SQL should write expected_points")
+	}
+	if !strings.Contains(upsertSQL, "EXCLUDED.expected_points") {
+		t.Fatal("upsert SQL should update expected_points on conflict")
 	}
 }

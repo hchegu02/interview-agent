@@ -310,7 +310,7 @@ type stubEmbedder struct {
 	err error
 }
 
-func (e *stubEmbedder) Name() string  { return "stub" }
+func (e *stubEmbedder) Name() string   { return "stub" }
 func (e *stubEmbedder) Dimension() int { return e.dim }
 func (e *stubEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
 	if e.err != nil {
@@ -344,12 +344,13 @@ func newFakeRetriever(ids []string, err error) *fakeRetriever {
 	out := make([]retriever.Result, len(ids))
 	for i, id := range ids {
 		out[i] = retriever.Result{
-			ID:         id,
-			Content:    "测试题 " + id,
-			Tags:       []string{"go_concurrency"},
-			Difficulty: 3,
-			Category:   "go",
-			Score:      0.9 - 0.05*float64(i),
+			ID:             id,
+			Content:        "测试题 " + id,
+			Tags:           []string{"go_concurrency"},
+			Difficulty:     3,
+			Category:       "go",
+			ExpectedPoints: []string{"要点 " + id},
+			Score:          0.9 - 0.05*float64(i),
 		}
 	}
 	return &fakeRetriever{results: out, err: err}
@@ -371,6 +372,9 @@ func TestRetrieveRAG_Success(t *testing.T) {
 			t.Errorf("expected rag- prefix, got source=%s", q.Source)
 		}
 	}
+	if got := sess.CandidatePool[0].ExpectedPoints; len(got) != 1 || got[0] != "要点 go-001" {
+		t.Fatalf("expected points should be copied from retriever result, got %+v", got)
+	}
 }
 
 func TestRetrieveRAG_EmbedderFails_Fallback(t *testing.T) {
@@ -387,6 +391,9 @@ func TestRetrieveRAG_EmbedderFails_Fallback(t *testing.T) {
 	}
 	if sess.CandidatePool[0].Source != "fallback" {
 		t.Errorf("expected fallback source, got %s", sess.CandidatePool[0].Source)
+	}
+	if len(sess.CandidatePool[0].ExpectedPoints) == 0 {
+		t.Fatal("fallback questions should include expected points")
 	}
 	if sess.WorkingMemory == nil || sess.WorkingMemory.DegradedReasons["rag"] == "" {
 		t.Errorf("expected rag degraded reason, got memory=%v", sess.WorkingMemory)

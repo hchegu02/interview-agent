@@ -1,12 +1,12 @@
 // Package retriever 是题库的检索抽象。
 //
 // 设计目标：
-//   1. 接口与实现解耦：Retriever 是接口，pgvector 是当前实现，
-//      未来 ES / Milvus / 内存版都能插
-//   2. 召回与排序解耦：SQL 只做候选集召回（HNSW 走索引 + GIN 走索引），
-//      最终打分走 Fusion 接口（先用 LinearFusion，未来可换 RRF / cross-encoder）
-//   3. 特征显式：Result 里保留 vector_score / tag_score / difficulty_score 三路
-//      原始分，便于调权 / 日志诊断 / A-B 实验
+//  1. 接口与实现解耦：Retriever 是接口，pgvector 是当前实现，
+//     未来 ES / Milvus / 内存版都能插
+//  2. 召回与排序解耦：SQL 只做候选集召回（HNSW 走索引 + GIN 走索引），
+//     最终打分走 Fusion 接口（先用 LinearFusion，未来可换 RRF / cross-encoder）
+//  3. 特征显式：Result 里保留 vector_score / tag_score / difficulty_score 三路
+//     原始分，便于调权 / 日志诊断 / A-B 实验
 //
 // 关键设计取舍参见 docs/design.md 第 4 节"RAG 检索"。
 package retriever
@@ -32,11 +32,12 @@ type Query struct {
 // Result 是融合打分后的最终候选。
 // 三个特征分都保留下来，便于 Stage 4 的日志 / Stage 5 的前端展示。
 type Result struct {
-	ID         string
-	Content    string
-	Tags       []string
-	Difficulty int
-	Category   string // skill_category
+	ID             string
+	Content        string
+	Tags           []string
+	Difficulty     int
+	Category       string // skill_category
+	ExpectedPoints []string
 
 	Score           float64 // 融合后的最终分（0~1）
 	VectorScore     float64 // 1 - cosine_distance，0~1
@@ -47,16 +48,17 @@ type Result struct {
 // Candidate 是 SQL 召回阶段的原始特征——Fusion 的输入。
 // 故意不直接复用 Result：候选阶段还没"融合分"，留个 Score 字段空着会误导。
 type Candidate struct {
-	ID         string
-	Content    string
-	Tags       []string
-	Difficulty int
-	Category   string
+	ID             string
+	Content        string
+	Tags           []string
+	Difficulty     int
+	Category       string
+	ExpectedPoints []string
 
-	VecDist        float64 // pgvector 的 cosine distance，越小越近
-	TagOverlap     int     // 候选 tags 与 query.Tags（归一化后）的交集大小
-	QueryTagCount  int     // 用于 tag_score 归一化的分母
-	TargetDiff     int     // 用于 difficulty_score 计算
+	VecDist       float64 // pgvector 的 cosine distance，越小越近
+	TagOverlap    int     // 候选 tags 与 query.Tags（归一化后）的交集大小
+	QueryTagCount int     // 用于 tag_score 归一化的分母
+	TargetDiff    int     // 用于 difficulty_score 计算
 }
 
 // Retriever 是题库检索接口。
