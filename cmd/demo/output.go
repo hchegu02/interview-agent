@@ -26,25 +26,28 @@ import (
 // RunArtifact 是 run.json 的顶层结构。
 // 字段顺序与可读性优先——StartedAt / EndedAt 放最前面方便 grep。
 type RunArtifact struct {
-	StartedAt         time.Time            `json:"started_at"`
-	EndedAt           time.Time            `json:"ended_at"`
-	Config            RunConfig            `json:"config"`
-	Session           *domain.Session      `json:"session,omitempty"`
-	LLMCalls          []llm.CallRecord     `json:"llm_calls"`
+	StartedAt         time.Time                  `json:"started_at"`
+	EndedAt           time.Time                  `json:"ended_at"`
+	Config            RunConfig                  `json:"config"`
+	Session           *domain.Session            `json:"session,omitempty"`
+	LLMCalls          []llm.CallRecord           `json:"llm_calls"`
 	Nodes             []observability.NodeRecord `json:"nodes"`
-	BreakerStateFinal string               `json:"breaker_state_final,omitempty"`
-	Summary           RunSummary           `json:"summary"`
-	FatalError        string               `json:"fatal_error,omitempty"`
+	BreakerStateFinal string                     `json:"breaker_state_final,omitempty"`
+	Summary           RunSummary                 `json:"summary"`
+	FatalError        string                     `json:"fatal_error,omitempty"`
 }
 
 // RunConfig 是 demo 运行时的元数据，仅含非敏感信息。
 // 严禁含 API key / DSN 等——run.json 可能被发到 issue tracker。
 type RunConfig struct {
-	LLMMode       string `json:"llm_mode"`
-	LLMModel      string `json:"llm_model,omitempty"`
-	EmbeddingMode string `json:"embedding_mode"`
-	ScriptPath    string `json:"script_path"`
-	OutputDir     string `json:"output_dir"`
+	LLMMode            string `json:"llm_mode"`
+	LLMModel           string `json:"llm_model,omitempty"`
+	EmbeddingMode      string `json:"embedding_mode"`
+	EmbeddingModel     string `json:"embedding_model,omitempty"`
+	Retriever          string `json:"retriever"`
+	PostgresConfigured bool   `json:"postgres_configured"`
+	ScriptPath         string `json:"script_path"`
+	OutputDir          string `json:"output_dir"`
 }
 
 // RunSummary 是给操作者扫一眼就懂的关键指标。
@@ -104,6 +107,11 @@ func WriteReportMarkdown(dir string, art *RunArtifact) error {
 		fmt.Fprintf(&b, "- llm.model: `%s`\n", art.Config.LLMModel)
 	}
 	fmt.Fprintf(&b, "- embedding.mode: `%s`\n", art.Config.EmbeddingMode)
+	if art.Config.EmbeddingModel != "" {
+		fmt.Fprintf(&b, "- embedding.model: `%s`\n", art.Config.EmbeddingModel)
+	}
+	fmt.Fprintf(&b, "- retriever: `%s`\n", art.Config.Retriever)
+	fmt.Fprintf(&b, "- postgres configured: `%t`\n", art.Config.PostgresConfigured)
 	fmt.Fprintf(&b, "- script: `%s`\n", art.Config.ScriptPath)
 	fmt.Fprintf(&b, "- output dir: `%s`\n", art.Config.OutputDir)
 	if art.BreakerStateFinal != "" {

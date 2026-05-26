@@ -108,6 +108,7 @@ pnpm-lock.yaml.tmp
 .continue/
 .aider*
 .vibecoding/
+.claude/
 
 # =========================
 # OS

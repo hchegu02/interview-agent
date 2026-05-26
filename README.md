@@ -40,6 +40,13 @@ curl http://localhost:8080/api/ping
 
 `make demo` 会构建并启动本地服务，然后检查 `/healthz`、`/readyz`、`/api/ping`，并用 mock 模式跑一轮 `interview/start`、`sessions/:id`、`interview/answer`、`sessions?user_id=...`。
 
+结构化端到端 demo 可直接跑 CLI，不启 HTTP，也不依赖 Redis。设置 `INTERVIEW_POSTGRES_DSN` 时会使用 PG/pgvector 题库；未设置时会降级到 fallback 题库，`run.json.config.retriever` 会明确记录实际路径：
+
+```powershell
+$env:INTERVIEW_POSTGRES_DSN="postgres://interview:interview@localhost:5432/interview?sslmode=disable"
+go run ./cmd/demo -config config/config.yaml -script testdata/demo/example.yaml
+```
+
 如果服务已经手动启动，可只跑 HTTP 检查：
 
 ```bash

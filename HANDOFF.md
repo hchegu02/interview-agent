@@ -92,7 +92,7 @@
 - `internal/observability/recording_callback.go`：新增 `RecordingCallback` 实现 `graph.Callback`，跟踪节点 start/end/error 落 `NodeRecord`；同名节点 loop 多次访问安全。
 - `internal/llm/schema.go`：`CallWithSchema` 每次 attempt 发 `event=llm_schema_attempt`（debug），每次 validation 失败发 `event=llm_schema_validation_failed`（info），便于 demo 报告统计 schema-retry 次数。
 - `internal/llm/factory.go`：把 `cmd/server` 的 `buildChatModel` 抽成导出 `llm.BuildChatModel`，`cmd/server` / `cmd/demo` 共用同一份装配逻辑。
-- `cmd/demo/`：新增独立 CLI（不启 HTTP，不依赖 PG / Redis），按 YAML 脚本驱动整图跑完一次面试，把 LLM 调用 / 节点 timeline / 最终报告落到 `{out}/run.json` + `{out}/report.md`。包括 `script.go`（YAML schema）、`answer.go`（fillPendingAnswer 镜像）、`output.go`（机器/人读双产物）、`main.go`（编排 + 用 slog handler 计数 schema retry）、`main_test.go`（mock 模式回归）。
+- `cmd/demo/`：新增独立 CLI（不启 HTTP，不依赖 Redis；设置 `INTERVIEW_POSTGRES_DSN` 时使用 PGVectorRetriever，否则 fallback），按 YAML 脚本驱动整图跑完一次面试，把 LLM 调用 / 节点 timeline / retriever 类型 / 最终报告落到 `{out}/run.json` + `{out}/report.md`。包括 `script.go`（YAML schema）、`answer.go`（fillPendingAnswer 镜像）、`output.go`（机器/人读双产物）、`main.go`（编排 + 用 slog handler 计数 schema retry）、`main_test.go`（mock 模式回归）。
 - `testdata/demo/example.yaml`：示例脚本，Go 后端 JD + 简历 + 3 条候选人回答。
 - `Makefile`：新增 `demo-mock`（mock LLM 跑完整 demo）和 `demo-real`（前置校验 `INTERVIEW_LLM_API_KEY`，操作者手动跑）。
 - `.gitignore`：新增 `tmp/demos/`，每次 demo 落盘的 timestamp 子目录默认不入仓。
@@ -105,7 +105,7 @@
 - `Score = -1` 仍是评估失败哨兵；所有统计逻辑必须先判 `<0`。
 - `cmd/server` 已接最小 PG session store；还没有 repository 层的 lease / takeover / list sessions 等能力。
 - 没有 SSE 长连接独立计数器；当前 `MaxInFlightMiddleware` 只挂 `start` / `answer`，stream 不受背压保护（连接生命周期长，需要独立计数器）。
-- 真实 LLM demo 流程已搭好（`cmd/demo` + `make demo-real`），但仍需操作者本地配置 `INTERVIEW_LLM_API_KEY` 跑一遍并人工评估 `run.json` / `report.md`；尚无跨多次运行的 prompt regression diff。
+- 真实 LLM demo 流程已搭好并已由操作者本地验证：prompt schema 稳定，provider 调用无错误，报告能识别答非所问并给出合理低分；`cmd/demo` 现在会在 `INTERVIEW_POSTGRES_DSN` 存在时走真实 PG/pgvector 题库，`run.json.config.retriever` 会明确记录 `pgvector` / `fallback`；尚无跨多次运行的 prompt regression diff。
 - 还没有 Prometheus metrics。
 - README 已修正为自研 Graph，但设计文档里可能仍有 Eino/阶段旧描述。
 - 当前环境多次出现 Windows sandbox `CreateProcessAsUserW failed: 1920`，导致 `gofmt`、`git status`、`go build`、`sh -n` 偶发无法执行；`go test ./... -count=1` 已通过。
