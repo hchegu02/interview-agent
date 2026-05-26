@@ -170,12 +170,7 @@ func buildEmbedder(mode, baseURL, model string, dim int) (embedding.Embedder, er
 		if key == "" {
 			return nil, errors.New("INTERVIEW_EMBEDDING_API_KEY not set (do NOT paste keys in source/yaml)")
 		}
-		return &embedding.RealEmbedder{
-			BaseURL: baseURL,
-			APIKey:  key,
-			Model:   model,
-			Dim:     dim,
-		}, nil
+		return embedding.NewRealEmbedder(baseURL, key, model, dim, 30*time.Second), nil
 	default:
 		return nil, fmt.Errorf("unknown mode: %s", mode)
 	}
