@@ -55,12 +55,17 @@
               <span>岗位 JD</span>
               <textarea id="jdText">需要 Go 后端工程师，熟悉高并发服务、Redis、PostgreSQL、消息队列和线上问题排查。</textarea>
             </label>
-            <label class="field">
-              <span>候选人简历</span>
-              <textarea id="resumeText">两年 Go 后端经验，参与过秒杀活动、Redis 缓存优化、Kafka 消费链路和 PostgreSQL 查询优化。</textarea>
-            </label>
+            <div class="field">
+              <span class="field-head">
+                候选人简历
+                <input id="resumeFile" class="visually-hidden" type="file" accept=".txt,.md,.markdown,.pdf,.docx,text/plain,text/markdown,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" />
+                <button id="resumeUploadBtn" class="inline-upload" type="button">读取简历文档</button>
+              </span>
+              <textarea id="resumeText" aria-label="候选人简历">两年 Go 后端经验，参与过秒杀活动、Redis 缓存优化、Kafka 消费链路和 PostgreSQL 查询优化。</textarea>
+            </div>
           </div>
           <div class="setup-actions">
+            <div id="setupNotice" class="setup-notice" role="status" aria-live="polite"></div>
             <button id="startBtn" class="primary" type="button">开始面试</button>
             <button id="resetBtn" class="secondary" type="button">清空</button>
           </div>
@@ -74,12 +79,16 @@
             </div>
             <span id="statusPill" class="status-pill">等待作答</span>
           </div>
+          <div id="eventTimeline" class="event-timeline" aria-live="polite"></div>
 
           <div id="conversation" class="conversation"></div>
 
           <form id="answerForm" class="answer-dock">
-            <button id="endInterviewBtn" class="danger" type="button">终止面试</button>
-            <textarea id="answerText" rows="1" placeholder="输入你的回答..."></textarea>
+            <button id="endInterviewBtn" class="danger" type="button">退出当前面试</button>
+            <label class="answer-box">
+              <span class="answer-hint">候选人回答 · Ctrl/⌘ + Enter 发送</span>
+              <textarea id="answerText" rows="4" placeholder="输入你的回答，建议按要点分段说明..."></textarea>
+            </label>
             <button id="answerBtn" class="send" type="submit">发送</button>
           </form>
         </section>

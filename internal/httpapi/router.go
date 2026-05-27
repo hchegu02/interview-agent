@@ -6,12 +6,15 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"interview-agent/internal/config"
+	"interview-agent/internal/parser"
 )
 
 // Server 持有所有依赖。阶段 0 只放骨架，后续阶段往里加 service。
 type Server struct {
-	cfg       *config.Config
-	interview *InterviewService
+	cfg            *config.Config
+	interview      *InterviewService
+	documentParser parser.DocumentParser
+	metricsRecorder *metricsRecorder
 
 	// breakerState 可选注入：real 模式下接 BreakingChatModel.State，返回
 	// "closed" / "open" / "half_open"。/readyz 在 open 时回报 degraded（仍 200）。
@@ -20,11 +23,11 @@ type Server struct {
 }
 
 func NewServer(cfg *config.Config) *Server {
-	return &Server{cfg: cfg}
+	return &Server{cfg: cfg, documentParser: parser.NewDispatcher(), metricsRecorder: newMetricsRecorder()}
 }
 
 func NewServerWithInterview(cfg *config.Config, interview *InterviewService) *Server {
-	return &Server{cfg: cfg, interview: interview}
+	return &Server{cfg: cfg, interview: interview, documentParser: parser.NewDispatcher(), metricsRecorder: newMetricsRecorder()}
 }
 
 // SetBreakerState 让入口装配阶段在构造完 Server 后注入熔断器状态查询函数。
@@ -40,16 +43,18 @@ func (s *Server) SetBreakerState(fn func() string) {
 func (s *Server) Router() *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(TraceIDMiddleware(), gin.Recovery())
+	r.Use(TraceIDMiddleware(), gin.Recovery(), s.metricsRecorder.middleware())
 
 	s.registerWebRoutes(r)
 
 	r.GET("/healthz", s.healthz)
 	r.GET("/readyz", s.readyz)
+	r.GET("/metrics", s.metrics)
 
 	api := r.Group("/api")
 	{
 		api.GET("/ping", s.ping)
+		api.POST("/documents/parse-resume", s.parseResumeDocument)
 		api.GET("/interview/sessions", s.listInterviewSessions)
 		api.GET("/interview/sessions/:session_id", s.getInterviewSession)
 	}

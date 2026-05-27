@@ -13,17 +13,19 @@ import (
 func TestDispatcher_PickByContentType(t *testing.T) {
 	d := NewDispatcher()
 	cases := []struct {
-		name      string
-		hint      Hint
-		wantPDF   bool
-		wantDOCX  bool
-		wantErr   bool
+		name     string
+		hint     Hint
+		wantPDF  bool
+		wantDOCX bool
+		wantErr  bool
 	}{
 		{"pdf by content-type", Hint{ContentType: "application/pdf"}, true, false, false},
 		{"docx by content-type", Hint{ContentType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"}, false, true, false},
 		{"old msword by content-type", Hint{ContentType: "application/msword"}, false, true, false},
+		{"text by content-type", Hint{ContentType: "text/plain"}, false, false, false},
 		{"pdf by filename fallback", Hint{Filename: "resume.PDF"}, true, false, false},
 		{"docx by filename fallback", Hint{Filename: "cv.docx"}, false, true, false},
+		{"markdown by filename fallback", Hint{Filename: "cv.md"}, false, false, false},
 		{"unknown", Hint{ContentType: "image/png", Filename: "foo.png"}, false, false, true},
 	}
 	for _, c := range cases {
@@ -44,6 +46,23 @@ func TestDispatcher_PickByContentType(t *testing.T) {
 				t.Errorf("wrong parser picked: pdf=%v docx=%v", isPDF, isDOCX)
 			}
 		})
+	}
+}
+
+func TestPlainTextParser_ParsesResumeText(t *testing.T) {
+	raw := []byte("  张三\n\nGo 后端工程师  ")
+	doc, err := NewPlainTextParser().Parse(context.Background(),
+		Source{Data: bytes.NewReader(raw), Size: int64(len(raw))},
+		Hint{Filename: "resume.md"},
+		LimitResume)
+	if err != nil {
+		t.Fatalf("parse text: %v", err)
+	}
+	if doc.Text != "张三\nGo 后端工程师" {
+		t.Fatalf("text = %q", doc.Text)
+	}
+	if doc.Metadata["format"] != "text" {
+		t.Fatalf("metadata = %+v", doc.Metadata)
 	}
 }
 

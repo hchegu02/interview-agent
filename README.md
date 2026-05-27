@@ -6,7 +6,7 @@
 
 ## 当前状态
 
-当前已经完成核心 Agent 闭环：
+当前已经完成“可本地演示”的核心 Agent 闭环：
 
 - 领域模型：`Session`、`AnswerRound`、`WorkingMemory`、`Critic`、`Decision`、`Report`
 - Graph：节点、路由、循环、`ErrSuspended` / `Resume`
@@ -16,12 +16,19 @@
 - HTTP 骨架：`POST /api/interview/start`、`POST /api/interview/answer`
 - 会话 API：`GET /api/interview/sessions`、`GET /api/interview/sessions/:session_id`
 - SSE 流式响应：`GET /api/interview/stream?session_id=...`，支持 snapshot、heartbeat 和 `Last-Event-ID`
+- Web 前端：支持输入 JD/简历、历史会话、SSE 事件时间线、底部回答输入栏和慢请求状态提示
+- 简历文档解析入口：`POST /api/documents/parse-resume`，支持 PDF、DOCX、TXT、Markdown，并可在 Web 端上传后填充简历文本
 - Redis Streams 事件总线：设置 `INTERVIEW_REDIS_URL` 后启用
 - PG session store：配置 `INTERVIEW_POSTGRES_DSN` 后保存到 `sessions.state_json`
+- Redis session snapshot / lease / takeover：设置 `INTERVIEW_REDIS_URL` 后启用跨实例恢复和租约冲突保护
+- Real LLM 可靠性保护：进程内并发 limiter、熔断器、`/readyz` degraded 状态
+- HTTP 背压：`/api/interview/start`、`/api/interview/answer` 使用 `server.max_in_flight` 限制突发并发；SSE 流使用 `server.max_streams`
+- 基础 Prometheus 文本指标：`GET /metrics` 暴露 HTTP 请求、简历解析、SSE 连接 active/total
 - 离线题库工具：`cmd/reindex`
-- Smoke 脚本：`make demo` 调用 `scripts/smoke.sh`，覆盖健康检查与 start/answer
+- Smoke 脚本：`make demo` 调用 `scripts/smoke.sh`，覆盖健康检查与 start/get/answer/list；`scripts/smoke_sse.ps1` 覆盖 SSE 服务级路径
+- 结构化 demo CLI：`make demo-mock` / `make demo-real` 会生成 `tmp/demos/<timestamp>/run.json` 和 `report.md`
 
-仍未完成：Redis session 快照/接管、限流/熔断/背压、压测脚本和真实端到端演示。
+仍未完成：完整 Prometheus metrics（Graph / LLM / 熔断器 / 时延直方图）、OTel tracing、Chaos 故障注入脚本、压测报告、Helm chart、题单预览节点和 RAG 评估指标。
 
 ## 快速启动
 
@@ -29,16 +36,44 @@
 # 1. 拉取依赖
 go mod tidy
 
-# 2. 启动服务（默认 mock 模式）
-make run
+# 2. 启动 Web 服务（mock LLM，无外部依赖）
+make demo-web
 
-# 3. 基础健康检查
+# 3. 打开浏览器
+# http://localhost:8080
+
+# 4. 基础健康检查
 curl http://localhost:8080/healthz
 curl http://localhost:8080/readyz
 curl http://localhost:8080/api/ping
 ```
 
+Web 页面支持直接输入岗位 JD 和候选人简历，也可以点击“读取简历文档”上传 `.txt` / `.md` / `.markdown` / `.pdf` / `.docx`。面试过程中页面会展示 SSE 事件时间线、等待状态、当前题、历史问答和底部回答输入栏。
+
+真实 LLM Web 模式：
+
+```bash
+# API key 推荐通过环境变量注入；也支持本地未入仓 YAML fallback，环境变量优先级更高。
+export INTERVIEW_LLM_API_KEY="sk-xxx"
+make demo-web-real
+```
+
+Windows / PowerShell 可用等价命令：
+
+```powershell
+$env:INTERVIEW_LLM_API_KEY="sk-xxx"
+$env:INTERVIEW_LLM_MODE="real"
+$env:INTERVIEW_EMBEDDING_MODE="mock"
+go run ./cmd/server -config config/config.yaml.example
+```
+
 `make demo` 会构建并启动本地服务，然后检查 `/healthz`、`/readyz`、`/api/ping`，并用 mock 模式跑一轮 `interview/start`、`sessions/:id`、`interview/answer`、`sessions?user_id=...`。
+
+核心回归可用：
+
+```bash
+make test-core
+```
 
 结构化端到端 demo 可直接跑 CLI，不启 HTTP，也不依赖 Redis。设置 `INTERVIEW_POSTGRES_DSN` 时会使用 PG/pgvector 题库；未设置时会降级到 fallback 题库，`run.json.config.retriever` 会明确记录实际路径：
 
@@ -89,6 +124,26 @@ make demo-pg-full
 ```
 
 ## API
+
+解析简历文档：
+
+```bash
+curl -X POST http://localhost:8080/api/documents/parse-resume \
+  -F "file=@./resume.pdf"
+```
+
+返回字段包括：
+
+```json
+{
+  "filename": "resume.pdf",
+  "text": "...解析后的简历文本...",
+  "page_count": 1,
+  "metadata": {
+    "format": "pdf"
+  }
+}
+```
 
 启动一场面试：
 
@@ -141,10 +196,27 @@ curl "http://localhost:8080/api/interview/sessions/demo-1?user_id=u1"
 `answer` 和会话详情都支持可选 `user_id` 归属校验；不传时保持兼容。
 `GET /api/interview/stream?session_id=...` 可直接订阅单个会话的 SSE 流；支持 `Last-Event-ID` 做断线回放，并会发送 heartbeat 保活。默认使用内存事件总线；设置 `INTERVIEW_REDIS_URL=redis://localhost:6379/0` 后会改用 Redis Streams。Redis ACL 用户可使用 `redis://username:password@localhost:6379/0`。
 
+基础 metrics：
+
+```bash
+curl http://localhost:8080/metrics
+```
+
+当前包含 HTTP request counter、parser document counter、SSE active/total。Graph node、LLM 调用、熔断器状态、入口背压和 duration histogram 还在下一轮补齐。
+
 Redis session coordinator 已接入 `InterviewService`：设置 `INTERVIEW_REDIS_URL` 后，`start` 会获取 session lease 并写 snapshot，`get/answer` 在本地 store miss 时会从 Redis snapshot 恢复，`answer` 会续约或重新获取过期 lease，成功后更新 snapshot；会话完成后释放 lease。Redis lease 冲突会返回 HTTP 409，并带 `Retry-After` / `retry_after_seconds`。
 Redis snapshot 写入失败不会打断 start/answer 主流程；服务会在 `WorkingMemory.DegradedReasons["redis_snapshot"]` 记录原因，并继续依赖 PG / 内存 session store。Redis lease acquire / renew 失败仍会阻断，因为它关系到多实例所有权。
 Redis / memory event hub 会记录 publish 失败和慢消费者丢事件计数；事件推送失败不阻断 interview 主流程。
 Real LLM 模式会套进程内并发限制，配置项为 `llm.max_concurrency`，默认 4；等待并发闸门时会尊重请求 context。
+
+## Roadmap（按当前 ROI）
+
+1. 可演示性闭环：README、`make demo-web`、真实浏览器流程验收、demo 产物说明。
+2. 补完整 Prometheus metrics：Graph node、LLM、熔断器、背压和 duration histogram。
+3. OTel tracing：贯穿 HTTP → Graph → LLM / Parser / Retriever，支持按 `trace_id` 定位慢节点。
+4. 可靠性演示：熔断器半开期渐进放行、Chaos 故障注入脚本和恢复验证。
+5. 工程化：GitHub Actions CI 矩阵、Docker 镜像、k8s Helm chart 和 probes。
+6. 产品增强：`preview_plan` 题单预览、候选人档案复用、项目背景库和简化版 RAGAS 指标。
 
 ## 测试
 
@@ -206,9 +278,9 @@ Real embedding 模式需要设置 `INTERVIEW_EMBEDDING_API_KEY`，且 embedding 
 
 ## 安全说明
 
-- API key 只走环境变量，不写进 YAML
-- `.env` 和 `config.yaml` 不入仓
-- 示例 key 只使用 `sk-xxx` 占位
+- API key 推荐走环境变量；`config.Load` 也支持从本地未入仓 YAML 读取 fallback key，且环境变量优先级更高。
+- `.env` 和 `config.yaml` 不入仓，`config/config.yaml.example` 不包含真实密钥。
+- 示例 key 只使用 `sk-xxx` 占位。
 
 ## License
 

@@ -15,18 +15,20 @@ import (
 type Dispatcher struct {
 	pdf  DocumentParser
 	docx DocumentParser
+	text DocumentParser
 }
 
 func NewDispatcher() *Dispatcher {
 	return &Dispatcher{
 		pdf:  NewPDFParser(),
 		docx: NewDOCXParser(),
+		text: NewPlainTextParser(),
 	}
 }
 
 // NewDispatcherWith 允许测试注入 mock，或运维替换实现。
 func NewDispatcherWith(pdf, docx DocumentParser) *Dispatcher {
-	return &Dispatcher{pdf: pdf, docx: docx}
+	return &Dispatcher{pdf: pdf, docx: docx, text: NewPlainTextParser()}
 }
 
 func (d *Dispatcher) Parse(ctx context.Context, src Source, hint Hint, limit ParseLimit) (*Document, error) {
@@ -46,6 +48,8 @@ func (d *Dispatcher) pick(hint Hint) (DocumentParser, error) {
 		return d.pdf, nil
 	case strings.Contains(ct, "wordprocessingml") || strings.Contains(ct, "msword"):
 		return d.docx, nil
+	case strings.HasPrefix(ct, "text/") || strings.Contains(ct, "markdown"):
+		return d.text, nil
 	}
 
 	name := strings.ToLower(hint.Filename)
@@ -54,6 +58,8 @@ func (d *Dispatcher) pick(hint Hint) (DocumentParser, error) {
 		return d.pdf, nil
 	case strings.HasSuffix(name, ".docx"):
 		return d.docx, nil
+	case strings.HasSuffix(name, ".txt"), strings.HasSuffix(name, ".md"), strings.HasSuffix(name, ".markdown"):
+		return d.text, nil
 	}
 
 	return nil, fmt.Errorf("%w: content-type=%q filename=%q",

@@ -96,6 +96,10 @@
 - `testdata/demo/example.yaml`：示例脚本，Go 后端 JD + 简历 + 3 条候选人回答。
 - `Makefile`：新增 `demo-mock`（mock LLM 跑完整 demo）和 `demo-real`（前置校验 `INTERVIEW_LLM_API_KEY`，操作者手动跑）。
 - `.gitignore`：新增 `tmp/demos/`，每次 demo 落盘的 timestamp 子目录默认不入仓。
+- `internal/httpapi/web/`：新增内嵌 Web 前端，覆盖 JD / 简历输入、练习 / 考试模式、历史会话、SSE 事件时间线、回答栏和报告展示。
+- `internal/httpapi/documents.go` / `internal/parser/text.go`：新增简历上传解析接口，Dispatcher 支持 PDF / DOCX / TXT / Markdown，Web 端可上传后填充简历文本。
+- `internal/httpapi/metrics.go`：新增基础 `/metrics`，当前覆盖 HTTP request counter、parser document counter、SSE active/total；SSE 连接已在 `streamInterview` 生命周期内计数。
+- `Makefile`：新增 `demo-web` / `demo-web-real` / `test-core`，用于本地 Web 演示和核心回归。
 
 ## 4. 当前已知风险 / TODO
 
@@ -104,9 +108,9 @@
 - `WorkingMemory.ScoredRounds` / `DegradedRounds` 已提成强类型字段；`ReflectTopic` 已作为 reflection_check → pick_next 的强类型补漏信号；降级原因已集中到 `DegradedReasons`；`Notes` 不再承载主流程协议，只兼容旧 `reflect_topic`。
 - `Score = -1` 仍是评估失败哨兵；所有统计逻辑必须先判 `<0`。
 - `cmd/server` 已接最小 PG session store；还没有 repository 层的 lease / takeover / list sessions 等能力。
-- 没有 SSE 长连接独立计数器；当前 `MaxInFlightMiddleware` 只挂 `start` / `answer`，stream 不受背压保护（连接生命周期长，需要独立计数器）。
+- SSE 流已有 `server.max_streams` 背压和 `/metrics` active/total 计数；还缺 dropped / backpressure / duration 等细分指标。
 - 真实 LLM demo 流程已搭好并已由操作者本地验证：prompt schema 稳定，provider 调用无错误，报告能识别答非所问并给出合理低分；`cmd/demo` 现在会在 `INTERVIEW_POSTGRES_DSN` 存在时走真实 PG/pgvector 题库，`run.json.config.retriever` 会明确记录 `pgvector` / `fallback`；尚无跨多次运行的 prompt regression diff。
-- 还没有 Prometheus metrics。
+- 基础 `/metrics` 已有 HTTP / parser / SSE；完整 Graph node、LLM、breaker、backpressure、duration histogram 还没做。
 - README 已修正为自研 Graph，但设计文档里可能仍有 Eino/阶段旧描述。
 - 当前环境多次出现 Windows sandbox `CreateProcessAsUserW failed: 1920`，导致 `gofmt`、`git status`、`go build`、`sh -n` 偶发无法执行；`go test ./... -count=1` 已通过。
 
@@ -158,10 +162,11 @@ pgvector / PG session store 集成测试受 `INTEGRATION=1` + `INTERVIEW_POSTGRE
 
 推荐顺序：
 
-1. 操作者本地跑 `make demo-real` 真实 LLM 端到端验证，评估 `run.json` 的 schema_retries / transient_errors 与 `report.md` 报告质量；如果 prompt 不稳定，迭代 `internal/nodes/prompts.go`。
-2. SSE 长连接独立计数器，给 `/api/interview/stream` 也加并发上限（背压目前只覆盖 start / answer）。
-3. 服务端 Prometheus / OTel metrics：熔断器状态、in-flight gauge、503 / 409 计数。
-4. 跨多次 demo 运行的 prompt regression diff 工具（基于 `run.json` 做 token / schema_retries / report 评分趋势比较）。
+1. 真实浏览器流程验收：`make demo-web` 或 `go run ./cmd/server -config config/config.yaml.example`，跑上传简历、开始面试、SSE 更新、回答、报告、历史会话切换。
+2. 补完整 Prometheus metrics：Graph node duration、LLM calls / errors / tokens、breaker state、in-flight gauge、503 / 409 计数和 duration histogram。
+3. OTel tracing：贯穿 HTTP → Graph → LLM / Parser / Retriever，能按 trace_id 定位慢节点。
+4. 熔断器半开期渐进放行 + Chaos 脚本，演示 LLM timeout、Redis down、PG down 时的降级和恢复。
+5. 跨多次 demo 运行的 prompt regression diff 工具（基于 `run.json` 做 token / schema_retries / report 评分趋势比较）。
 
 ## 8. 不要做哪些事
 - 不要在 router 里做副作用。

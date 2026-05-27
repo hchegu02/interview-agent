@@ -2,7 +2,10 @@ const state = {
   mode: "practice",
   session: null,
   stream: null,
+  streamSessionId: "",
   lastEventId: "",
+  pendingAnswer: "",
+  events: [],
   busy: false,
 };
 
@@ -15,6 +18,9 @@ const els = {
   userId: $("userId"),
   jdText: $("jdText"),
   resumeText: $("resumeText"),
+  resumeFile: $("resumeFile"),
+  resumeUploadBtn: $("resumeUploadBtn"),
+  setupNotice: $("setupNotice"),
   startBtn: $("startBtn"),
   resetBtn: $("resetBtn"),
   refreshSessions: $("refreshSessions"),
@@ -29,6 +35,7 @@ const els = {
   sessionMeta: $("sessionMeta"),
   sessionTitle: $("sessionTitle"),
   statusPill: $("statusPill"),
+  eventTimeline: $("eventTimeline"),
   conversation: $("conversation"),
   answerForm: $("answerForm"),
   answerText: $("answerText"),
@@ -80,6 +87,13 @@ function setBusy(busy, label = "") {
   }
 }
 
+function showSetupNotice(message, tone = "") {
+  if (!els.setupNotice) return;
+  els.setupNotice.textContent = message || "";
+  els.setupNotice.classList.toggle("error", tone === "error");
+  els.setupNotice.classList.toggle("visible", Boolean(message));
+}
+
 function setMode(mode) {
   state.mode = mode === "exam" ? "exam" : "practice";
   els.practiceModeBtn.classList.toggle("active", state.mode === "practice");
@@ -112,22 +126,54 @@ async function startInterview() {
     resume_text: els.resumeText.value.trim(),
   };
   if (!payload.jd_text || !payload.resume_text) {
-    showLocalNotice("JD 和简历都不能为空");
+    showSetupNotice("JD 和简历都不能为空", "error");
     return;
   }
+  state.lastEventId = "";
+  state.streamSessionId = "";
+  state.events = [];
+  renderEventTimeline();
+  showSetupNotice("正在提交，后端将分析 JD/简历并生成第一题...");
   setBusy(true, "准备题目");
   try {
     const session = await api("/api/interview/start", {
       method: "POST",
       body: JSON.stringify(payload),
     });
+    showSetupNotice("");
     applySession(session);
     openStream(session.session_id);
     await loadSessions();
   } catch (err) {
-    showLocalNotice(err.message);
+    showSetupNotice(err.message, "error");
   } finally {
     setBusy(false);
+  }
+}
+
+async function parseResumeFile(file) {
+  if (!file) return;
+  const form = new FormData();
+  form.append("file", file);
+  showSetupNotice(`正在读取简历文档：${file.name}...`);
+  els.resumeUploadBtn.disabled = true;
+  try {
+    const res = await fetch("/api/documents/parse-resume", {
+      method: "POST",
+      body: form,
+    });
+    const text = await res.text();
+    const data = text ? JSON.parse(text) : {};
+    if (!res.ok) {
+      throw new Error(data.error || `${res.status} ${res.statusText}`);
+    }
+    els.resumeText.value = data.text || "";
+    showSetupNotice(`已读取 ${data.filename || file.name}，可继续编辑后开始面试。`);
+  } catch (err) {
+    showSetupNotice(err.message, "error");
+  } finally {
+    els.resumeUploadBtn.disabled = false;
+    els.resumeFile.value = "";
   }
 }
 
@@ -137,6 +183,11 @@ async function submitAnswer(evt) {
   const answer = els.answerText.value.trim();
   if (!answer) return;
 
+  state.pendingAnswer = answer;
+  els.answerText.value = "";
+  autoSizeAnswer();
+  renderConversation(state.session);
+  pushStreamEvent("answer.submitted", "回答已提交，等待评估结果");
   setBusy(true, "正在评估回答");
   try {
     const session = await api("/api/interview/answer", {
@@ -147,14 +198,17 @@ async function submitAnswer(evt) {
         answer,
       }),
     });
-    els.answerText.value = "";
-    autoSizeAnswer();
+    state.pendingAnswer = "";
     applySession(session);
     await loadSessions();
   } catch (err) {
+    els.answerText.value = answer;
+    autoSizeAnswer();
+    state.pendingAnswer = "";
     showLocalNotice(err.message);
   } finally {
     setBusy(false);
+    if (state.session) renderConversation(state.session);
   }
 }
 
@@ -162,6 +216,8 @@ async function loadSession(sessionId) {
   const userId = els.userId.value.trim();
   const suffix = userId ? `?user_id=${encodeURIComponent(userId)}` : "";
   try {
+    state.lastEventId = "";
+    state.streamSessionId = "";
     const session = await api(`/api/interview/sessions/${encodeURIComponent(sessionId)}${suffix}`);
     setMode(session.mode || "exam");
     applySession(session);
@@ -191,6 +247,10 @@ function openStream(sessionId) {
     els.streamState.textContent = "不支持";
     return;
   }
+  if (state.streamSessionId !== sessionId) {
+    state.lastEventId = "";
+    state.streamSessionId = sessionId;
+  }
   const userId = els.userId.value.trim();
   const params = new URLSearchParams({ session_id: sessionId });
   if (userId) params.set("user_id", userId);
@@ -198,12 +258,14 @@ function openStream(sessionId) {
 
   state.stream = new EventSource(`/api/interview/stream?${params.toString()}`);
   els.streamState.textContent = "同步中";
+  pushStreamEvent("stream.open", "SSE 已连接，等待实时事件");
   state.stream.onmessage = handleStreamMessage;
   for (const name of ["snapshot", "interview.progress", "interview.completed", "interview.failed"]) {
     state.stream.addEventListener(name, handleStreamMessage);
   }
   state.stream.onerror = () => {
     els.streamState.textContent = "重连中";
+    pushStreamEvent("stream.retry", "事件流重连中");
   };
 }
 
@@ -218,11 +280,55 @@ function closeStream() {
 function handleStreamMessage(evt) {
   if (evt.lastEventId) state.lastEventId = evt.lastEventId;
   const data = JSON.parse(evt.data);
+  pushStreamEvent(data.type || evt.type || "message", phaseText[data.phase] || data.status || "状态已同步");
   if (data.error) {
     showLocalNotice(data.error);
   }
   if (data.session_id) {
     applySession(data);
+  }
+}
+
+function pushStreamEvent(type, detail = "") {
+  const label = eventLabel(type);
+  const at = new Date().toLocaleTimeString();
+  state.events.unshift({ type, label, detail, at });
+  state.events = state.events.slice(0, 6);
+  renderEventTimeline();
+}
+
+function renderEventTimeline() {
+  if (!els.eventTimeline) return;
+  if (!state.events.length) {
+    els.eventTimeline.innerHTML = `<span class="event-chip muted">等待实时事件</span>`;
+    return;
+  }
+  els.eventTimeline.innerHTML = state.events.map((event) => `
+    <span class="event-chip" title="${escapeHtml(event.type)}">
+      <strong>${escapeHtml(event.label)}</strong>
+      <em>${escapeHtml(event.detail || event.at)}</em>
+    </span>
+  `).join("");
+}
+
+function eventLabel(type) {
+  switch (type) {
+    case "snapshot":
+      return "快照";
+    case "interview.progress":
+      return "进度";
+    case "interview.completed":
+      return "完成";
+    case "interview.failed":
+      return "失败";
+    case "answer.submitted":
+      return "提交";
+    case "stream.open":
+      return "连接";
+    case "stream.retry":
+      return "重连";
+    default:
+      return "事件";
   }
 }
 
@@ -288,9 +394,12 @@ function renderConversation(session) {
   }
   const currentQuestion = session.question;
   const lastRound = rounds[rounds.length - 1];
-  const shouldShowCurrent = currentQuestion && (!lastRound || lastRound.question?.content !== currentQuestion.content || lastRound.answer);
+  const shouldShowCurrent = currentQuestion && (!lastRound || lastRound.question?.content !== currentQuestion.content);
   if (shouldShowCurrent) {
     parts.push(renderQuestionBubble((rounds.length || 0) + 1, currentQuestion));
+  }
+  if (state.pendingAnswer) {
+    parts.push(renderAnswerBubble(state.pendingAnswer, true));
   }
   if (state.busy) {
     parts.push(`<div class="system-line">正在评估回答，准备下一题...</div>`);
@@ -318,9 +427,10 @@ function renderFollowUpBubble(question) {
   `;
 }
 
-function renderAnswerBubble(answer) {
+function renderAnswerBubble(answer, pending = false) {
   return `
-    <article class="bubble answer">
+    <article class="bubble answer ${pending ? "pending" : ""}">
+      ${pending ? `<div class="bubble-meta">已提交，等待评分</div>` : ""}
       <p>${escapeHtml(answer)}</p>
     </article>
   `;
@@ -407,9 +517,14 @@ function showLocalNotice(message) {
 function resetCurrent() {
   closeStream();
   state.session = null;
+  state.streamSessionId = "";
   state.lastEventId = "";
+  state.pendingAnswer = "";
+  state.events = [];
   els.answerText.value = "";
   els.conversation.innerHTML = "";
+  showSetupNotice("");
+  renderEventTimeline();
   els.setupView.classList.remove("hidden");
   els.interviewView.classList.add("hidden");
   els.reportView.classList.add("hidden");
@@ -418,7 +533,7 @@ function resetCurrent() {
 
 function autoSizeAnswer() {
   els.answerText.style.height = "auto";
-  els.answerText.style.height = `${Math.min(140, Math.max(44, els.answerText.scrollHeight))}px`;
+  els.answerText.style.height = `${Math.min(220, Math.max(92, els.answerText.scrollHeight))}px`;
 }
 
 function modeLabel(mode) {
@@ -453,11 +568,20 @@ els.backToSetupBtn.addEventListener("click", resetCurrent);
 els.endInterviewBtn.addEventListener("click", resetCurrent);
 els.refreshSessions.addEventListener("click", loadSessions);
 els.userId.addEventListener("change", loadSessions);
+els.resumeUploadBtn.addEventListener("click", () => els.resumeFile.click());
+els.resumeFile.addEventListener("change", () => parseResumeFile(els.resumeFile.files?.[0]));
 els.answerText.addEventListener("input", autoSizeAnswer);
+els.answerText.addEventListener("keydown", (evt) => {
+  if ((evt.ctrlKey || evt.metaKey) && evt.key === "Enter") {
+    evt.preventDefault();
+    els.answerForm.requestSubmit();
+  }
+});
 els.practiceModeBtn.addEventListener("click", () => setMode("practice"));
 els.examModeBtn.addEventListener("click", () => setMode("exam"));
 
 setMode("practice");
 renderProgress([]);
+renderEventTimeline();
 checkHealth();
 loadSessions();

@@ -10,8 +10,8 @@ import (
 )
 
 // Config 是服务的顶层配置。
-// 设计原则：所有敏感字段（API key、DB 密码）一律 *只* 从环境变量读，
-// YAML 只承载结构与非敏感默认值。这样 YAML 可以放心入仓。
+// 设计原则：敏感字段运行时不参与 Config YAML 序列化，避免落盘泄漏。
+// API key 支持 env > YAML，DB 密码/连接信息仍只从环境变量注入。
 type Config struct {
 	Server    ServerConfig    `yaml:"server"`
 	Postgres  PostgresConfig  `yaml:"postgres"`
@@ -20,7 +20,7 @@ type Config struct {
 	Embedding EmbeddingConfig `yaml:"embedding"`
 	RateLimit RateLimitConfig `yaml:"rate_limit"`
 
-	// 敏感字段：yaml:"-" 防止序列化时泄漏；只从环境变量注入。
+	// 敏感字段：yaml:"-" 防止序列化时泄漏；Load 会按规则单独注入。
 	PostgresDSN     string `yaml:"-"`
 	RedisAddr       string `yaml:"-"`
 	RedisPassword   string `yaml:"-"`
@@ -89,6 +89,7 @@ type RateLimitConfig struct {
 // 优先级：env > yaml > default。
 func Load(path string) (*Config, error) {
 	cfg := defaults()
+	var keys sensitiveYAMLKeys
 
 	if path != "" {
 		raw, err := os.ReadFile(path)
@@ -98,14 +99,23 @@ func Load(path string) (*Config, error) {
 		if err := yaml.Unmarshal(raw, cfg); err != nil {
 			return nil, fmt.Errorf("parse yaml: %w", err)
 		}
+		if err := yaml.Unmarshal(raw, &keys); err != nil {
+			return nil, fmt.Errorf("parse yaml keys: %w", err)
+		}
 	}
 
-	// 敏感字段：MUST NOT live in yaml.
+	// 敏感字段运行时单独保存；优先级：env > yaml > default。
 	cfg.PostgresDSN = os.Getenv("INTERVIEW_POSTGRES_DSN")
 	cfg.RedisAddr = os.Getenv("INTERVIEW_REDIS_ADDR")
 	cfg.RedisPassword = os.Getenv("INTERVIEW_REDIS_PASSWORD")
-	cfg.LLMAPIKey = os.Getenv("INTERVIEW_LLM_API_KEY")
-	cfg.EmbeddingAPIKey = os.Getenv("INTERVIEW_EMBEDDING_API_KEY")
+	cfg.LLMAPIKey = keys.LLM.APIKey
+	cfg.EmbeddingAPIKey = keys.Embedding.APIKey
+	if v := os.Getenv("INTERVIEW_LLM_API_KEY"); v != "" {
+		cfg.LLMAPIKey = v
+	}
+	if v := os.Getenv("INTERVIEW_EMBEDDING_API_KEY"); v != "" {
+		cfg.EmbeddingAPIKey = v
+	}
 
 	// ops-tweakable env overrides
 	if v := os.Getenv("INTERVIEW_SERVER_ADDR"); v != "" {
@@ -138,6 +148,15 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+type sensitiveYAMLKeys struct {
+	LLM struct {
+		APIKey string `yaml:"api_key"`
+	} `yaml:"llm"`
+	Embedding struct {
+		APIKey string `yaml:"api_key"`
+	} `yaml:"embedding"`
 }
 
 func defaults() *Config {

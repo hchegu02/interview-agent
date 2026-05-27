@@ -1,7 +1,8 @@
-.PHONY: help tidy build run test test-race lint migrate-up migrate-down seed demo demo-pg demo-pg-full demo-mock demo-real load-test docker-up docker-up-cluster docker-down clean
+.PHONY: help tidy build run test test-core test-race lint migrate-up migrate-down seed demo demo-web demo-web-real demo-pg demo-pg-full demo-mock demo-real load-test docker-up docker-up-cluster docker-down clean
 
 GO ?= go
 APP := bin/server
+CONFIG ?= config/config.yaml.example
 
 help: ## show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
@@ -13,10 +14,13 @@ build: ## build server binary
 	$(GO) build -o $(APP) ./cmd/server
 
 run: build ## run server with local config
-	$(APP) -config config/config.yaml.example
+	$(APP) -config $(CONFIG)
 
 test: ## run unit tests
 	$(GO) test ./... -count=1
+
+test-core: ## run core regression packages for web demo and config
+	$(GO) test ./internal/parser ./internal/httpapi ./cmd/server ./internal/config -count=1
 
 test-race: ## run unit tests with race detector
 	$(GO) test ./... -race -count=1
@@ -37,6 +41,12 @@ seed: ## load demo question bank rows
 
 demo: build ## smoke test: start, ping, stop
 	sh ./scripts/smoke.sh
+
+demo-web: ## run web interview server in mock mode
+	INTERVIEW_LLM_MODE=mock INTERVIEW_EMBEDDING_MODE=mock $(GO) run ./cmd/server -config $(CONFIG)
+
+demo-web-real: ## run web interview server with real LLM; API key may come from env or YAML
+	INTERVIEW_LLM_MODE=real INTERVIEW_EMBEDDING_MODE=mock $(GO) run ./cmd/server -config $(CONFIG)
 
 demo-pg: build ## smoke test against configured PG DSN
 	sh ./scripts/smoke.sh

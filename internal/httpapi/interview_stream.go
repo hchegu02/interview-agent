@@ -51,6 +51,9 @@ func (s *Server) streamInterview(c *gin.Context) {
 		return
 	}
 
+	endMetrics := s.metricsRecorder.beginSSEConnection()
+	defer endMetrics()
+
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
