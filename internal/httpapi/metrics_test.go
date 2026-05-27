@@ -3,6 +3,7 @@ package httpapi
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,8 @@ import (
 	"time"
 
 	"interview-agent/internal/config"
+	"interview-agent/internal/domain"
+	"interview-agent/internal/graph"
 )
 
 func TestMetricsEndpoint_RecordsHTTPAndParserCounters(t *testing.T) {
@@ -99,6 +102,64 @@ func TestMetricsEndpoint_RecordsSSEConnections(t *testing.T) {
 	cancel()
 	resp.Body.Close()
 	eventuallyMetricsContains(t, ts.URL, `interview_sse_connections_active 0`)
+}
+
+func TestMetricsRecorder_RendersOperationalMetrics(t *testing.T) {
+	recorder := newMetricsRecorder()
+	recorder.recordGraphNode("pick_next", "ok", 1500*time.Millisecond)
+	recorder.recordLLMCall("qwen-plus", "ok", 250*time.Millisecond, 100, 25)
+	recorder.recordBackpressureRejection("interview_mutating")
+	end := recorder.beginInFlight("interview_mutating")
+	recorder.setBreakerState("open")
+
+	got := recorder.renderPrometheus()
+	for _, marker := range []string{
+		`interview_graph_node_total{node="pick_next",status="ok"} 1`,
+		`interview_graph_node_duration_seconds_count{node="pick_next",status="ok"} 1`,
+		`interview_graph_node_duration_seconds_sum{node="pick_next",status="ok"} 1.500000`,
+		`interview_llm_calls_total{model="qwen-plus",err_class="ok"} 1`,
+		`interview_llm_call_duration_seconds_count{model="qwen-plus",err_class="ok"} 1`,
+		`interview_llm_call_duration_seconds_sum{model="qwen-plus",err_class="ok"} 0.250000`,
+		`interview_llm_tokens_total{model="qwen-plus",type="prompt"} 100`,
+		`interview_llm_tokens_total{model="qwen-plus",type="completion"} 25`,
+		`interview_llm_breaker_state{state="open"} 1`,
+		`interview_inflight_requests{scope="interview_mutating"} 1`,
+		`interview_backpressure_rejections_total{scope="interview_mutating"} 1`,
+	} {
+		if !strings.Contains(got, marker) {
+			t.Fatalf("metrics missing %q\n--- metrics ---\n%s", marker, got)
+		}
+	}
+
+	end()
+	got = recorder.renderPrometheus()
+	if !strings.Contains(got, `interview_inflight_requests{scope="interview_mutating"} 0`) {
+		t.Fatalf("inflight gauge did not decrement\n--- metrics ---\n%s", got)
+	}
+}
+
+func TestMetricsGraphCallback_RecordsNodeLifecycle(t *testing.T) {
+	recorder := newMetricsRecorder()
+	cb := NewMetricsGraphCallback(recorder)
+	sess := &domain.Session{ID: "s-graph-metrics"}
+
+	cb.OnNodeStart(context.Background(), "pick_next", sess)
+	cb.OnNodeEnd(context.Background(), "pick_next", sess)
+	cb.OnNodeStart(context.Background(), "probe_ask", sess)
+	cb.OnNodeError(context.Background(), "probe_ask", sess, graph.ErrSuspended)
+	cb.OnNodeStart(context.Background(), "evaluate", sess)
+	cb.OnNodeError(context.Background(), "evaluate", sess, errors.New("boom"))
+
+	got := recorder.renderPrometheus()
+	for _, marker := range []string{
+		`interview_graph_node_total{node="evaluate",status="other"} 1`,
+		`interview_graph_node_total{node="pick_next",status="ok"} 1`,
+		`interview_graph_node_total{node="probe_ask",status="suspended"} 1`,
+	} {
+		if !strings.Contains(got, marker) {
+			t.Fatalf("metrics missing %q\n--- metrics ---\n%s", marker, got)
+		}
+	}
 }
 
 func getMetrics(t *testing.T, baseURL string) string {

@@ -11,9 +11,9 @@ import (
 
 // Server 持有所有依赖。阶段 0 只放骨架，后续阶段往里加 service。
 type Server struct {
-	cfg            *config.Config
-	interview      *InterviewService
-	documentParser parser.DocumentParser
+	cfg             *config.Config
+	interview       *InterviewService
+	documentParser  parser.DocumentParser
 	metricsRecorder *metricsRecorder
 
 	// breakerState 可选注入：real 模式下接 BreakingChatModel.State，返回
@@ -60,7 +60,7 @@ func (s *Server) Router() *gin.Engine {
 	}
 
 	streaming := r.Group("/api/interview")
-	streaming.Use(MaxInFlightMiddleware(s.cfg.Server.MaxStreams))
+	streaming.Use(MaxInFlightMiddlewareWithMetrics(s.cfg.Server.MaxStreams, s.metricsRecorder, "interview_stream"))
 	{
 		streaming.GET("/stream", s.streamInterview)
 	}
@@ -68,7 +68,7 @@ func (s *Server) Router() *gin.Engine {
 	// LLM 入口子组：start / answer 会走 Graph + LLM，必须挂背压。
 	// limit <= 0 时 middleware 退化成 no-op，对单实例 dev / 测试零侵入。
 	mutating := r.Group("/api/interview")
-	mutating.Use(MaxInFlightMiddleware(s.cfg.Server.MaxInFlight))
+	mutating.Use(MaxInFlightMiddlewareWithMetrics(s.cfg.Server.MaxInFlight, s.metricsRecorder, "interview_mutating"))
 	{
 		mutating.POST("/start", s.startInterview)
 		mutating.POST("/answer", s.answerInterview)

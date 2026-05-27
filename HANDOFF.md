@@ -98,7 +98,10 @@
 - `.gitignore`：新增 `tmp/demos/`，每次 demo 落盘的 timestamp 子目录默认不入仓。
 - `internal/httpapi/web/`：新增内嵌 Web 前端，覆盖 JD / 简历输入、练习 / 考试模式、历史会话、SSE 事件时间线、回答栏和报告展示。
 - `internal/httpapi/documents.go` / `internal/parser/text.go`：新增简历上传解析接口，Dispatcher 支持 PDF / DOCX / TXT / Markdown，Web 端可上传后填充简历文本。
-- `internal/httpapi/metrics.go`：新增基础 `/metrics`，当前覆盖 HTTP request counter、parser document counter、SSE active/total；SSE 连接已在 `streamInterview` 生命周期内计数。
+- `internal/httpapi/metrics.go`：`/metrics` 覆盖 HTTP request、parser document、SSE active/total、Graph node total / duration summary、LLM calls / duration summary / tokens、breaker state、in-flight 和 backpressure rejection。
+- `internal/httpapi/metrics_graph_callback.go`：新增 Graph metrics callback，按 node + status 记录节点执行次数和耗时。
+- `internal/llm/recording.go`：`RecordingChatModel` 支持可选 observer，server 用它把每次 LLM 调用同步写入 metrics，demo 原有 Snapshot 行为不变。
+- `cmd/server/main.go`：server 启动时先创建 metrics recorder，再把 Graph callback 和 LLM observer 注入 runner；`/metrics` 现在能反映真实 start/answer 链路。
 - `Makefile`：新增 `demo-web` / `demo-web-real` / `test-core`，用于本地 Web 演示和核心回归。
 
 ## 4. 当前已知风险 / TODO
@@ -108,9 +111,9 @@
 - `WorkingMemory.ScoredRounds` / `DegradedRounds` 已提成强类型字段；`ReflectTopic` 已作为 reflection_check → pick_next 的强类型补漏信号；降级原因已集中到 `DegradedReasons`；`Notes` 不再承载主流程协议，只兼容旧 `reflect_topic`。
 - `Score = -1` 仍是评估失败哨兵；所有统计逻辑必须先判 `<0`。
 - `cmd/server` 已接最小 PG session store；还没有 repository 层的 lease / takeover / list sessions 等能力。
-- SSE 流已有 `server.max_streams` 背压和 `/metrics` active/total 计数；还缺 dropped / backpressure / duration 等细分指标。
+- SSE 流已有 `server.max_streams` 背压和 `/metrics` active/total / rejection 计数；还缺 dropped event 与连接 duration 细分指标。
 - 真实 LLM demo 流程已搭好并已由操作者本地验证：prompt schema 稳定，provider 调用无错误，报告能识别答非所问并给出合理低分；`cmd/demo` 现在会在 `INTERVIEW_POSTGRES_DSN` 存在时走真实 PG/pgvector 题库，`run.json.config.retriever` 会明确记录 `pgvector` / `fallback`；尚无跨多次运行的 prompt regression diff。
-- 基础 `/metrics` 已有 HTTP / parser / SSE；完整 Graph node、LLM、breaker、backpressure、duration histogram 还没做。
+- `/metrics` 已有 HTTP / parser / SSE / Graph / LLM / breaker / backpressure；当前 duration 用 summary count/sum，没有接 Prometheus SDK histogram bucket。
 - README 已修正为自研 Graph，但设计文档里可能仍有 Eino/阶段旧描述。
 - 当前环境多次出现 Windows sandbox `CreateProcessAsUserW failed: 1920`，导致 `gofmt`、`git status`、`go build`、`sh -n` 偶发无法执行；`go test ./... -count=1` 已通过。
 
@@ -163,9 +166,9 @@ pgvector / PG session store 集成测试受 `INTEGRATION=1` + `INTERVIEW_POSTGRE
 推荐顺序：
 
 1. 真实浏览器流程验收：`make demo-web` 或 `go run ./cmd/server -config config/config.yaml.example`，跑上传简历、开始面试、SSE 更新、回答、报告、历史会话切换。
-2. 补完整 Prometheus metrics：Graph node duration、LLM calls / errors / tokens、breaker state、in-flight gauge、503 / 409 计数和 duration histogram。
-3. OTel tracing：贯穿 HTTP → Graph → LLM / Parser / Retriever，能按 trace_id 定位慢节点。
-4. 熔断器半开期渐进放行 + Chaos 脚本，演示 LLM timeout、Redis down、PG down 时的降级和恢复。
+2. OTel tracing：贯穿 HTTP → Graph → LLM / Parser / Retriever，能按 trace_id 定位慢节点。
+3. 熔断器半开期渐进放行 + Chaos 脚本，演示 LLM timeout、Redis down、PG down 时的降级和恢复。
+4. Prometheus SDK histogram bucket 化：把当前 duration summary 迁到标准 histogram，并补 409 lease conflict 计数。
 5. 跨多次 demo 运行的 prompt regression diff 工具（基于 `run.json` 做 token / schema_retries / report 评分趋势比较）。
 
 ## 8. 不要做哪些事

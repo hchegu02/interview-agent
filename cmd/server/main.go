@@ -74,7 +74,9 @@ func main() {
 		os.Exit(1)
 	}
 
-	graphRunner, cleanup, err := buildInterviewRunner(ctx, cfg, deps, events)
+	server := httpapi.NewServer(cfg)
+
+	graphRunner, cleanup, err := buildInterviewRunner(ctx, cfg, deps, events, server.GraphMetricsCallback(), server.ObserveLLMCall)
 	if err != nil {
 		logger.Error("interview graph setup failed", "err", err)
 		os.Exit(1)
@@ -88,7 +90,7 @@ func main() {
 	}
 	defer serviceCleanup()
 
-	server := httpapi.NewServerWithInterview(cfg, interviewService)
+	server.SetInterviewService(interviewService)
 	if graphRunner.breakerState != nil {
 		server.SetBreakerState(graphRunner.breakerState)
 	}
@@ -215,10 +217,15 @@ func hostnameOwnerID() string {
 	return name
 }
 
-func buildInterviewRunner(ctx context.Context, cfg *config.Config, deps appDeps, events httpapi.InterviewEventPublisher) (interviewRunnerBundle, func(), error) {
+func buildInterviewRunner(ctx context.Context, cfg *config.Config, deps appDeps, events httpapi.InterviewEventPublisher, metricsCallback graph.Callback, llmObserver func(llm.CallRecord)) (interviewRunnerBundle, func(), error) {
 	model, breakerState, err := buildChatModel(cfg)
 	if err != nil {
 		return interviewRunnerBundle{}, nil, err
+	}
+	if llmObserver != nil {
+		recordModel := llm.NewRecordingChatModel(model)
+		recordModel.SetObserver(llmObserver)
+		model = recordModel
 	}
 	embedder, err := buildEmbedder(cfg)
 	if err != nil {
@@ -228,11 +235,15 @@ func buildInterviewRunner(ctx context.Context, cfg *config.Config, deps appDeps,
 	if err != nil {
 		return interviewRunnerBundle{}, nil, err
 	}
+	callbacks := []graph.Callback{httpapi.NewInterviewGraphCallback(events)}
+	if metricsCallback != nil {
+		callbacks = append(callbacks, metricsCallback)
+	}
 	runner, err := graphs.BuildInterviewGraph(graphs.Deps{
 		Model:     model,
 		Embedder:  embedder,
 		Retriever: r,
-		Callbacks: []graph.Callback{httpapi.NewInterviewGraphCallback(events)},
+		Callbacks: callbacks,
 	})
 	if err != nil {
 		cleanup()

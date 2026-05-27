@@ -23,12 +23,12 @@
 - Redis session snapshot / lease / takeover：设置 `INTERVIEW_REDIS_URL` 后启用跨实例恢复和租约冲突保护
 - Real LLM 可靠性保护：进程内并发 limiter、熔断器、`/readyz` degraded 状态
 - HTTP 背压：`/api/interview/start`、`/api/interview/answer` 使用 `server.max_in_flight` 限制突发并发；SSE 流使用 `server.max_streams`
-- 基础 Prometheus 文本指标：`GET /metrics` 暴露 HTTP 请求、简历解析、SSE 连接 active/total
+- Prometheus metrics 文本指标：`GET /metrics` 暴露 HTTP、简历解析、SSE、Graph 节点、LLM 调用 / token、熔断器状态和背压计数
 - 离线题库工具：`cmd/reindex`
 - Smoke 脚本：`make demo` 调用 `scripts/smoke.sh`，覆盖健康检查与 start/get/answer/list；`scripts/smoke_sse.ps1` 覆盖 SSE 服务级路径
 - 结构化 demo CLI：`make demo-mock` / `make demo-real` 会生成 `tmp/demos/<timestamp>/run.json` 和 `report.md`
 
-仍未完成：完整 Prometheus metrics（Graph / LLM / 熔断器 / 时延直方图）、OTel tracing、Chaos 故障注入脚本、压测报告、Helm chart、题单预览节点和 RAG 评估指标。
+仍未完成：OTel tracing、Chaos 故障注入脚本、压测报告、Helm chart、题单预览节点和 RAG 评估指标；Prometheus 目前用轻量 summary / counter / gauge，还没接 Prometheus SDK histogram。
 
 ## 快速启动
 
@@ -196,13 +196,13 @@ curl "http://localhost:8080/api/interview/sessions/demo-1?user_id=u1"
 `answer` 和会话详情都支持可选 `user_id` 归属校验；不传时保持兼容。
 `GET /api/interview/stream?session_id=...` 可直接订阅单个会话的 SSE 流；支持 `Last-Event-ID` 做断线回放，并会发送 heartbeat 保活。默认使用内存事件总线；设置 `INTERVIEW_REDIS_URL=redis://localhost:6379/0` 后会改用 Redis Streams。Redis ACL 用户可使用 `redis://username:password@localhost:6379/0`。
 
-基础 metrics：
+Metrics：
 
 ```bash
 curl http://localhost:8080/metrics
 ```
 
-当前包含 HTTP request counter、parser document counter、SSE active/total。Graph node、LLM 调用、熔断器状态、入口背压和 duration histogram 还在下一轮补齐。
+当前包含 HTTP request counter、parser document counter、SSE active/total、Graph node total / duration summary、LLM calls / duration summary / tokens、breaker state gauge、in-flight gauge、backpressure rejection counter。
 
 Redis session coordinator 已接入 `InterviewService`：设置 `INTERVIEW_REDIS_URL` 后，`start` 会获取 session lease 并写 snapshot，`get/answer` 在本地 store miss 时会从 Redis snapshot 恢复，`answer` 会续约或重新获取过期 lease，成功后更新 snapshot；会话完成后释放 lease。Redis lease 冲突会返回 HTTP 409，并带 `Retry-After` / `retry_after_seconds`。
 Redis snapshot 写入失败不会打断 start/answer 主流程；服务会在 `WorkingMemory.DegradedReasons["redis_snapshot"]` 记录原因，并继续依赖 PG / 内存 session store。Redis lease acquire / renew 失败仍会阻断，因为它关系到多实例所有权。
@@ -212,11 +212,10 @@ Real LLM 模式会套进程内并发限制，配置项为 `llm.max_concurrency`�
 ## Roadmap（按当前 ROI）
 
 1. 可演示性闭环：README、`make demo-web`、真实浏览器流程验收、demo 产物说明。
-2. 补完整 Prometheus metrics：Graph node、LLM、熔断器、背压和 duration histogram。
-3. OTel tracing：贯穿 HTTP → Graph → LLM / Parser / Retriever，支持按 `trace_id` 定位慢节点。
-4. 可靠性演示：熔断器半开期渐进放行、Chaos 故障注入脚本和恢复验证。
-5. 工程化：GitHub Actions CI 矩阵、Docker 镜像、k8s Helm chart 和 probes。
-6. 产品增强：`preview_plan` 题单预览、候选人档案复用、项目背景库和简化版 RAGAS 指标。
+2. OTel tracing：贯穿 HTTP → Graph → LLM / Parser / Retriever，支持按 `trace_id` 定位慢节点。
+3. 可靠性演示：熔断器半开期渐进放行、Chaos 故障注入脚本和恢复验证。
+4. 工程化：GitHub Actions CI 矩阵、Docker 镜像、k8s Helm chart 和 probes。
+5. 产品增强：`preview_plan` 题单预览、候选人档案复用、项目背景库和简化版 RAGAS 指标。
 
 ## 测试
 
