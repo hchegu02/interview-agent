@@ -177,6 +177,9 @@ func (s *PGImportStore) AddItems(ctx context.Context, items []ImportItem) error 
 	for _, item := range items {
 		itemJSON, _ := json.Marshal(item.Item)
 		rawJSON := itemJSON
+		if item.OriginalItem != nil {
+			rawJSON, _ = json.Marshal(item.OriginalItem)
+		}
 		batch.Queue(`
 INSERT INTO question_bank_import_items (
     id, job_id, chunk_id, question_id, status, item_json, errors, raw_json, created_at, updated_at
@@ -201,7 +204,7 @@ ON CONFLICT (id) DO UPDATE SET
 
 func (s *PGImportStore) ListItems(ctx context.Context, jobID string) ([]ImportItem, error) {
 	rows, err := s.Pool.Query(ctx, `
-SELECT id, job_id, COALESCE(chunk_id, ''), question_id, status, item_json, errors, created_at, updated_at
+SELECT id, job_id, COALESCE(chunk_id, ''), question_id, status, item_json, raw_json, errors, created_at, updated_at
 FROM question_bank_import_items
 WHERE job_id=$1
 ORDER BY created_at, id
@@ -214,10 +217,17 @@ ORDER BY created_at, id
 	for rows.Next() {
 		var item ImportItem
 		var itemJSON []byte
-		if err := rows.Scan(&item.ID, &item.JobID, &item.ChunkID, &item.QuestionID, &item.Status, &itemJSON, &item.Errors, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		var rawJSON []byte
+		if err := rows.Scan(&item.ID, &item.JobID, &item.ChunkID, &item.QuestionID, &item.Status, &itemJSON, &rawJSON, &item.Errors, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal(itemJSON, &item.Item)
+		if len(rawJSON) > 0 && string(rawJSON) != "{}" {
+			var original Item
+			if err := json.Unmarshal(rawJSON, &original); err == nil {
+				item.OriginalItem = &original
+			}
+		}
 		items = append(items, item)
 	}
 	return items, rows.Err()

@@ -130,6 +130,12 @@ func TestImportService_ImportLocalQuestionOnlyUsesLLMEnrichment(t *testing.T) {
 	if item.ID != "question-only-001" || item.Content != "Go map 并发读写为什么会 panic？" {
 		t.Fatalf("enrichment should preserve id/content: %+v", item)
 	}
+	if items[0].OriginalItem == nil {
+		t.Fatal("staged enriched import should keep original item for review")
+	}
+	if items[0].OriginalItem.SkillCategory != "" || len(items[0].OriginalItem.Tags) != 0 {
+		t.Fatalf("original item should remain raw upload metadata: %+v", items[0].OriginalItem)
+	}
 	if item.SkillCategory == "" || item.SkillCategory == "general" {
 		t.Fatalf("SkillCategory = %q, want LLM-enriched category", item.SkillCategory)
 	}

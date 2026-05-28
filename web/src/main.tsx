@@ -641,12 +641,55 @@ function ImportDetail({ jobs, selectedId, items, busy, commitImport }: {
           <article key={item.id} className={`import-item ${item.status}`}>
             <div><strong>{item.question_id}</strong><span>{item.status}</span></div>
             <p>{item.item.content || "空题干"}</p>
+            <ImportDiff item={item} />
             {!!item.errors?.length && <em>{item.errors.join("；")}</em>}
           </article>
         ))}
       </div>
     </aside>
   );
+}
+
+function ImportDiff({ item }: { item: QuestionBankImportItem }) {
+  const rows = importDiffRows(item);
+  if (!rows.length) return null;
+  return (
+    <div className="import-diff">
+      {rows.map((row) => (
+        <div key={row.key} className="import-diff-row">
+          <span>{row.label}</span>
+          <code>{row.before || "空"}</code>
+          <code>{row.after || "空"}</code>
+          <em>{row.source}</em>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function importDiffRows(importItem: QuestionBankImportItem) {
+  const original = importItem.original_item;
+  if (!original) return [];
+  const fields: Array<[keyof QuestionBankItem, string]> = [
+    ["skill_category", "技能"],
+    ["difficulty", "难度"],
+    ["tags", "标签"],
+    ["expected_points", "要点"],
+    ["rubric", "Rubric"],
+    ["sample_answer", "参考答案"],
+    ["follow_up_hints", "追问"],
+  ];
+  return fields.map(([key, label]) => {
+    const before = formatImportField(original[key]);
+    const after = formatImportField(importItem.item[key]);
+    return {
+      key,
+      label,
+      before,
+      after,
+      source: before === after ? "上传" : before ? "合并" : "LLM",
+    };
+  }).filter((row) => row.before || row.after);
 }
 
 function PageHeader({ eyebrow, title, copy }: { eyebrow: string; title: string; copy: string }) {
@@ -789,6 +832,17 @@ function modeLabel(mode: Mode) {
 
 function importSourceLabel(source: string) {
   return source === "document" ? "文档生成" : "本地题库";
+}
+
+function formatImportField(value: unknown): string {
+  if (value == null || value === "") return "";
+  if (Array.isArray(value)) return value.join(" / ");
+  if (typeof value === "object") {
+    return Object.entries(value as Record<string, string>)
+      .map(([key, val]) => `${key}: ${val}`)
+      .join(" / ");
+  }
+  return String(value);
 }
 
 function formatTime(value: string) {

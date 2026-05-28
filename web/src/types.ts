@@ -222,5 +222,6 @@ export type QuestionBankImportItem = {
   question_id: string;
   status: string;
   item: QuestionBankItem;
+  original_item?: QuestionBankItem;
   errors?: string[];
 };

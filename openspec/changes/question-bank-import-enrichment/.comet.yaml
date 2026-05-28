@@ -1,5 +1,5 @@
 workflow: full
-phase: verify
+phase: build
 build_mode: executing-plans
 isolation: branch
 verify_mode: null

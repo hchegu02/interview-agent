@@ -1002,6 +1002,41 @@ h3 {
   border-color: #fed7aa;
 }
 
+.import-diff {
+  display: grid;
+  gap: 4px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #e2e8f0;
+}
+
+.import-diff-row {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr) minmax(0, 1fr) 42px;
+  gap: 6px;
+  align-items: start;
+}
+
+.import-diff-row span,
+.import-diff-row em {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+}
+
+.import-diff-row code {
+  min-width: 0;
+  padding: 3px 5px;
+  overflow-wrap: anywhere;
+  color: #0f172a;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 5px;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1.35;
+}
+
 .question-toolbar {
   display: grid;
   grid-template-columns: minmax(240px, 1.7fr) repeat(3, minmax(120px, 0.8fr)) auto;

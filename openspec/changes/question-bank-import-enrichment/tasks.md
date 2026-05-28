@@ -6,3 +6,4 @@
 - [x] Add regression tests for enrichment and fallback.
 - [x] Document the code change.
 - [x] Add batched enrichment and strict missing-item validation.
+- [x] Add import preview diff between uploaded fields and enriched fields.

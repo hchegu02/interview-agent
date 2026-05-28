@@ -75,15 +75,16 @@ type ImportChunk struct {
 }
 
 type ImportItem struct {
-	ID         string    `json:"id"`
-	JobID      string    `json:"job_id"`
-	ChunkID    string    `json:"chunk_id,omitempty"`
-	QuestionID string    `json:"question_id"`
-	Status     string    `json:"status"`
-	Item       Item      `json:"item"`
-	Errors     []string  `json:"errors,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID           string    `json:"id"`
+	JobID        string    `json:"job_id"`
+	ChunkID      string    `json:"chunk_id,omitempty"`
+	QuestionID   string    `json:"question_id"`
+	Status       string    `json:"status"`
+	Item         Item      `json:"item"`
+	OriginalItem *Item     `json:"original_item,omitempty"`
+	Errors       []string  `json:"errors,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
 }
 
 type ImportFile struct {
@@ -192,11 +193,12 @@ func (s *ImportService) processLocalQuestionBank(ctx context.Context, job Import
 	if err != nil {
 		return s.failJob(ctx, job, err)
 	}
+	originals := cloneImportItems(items)
 	items, err = s.enrichLocalItems(ctx, items)
 	if err != nil {
 		return s.failJob(ctx, job, err)
 	}
-	return s.stageItems(ctx, job, "", items)
+	return s.stageItemsWithOriginals(ctx, job, "", items, originals)
 }
 
 func (s *ImportService) ImportDocument(ctx context.Context, file ImportFile) (ImportJob, error) {
@@ -561,10 +563,19 @@ func (s *ImportService) List(ctx context.Context) ([]ImportJob, error) {
 }
 
 func (s *ImportService) stageItems(ctx context.Context, job ImportJob, chunkID string, items []Item) (ImportJob, error) {
+	return s.stageItemsWithOriginals(ctx, job, chunkID, items, nil)
+}
+
+func (s *ImportService) stageItemsWithOriginals(ctx context.Context, job ImportJob, chunkID string, items []Item, originals []Item) (ImportJob, error) {
 	job.Status = ImportStatusValidating
 	job, _ = s.imports.UpdateJob(ctx, job)
 	staged := make([]ImportItem, 0, len(items))
-	for _, item := range items {
+	for i, item := range items {
+		var original *Item
+		if i < len(originals) {
+			originalItem := cloneItem(originals[i])
+			original = &originalItem
+		}
 		item = normalizeImportedItem(item)
 		errs := validateImportedItem(item)
 		status := ImportItemStatusValid
@@ -572,15 +583,16 @@ func (s *ImportService) stageItems(ctx context.Context, job ImportJob, chunkID s
 			status = ImportItemStatusInvalid
 		}
 		staged = append(staged, ImportItem{
-			ID:         job.ID + ":" + item.ID,
-			JobID:      job.ID,
-			ChunkID:    chunkID,
-			QuestionID: item.ID,
-			Status:     status,
-			Item:       item,
-			Errors:     errs,
-			CreatedAt:  time.Now().UTC(),
-			UpdatedAt:  time.Now().UTC(),
+			ID:           job.ID + ":" + item.ID,
+			JobID:        job.ID,
+			ChunkID:      chunkID,
+			QuestionID:   item.ID,
+			Status:       status,
+			Item:         item,
+			OriginalItem: original,
+			Errors:       errs,
+			CreatedAt:    time.Now().UTC(),
+			UpdatedAt:    time.Now().UTC(),
 		})
 		if status == ImportItemStatusValid {
 			job.ValidItems++
@@ -1274,8 +1286,23 @@ func cloneImportChunk(chunk ImportChunk) ImportChunk {
 
 func cloneImportItem(item ImportItem) ImportItem {
 	item.Item = cloneItem(item.Item)
+	if item.OriginalItem != nil {
+		original := cloneItem(*item.OriginalItem)
+		item.OriginalItem = &original
+	}
 	item.Errors = append([]string(nil), item.Errors...)
 	return item
+}
+
+func cloneImportItems(items []Item) []Item {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]Item, 0, len(items))
+	for _, item := range items {
+		out = append(out, cloneItem(item))
+	}
+	return out
 }
 
 func cloneStringMap(in map[string]string) map[string]string {
