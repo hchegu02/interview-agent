@@ -3,7 +3,10 @@ package questionbank
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -167,6 +170,62 @@ func TestImportService_ImportLocalQuestionOnlyWithoutLLMFallsBackToDefaults(t *t
 	}
 	if len(item.ExpectedPoints) != 0 || len(item.Rubric) != 0 || len(item.FollowUpHints) != 0 {
 		t.Fatalf("fallback should not invent rich metadata without LLM: %+v", item)
+	}
+}
+
+func TestImportService_ImportLocalEnrichmentBatchesRequests(t *testing.T) {
+	ctx := context.Background()
+	imports := NewMemoryImportStore()
+	model := &recordingEnrichmentModel{}
+	service := NewImportService(ImportServiceDeps{
+		Imports: imports,
+		Writer:  NewMemoryStore(nil),
+		Model:   model,
+	})
+
+	job, err := service.ImportLocalQuestionBank(ctx, ImportFile{
+		Filename: "questions.json",
+		Reader: bytes.NewBufferString(`[
+			{"id":"q1","content":"Go channel 如何避免 goroutine 泄漏？"},
+			{"id":"q2","content":"Redis 热 key 如何治理？"},
+			{"id":"q3","content":"PostgreSQL 慢查询如何排查？"},
+			{"id":"q4","content":"服务雪崩如何用熔断治理？"}
+		]`),
+		Size: 512,
+	})
+	if err != nil {
+		t.Fatalf("ImportLocalQuestionBank: %v", err)
+	}
+	if job.Status != ImportStatusReady || job.ValidItems != 4 {
+		t.Fatalf("job = %+v, want ready with four valid items", job)
+	}
+	if model.calls != 2 {
+		t.Fatalf("LLM calls = %d, want 2 batches", model.calls)
+	}
+}
+
+func TestImportService_ImportLocalEnrichmentFailsOnMissingReturnedItem(t *testing.T) {
+	ctx := context.Background()
+	imports := NewMemoryImportStore()
+	service := NewImportService(ImportServiceDeps{
+		Imports: imports,
+		Writer:  NewMemoryStore(nil),
+		Model:   missingEnrichmentModel{},
+	})
+
+	job, err := service.ImportLocalQuestionBank(ctx, ImportFile{
+		Filename: "questions.json",
+		Reader: bytes.NewBufferString(`[
+			{"id":"q1","content":"Go channel 如何避免 goroutine 泄漏？"},
+			{"id":"q2","content":"Redis 热 key 如何治理？"}
+		]`),
+		Size: 256,
+	})
+	if err == nil {
+		t.Fatal("ImportLocalQuestionBank should fail when LLM omits an item")
+	}
+	if job.Status != ImportStatusFailed {
+		t.Fatalf("job status = %q, want failed", job.Status)
 	}
 }
 
@@ -454,4 +513,83 @@ func TestImportService_CommitEmbedsImportedItems(t *testing.T) {
 	if model != "mock" {
 		t.Fatalf("embedding model = %q, want mock", model)
 	}
+}
+
+type recordingEnrichmentModel struct {
+	calls int
+}
+
+func (m *recordingEnrichmentModel) Name() string { return "recording-enrichment" }
+
+func (m *recordingEnrichmentModel) Stream(ctx context.Context, messages []llm.Message, opts llm.Options) (<-chan llm.Chunk, error) {
+	return nil, fmt.Errorf("stream not implemented")
+}
+
+func (m *recordingEnrichmentModel) Generate(ctx context.Context, messages []llm.Message, opts llm.Options) (*llm.Response, error) {
+	m.calls++
+	items := enrichmentRequestItems(messages)
+	out := make([]Item, 0, len(items))
+	for _, item := range items {
+		out = append(out, enrichedTestItem(item))
+	}
+	raw, err := json.Marshal(struct {
+		Items []Item `json:"items"`
+	}{Items: out})
+	if err != nil {
+		return nil, err
+	}
+	return &llm.Response{Content: string(raw), Model: m.Name()}, nil
+}
+
+type missingEnrichmentModel struct{}
+
+func (missingEnrichmentModel) Name() string { return "missing-enrichment" }
+
+func (missingEnrichmentModel) Stream(ctx context.Context, messages []llm.Message, opts llm.Options) (<-chan llm.Chunk, error) {
+	return nil, fmt.Errorf("stream not implemented")
+}
+
+func (missingEnrichmentModel) Generate(ctx context.Context, messages []llm.Message, opts llm.Options) (*llm.Response, error) {
+	items := enrichmentRequestItems(messages)
+	if len(items) > 1 {
+		items = items[:1]
+	}
+	out := make([]Item, 0, len(items))
+	for _, item := range items {
+		out = append(out, enrichedTestItem(item))
+	}
+	raw, err := json.Marshal(struct {
+		Items []Item `json:"items"`
+	}{Items: out})
+	if err != nil {
+		return nil, err
+	}
+	return &llm.Response{Content: string(raw), Model: "missing-enrichment"}, nil
+}
+
+func enrichmentRequestItems(messages []llm.Message) []Item {
+	if len(messages) == 0 {
+		return nil
+	}
+	content := messages[len(messages)-1].Content
+	start := strings.Index(content, `{"items"`)
+	if start < 0 {
+		return nil
+	}
+	var request struct {
+		Items []Item `json:"items"`
+	}
+	_ = json.Unmarshal([]byte(content[start:]), &request)
+	return request.Items
+}
+
+func enrichedTestItem(item Item) Item {
+	item.SkillCategory = "go"
+	item.Difficulty = 3
+	item.Tags = []string{"go", "backend"}
+	item.ExpectedPoints = []string{"关键机制", "工程取舍"}
+	item.Rubric = map[string]string{"good": "覆盖机制和落地方案"}
+	item.SampleAnswer = "示例答案"
+	item.FollowUpHints = []string{"追问一个边界场景"}
+	return item
 }

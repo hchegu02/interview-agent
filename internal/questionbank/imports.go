@@ -41,6 +41,8 @@ const (
 	ImportItemStatusInvalid  = "invalid"
 	ImportItemStatusRejected = "rejected"
 	ImportItemStatusImported = "imported"
+
+	localEnrichmentBatchSize = 2
 )
 
 var ErrImportNotFound = errors.New("question bank import job not found")
@@ -630,22 +632,17 @@ func (s *ImportService) enrichLocalItems(ctx context.Context, items []Item) ([]I
 		return items, nil
 	}
 
-	raw, err := json.Marshal(struct {
-		Items []Item `json:"items"`
-	}{Items: need})
-	if err != nil {
-		return nil, err
-	}
-	resp, err := llm.CallWithSchema(ctx, s.model, []llm.Message{
-		{Role: "system", Content: "你是题库元数据补全助手。只输出 JSON。"},
-		{Role: "user", Content: "补齐题库元数据。保留每道题的 id 和 content，返回 items 数组；每项补齐 tags, skill_category, difficulty, expected_points, rubric, sample_answer, follow_up_hints。\n\n" + string(raw)},
-	}, llm.Options{MaxTokens: 1800, Temperature: 0.2}, validateItemsJSON, 1)
-	if err != nil {
-		return nil, err
-	}
-	enriched, err := parseQuestionBankItems("enriched.json", []byte(resp.Content))
-	if err != nil {
-		return nil, err
+	enriched := make([]Item, 0, len(need))
+	for start := 0; start < len(need); start += localEnrichmentBatchSize {
+		end := start + localEnrichmentBatchSize
+		if end > len(need) {
+			end = len(need)
+		}
+		batch, err := s.enrichLocalBatch(ctx, need[start:end])
+		if err != nil {
+			return nil, err
+		}
+		enriched = append(enriched, batch...)
 	}
 	byID := make(map[string]Item, len(enriched))
 	byContent := make(map[string]Item, len(enriched))
@@ -668,12 +665,37 @@ func (s *ImportService) enrichLocalItems(ctx context.Context, items []Item) ([]I
 		if !ok {
 			enrichedItem, ok = byContent[strings.TrimSpace(item.Content)]
 		}
-		if ok {
-			item = mergeEnrichedItem(item, enrichedItem)
+		if !ok {
+			return nil, fmt.Errorf("llm enrichment missing item %q", itemIdentity(item))
 		}
+		item = mergeEnrichedItem(item, enrichedItem)
 		out = append(out, item)
 	}
 	return out, nil
+}
+
+func (s *ImportService) enrichLocalBatch(ctx context.Context, items []Item) ([]Item, error) {
+	raw, err := json.Marshal(struct {
+		Items []Item `json:"items"`
+	}{Items: items})
+	if err != nil {
+		return nil, err
+	}
+	resp, err := llm.CallWithSchema(ctx, s.model, []llm.Message{
+		{Role: "system", Content: "你是题库元数据补全助手。只输出 JSON。"},
+		{Role: "user", Content: "补齐题库元数据。保留每道题的 id 和 content，返回 items 数组；每项补齐 tags, skill_category, difficulty, expected_points, rubric, sample_answer, follow_up_hints。必须为输入中的每一道题返回一项，不能新增题目，不能漏题。\n\n" + string(raw)},
+	}, llm.Options{MaxTokens: 1800, Temperature: 0.2}, validateItemsJSON, 1)
+	if err != nil {
+		return nil, err
+	}
+	enriched, err := parseQuestionBankItems("enriched.json", []byte(resp.Content))
+	if err != nil {
+		return nil, err
+	}
+	if err := validateEnrichmentCoverage(items, enriched); err != nil {
+		return nil, err
+	}
+	return enriched, nil
 }
 
 func parseQuestionBankItems(filename string, raw []byte) ([]Item, error) {
@@ -850,6 +872,40 @@ func mergeEnrichedItem(base, enriched Item) Item {
 		base.FollowUpHints = enriched.FollowUpHints
 	}
 	return base
+}
+
+func validateEnrichmentCoverage(inputs, enriched []Item) error {
+	byID := make(map[string]struct{}, len(enriched))
+	byContent := make(map[string]struct{}, len(enriched))
+	for _, item := range enriched {
+		if id := strings.TrimSpace(item.ID); id != "" {
+			byID[id] = struct{}{}
+		}
+		if content := strings.TrimSpace(item.Content); content != "" {
+			byContent[content] = struct{}{}
+		}
+	}
+	for _, item := range inputs {
+		if id := strings.TrimSpace(item.ID); id != "" {
+			if _, ok := byID[id]; ok {
+				continue
+			}
+		}
+		if content := strings.TrimSpace(item.Content); content != "" {
+			if _, ok := byContent[content]; ok {
+				continue
+			}
+		}
+		return fmt.Errorf("llm enrichment missing item %q", itemIdentity(item))
+	}
+	return nil
+}
+
+func itemIdentity(item Item) string {
+	if id := strings.TrimSpace(item.ID); id != "" {
+		return id
+	}
+	return strings.TrimSpace(item.Content)
 }
 
 func validateImportedItem(item Item) []string {
