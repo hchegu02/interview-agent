@@ -7,6 +7,7 @@ import (
 
 	"interview-agent/internal/config"
 	"interview-agent/internal/parser"
+	"interview-agent/internal/questionbank"
 )
 
 // Server 持有所有依赖。阶段 0 只放骨架，后续阶段往里加 service。
@@ -14,6 +15,7 @@ type Server struct {
 	cfg             *config.Config
 	interview       *InterviewService
 	documentParser  parser.DocumentParser
+	questionBank    questionbank.Store
 	metricsRecorder *metricsRecorder
 
 	// breakerState 可选注入：real 模式下接 BreakingChatModel.State，返回
@@ -55,6 +57,9 @@ func (s *Server) Router() *gin.Engine {
 	{
 		api.GET("/ping", s.ping)
 		api.POST("/documents/parse-resume", s.parseResumeDocument)
+		api.GET("/question-bank", s.listQuestionBank)
+		api.GET("/question-bank/facets", s.questionBankFacets)
+		api.GET("/question-bank/:id", s.getQuestionBankItem)
 		api.GET("/interview/sessions", s.listInterviewSessions)
 		api.GET("/interview/sessions/:session_id", s.getInterviewSession)
 	}

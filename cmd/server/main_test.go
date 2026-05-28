@@ -13,6 +13,7 @@ import (
 	"interview-agent/internal/domain"
 	"interview-agent/internal/httpapi"
 	"interview-agent/internal/llm"
+	"interview-agent/internal/questionbank"
 )
 
 func TestBuildInterviewRunner_MockModeStartsInterview(t *testing.T) {
@@ -148,6 +149,31 @@ func TestBuildInterviewService_NoPostgresUsesMemoryStore(t *testing.T) {
 	defer cleanupSvc()
 	if svc == nil {
 		t.Fatal("expected service")
+	}
+}
+
+func TestBuildQuestionBankStore_NoPostgresLoadsSeed(t *testing.T) {
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.PostgresDSN = ""
+	deps, cleanupDeps, err := buildAppDeps(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("build deps: %v", err)
+	}
+	defer cleanupDeps()
+
+	store, err := buildQuestionBankStore(deps)
+	if err != nil {
+		t.Fatalf("build question bank store: %v", err)
+	}
+	got, err := store.List(context.Background(), questionbank.Filter{Limit: 1})
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(got.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(got.Items))
 	}
 }
 

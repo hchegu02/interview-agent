@@ -58,6 +58,9 @@ type Session struct {
 	// gap_analyze 节点产物，agent loop 用 Strategy 调整提问倾向
 	GapReport *GapReport `json:"gap_report,omitempty"`
 
+	// analyze_profile 节点产物，给前端和报告解释 JD/简历匹配情况
+	ProfileAnalysis *ProfileAnalysis `json:"profile_analysis,omitempty"`
+
 	// retrieve_rag 召回的候选题池，pick_next_question 从这里选
 	// 不直接给候选人——Agent 决策驱动出题顺序
 	CandidatePool []Question `json:"candidate_pool,omitempty"`
@@ -119,6 +122,33 @@ type ResumeProject struct {
 	Role       string   `json:"role,omitempty"`
 	Highlights []string `json:"highlights,omitempty"`
 	Stack      []string `json:"stack,omitempty"`
+}
+
+// ProfileAnalysis 是 JD 与简历的可解释匹配分析。
+//
+// 它不是出题策略本身；出题仍由 GapReport + RAG + Agent memory 决定。
+// 这个结构服务两个实际场景：
+//  1. 前端告诉用户为什么系统会这样问；
+//  2. 简历优化场景指出缺口、风险点和可追问证据。
+type ProfileAnalysis struct {
+	MatchScore          int                `json:"match_score"` // 0-100
+	Summary             string             `json:"summary"`
+	YearsGap            int                `json:"years_gap"` // candidate years - required years
+	MatchedRequirements []string           `json:"matched_requirements,omitempty"`
+	MissingRequirements []string           `json:"missing_requirements,omitempty"`
+	Strengths           []string           `json:"strengths,omitempty"`
+	RiskPoints          []string           `json:"risk_points,omitempty"`
+	ResumeSuggestions   []string           `json:"resume_suggestions,omitempty"`
+	QuestionFocus       []string           `json:"question_focus,omitempty"`
+	ProjectProbePlan    []ProjectProbePlan `json:"project_probe_plan,omitempty"`
+}
+
+// ProjectProbePlan 描述某个简历项目最值得追问的证据点。
+type ProjectProbePlan struct {
+	ProjectName       string `json:"project_name"`
+	Focus             string `json:"focus"`
+	Evidence          string `json:"evidence,omitempty"`
+	SuggestedQuestion string `json:"suggested_question"`
 }
 
 // GapStrategy 是 gap_analyze 给后续 agent loop 的"提问倾向"决策。
@@ -184,10 +214,38 @@ type Evaluation struct {
 
 // Report 是终评报告。
 type Report struct {
-	SessionID      string         `json:"session_id"`
-	OverallScore   int            `json:"overall_score"`
-	SkillBreakdown map[string]int `json:"skill_breakdown"` // skill -> 0..100
-	Highlights     []string       `json:"highlights"`
-	Improvements   []string       `json:"improvements"`
-	NextSteps      []string       `json:"next_steps"`
+	SessionID          string              `json:"session_id"`
+	OverallScore       int                 `json:"overall_score"`
+	SkillBreakdown     map[string]int      `json:"skill_breakdown"` // skill -> 0..100
+	TranscriptAnalysis *TranscriptAnalysis `json:"transcript_analysis,omitempty"`
+	DrillPlan          []DrillPlanItem     `json:"drill_plan,omitempty"`
+	Highlights         []string            `json:"highlights"`
+	Improvements       []string            `json:"improvements"`
+	NextSteps          []string            `json:"next_steps"`
+}
+
+// TranscriptAnalysis 是对整场问答文本的可解释诊断。
+type TranscriptAnalysis struct {
+	RoundsAnalyzed     int                   `json:"rounds_analyzed"`
+	AverageAnswerChars int                   `json:"average_answer_chars"`
+	Dimensions         []TranscriptDimension `json:"dimensions"`
+	Patterns           []string              `json:"patterns,omitempty"`
+}
+
+// TranscriptDimension 是一项回答质量维度。
+type TranscriptDimension struct {
+	Name     string   `json:"name"`
+	Score    int      `json:"score"` // 0-100
+	Evidence []string `json:"evidence,omitempty"`
+	Advice   string   `json:"advice,omitempty"`
+}
+
+// DrillPlanItem 是报告给出的下一轮训练计划。
+type DrillPlanItem struct {
+	PracticeOrder          int      `json:"practice_order"`
+	Skill                  string   `json:"skill"`
+	Reason                 string   `json:"reason"`
+	TargetScore            int      `json:"target_score"`
+	RecommendedQuestionIDs []string `json:"recommended_question_ids,omitempty"`
+	RecommendedQuestions   []string `json:"recommended_questions,omitempty"`
 }

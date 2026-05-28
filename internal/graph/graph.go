@@ -152,9 +152,10 @@ func (r *Runnable) Invoke(ctx context.Context, sess *domain.Session) error {
 // Resume 从 sess.CurrentNode 的下游边继续执行。
 //
 // 使用场景：
-//   节点返回 ErrSuspended（例如 pick_next 出完题等用户答题），
-//   Invoke 正常返回 nil；HTTP 层把用户输入写到 sess.PendingAnswer，
-//   然后调用 Resume 推进到 evaluate 节点。
+//
+//	节点返回 ErrSuspended（例如 pick_next 出完题等用户答题），
+//	Invoke 正常返回 nil；HTTP 层把用户输入写到 sess.PendingAnswer，
+//	然后调用 Resume 推进到 evaluate 节点。
 //
 // Resume 不会重跑 sess.CurrentNode —— 它假设该节点已经完成"暂停前"的工作，
 // 直接从该节点的 edges / router 算下一轮 frontier 启动。
@@ -264,6 +265,7 @@ func (r *Runnable) executeNode(ctx context.Context, sess *domain.Session, name s
 //   - 节点有 router → 调用 router，得到单个下一节点
 //   - 节点有 edges → 全部加入 frontier（多个表示并发 fan-out）
 //   - EndNode 被丢弃
+//
 // 用 map dedup 保证同一节点不会因为 fan-in 被重复执行。
 func (r *Runnable) nextFrontier(sess *domain.Session, prev []string) []string {
 	g := r.g

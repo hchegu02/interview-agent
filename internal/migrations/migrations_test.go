@@ -116,3 +116,31 @@ func TestQuestionBankExpectedPointsColumn(t *testing.T) {
 		t.Fatal("expected_points should be a text[] column")
 	}
 }
+
+func TestQuestionBankMetadataMigration(t *testing.T) {
+	up := read(t, "003_question_bank_metadata.up.sql")
+	down := read(t, "003_question_bank_metadata.down.sql")
+	for _, col := range []string{
+		"scenario",
+		"role_tags",
+		"rubric",
+		"sample_answer",
+		"follow_up_hints",
+		"locale",
+		"status",
+		"updated_at",
+	} {
+		if !strings.Contains(up, col) {
+			t.Fatalf("metadata migration missing column %q", col)
+		}
+		if !strings.Contains(down, "DROP COLUMN IF EXISTS "+col) {
+			t.Fatalf("metadata down migration should drop column %q", col)
+		}
+	}
+	if !strings.Contains(up, "idx_question_bank_status") {
+		t.Fatal("metadata migration should add status index")
+	}
+	if !strings.Contains(up, "idx_question_bank_scenario") {
+		t.Fatal("metadata migration should add scenario index")
+	}
+}

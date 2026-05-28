@@ -5,7 +5,15 @@
     "tags": ["go_concurrency", "go_runtime"],
     "skill_category": "go",
     "difficulty": 3,
-    "expected_points": ["G/M/P 三者定义", "P 的作用是隔离全局调度锁", "本地队列与全局队列", "work stealing"]
+    "scenario": "fundamentals",
+    "role_tags": ["backend"],
+    "expected_points": ["G/M/P 三者定义", "P 的作用是隔离全局调度锁", "本地队列与全局队列", "work stealing"],
+    "rubric": {
+      "good": "能说明 G/M/P 职责、本地队列/全局队列和 work stealing。",
+      "weak": "只停留在名词解释，讲不出 P 的调度意义。"
+    },
+    "sample_answer": "G 是 goroutine，M 是系统线程，P 持有本地运行队列并负责把 G 调度到 M 上执行。P 减少全局锁竞争，配合本地队列、全局队列和 work stealing 提升并发调度效率。",
+    "follow_up_hints": ["什么时候会触发 work stealing？", "syscall 阻塞时 P 和 M 会怎么处理？"]
   },
   {
     "id": "go-002",
@@ -13,7 +21,15 @@
     "tags": ["channel", "go_concurrency"],
     "skill_category": "go",
     "difficulty": 3,
-    "expected_points": ["hchan 结构", "sendq/recvq waitlist", "直接传递 vs 拷贝到 buf", "唤醒 goroutine 的时机"]
+    "scenario": "fundamentals",
+    "role_tags": ["backend"],
+    "expected_points": ["hchan 结构", "sendq/recvq waitlist", "直接传递 vs 拷贝到 buf", "唤醒 goroutine 的时机"],
+    "rubric": {
+      "good": "能讲清 hchan、环形缓冲、sendq/recvq 和无缓冲直接交接。",
+      "weak": "只说 channel 是通信机制，没有底层路径。"
+    },
+    "sample_answer": "channel 底层核心是 hchan，包含缓冲区、sendq、recvq 和锁。无缓冲 channel 如果有等待接收者会直接交接数据，否则发送者入 sendq 阻塞；有缓冲 channel 优先写入 ring buffer，缓冲满时才阻塞。",
+    "follow_up_hints": ["关闭 channel 时 sendq/recvq 如何被唤醒？", "为什么 channel 操作需要锁？"]
   },
   {
     "id": "go-003",

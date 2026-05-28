@@ -10,14 +10,15 @@
 
 - 领域模型：`Session`、`AnswerRound`、`WorkingMemory`、`Critic`、`Decision`、`Report`
 - Graph：节点、路由、循环、`ErrSuspended` / `Resume`
-- Setup 节点：`parse_jd`、`parse_resume`、`gap_analyze`、`retrieve_rag`
+- Setup 节点：`parse_jd`、`parse_resume`、`gap_analyze`、`analyze_profile`、`retrieve_rag`
 - Agent 节点：`pick_next`、`evaluate`、`critic`、`refine`、`probe_ask`、`probe_eval`、`update_memory`、`reflection_check`、`report`
 - 整图组装：`internal/graphs.BuildInterviewGraph`
 - HTTP 骨架：`POST /api/interview/start`、`POST /api/interview/answer`
 - 会话 API：`GET /api/interview/sessions`、`GET /api/interview/sessions/:session_id`
 - SSE 流式响应：`GET /api/interview/stream?session_id=...`，支持 snapshot、heartbeat 和 `Last-Event-ID`
-- Web 前端：支持输入 JD/简历、历史会话、SSE 事件时间线、底部回答输入栏和慢请求状态提示
+- Web 前端：支持输入 JD/简历、JD-简历匹配分析、题库预览、历史会话、SSE 事件时间线、回答诊断、训练计划和底部回答输入栏
 - 简历文档解析入口：`POST /api/documents/parse-resume`，支持 PDF、DOCX、TXT、Markdown，并可在 Web 端上传后填充简历文本
+- 题库预览 API：`GET /api/question-bank`、`GET /api/question-bank/:id`、`GET /api/question-bank/facets`，支持技能、场景、难度、标签和关键词过滤
 - Redis Streams 事件总线：设置 `INTERVIEW_REDIS_URL` 后启用
 - PG session store：配置 `INTERVIEW_POSTGRES_DSN` 后保存到 `sessions.state_json`
 - Redis session snapshot / lease / takeover：设置 `INTERVIEW_REDIS_URL` 后启用跨实例恢复和租约冲突保护
@@ -48,7 +49,7 @@ curl http://localhost:8080/readyz
 curl http://localhost:8080/api/ping
 ```
 
-Web 页面支持直接输入岗位 JD 和候选人简历，也可以点击“读取简历文档”上传 `.txt` / `.md` / `.markdown` / `.pdf` / `.docx`。面试过程中页面会展示 SSE 事件时间线、等待状态、当前题、历史问答和底部回答输入栏。
+Web 页面支持直接输入岗位 JD 和候选人简历，也可以点击“读取简历文档”上传 `.txt` / `.md` / `.markdown` / `.pdf` / `.docx`。开始面试后，页面会展示 JD-简历匹配分、命中/缺失要求、风险点、简历优化建议和项目追问计划；最终报告会展示回答质量诊断和下一轮训练计划，训练计划会优先关联本轮 RAG 候选池里的题库题 ID。面试过程中继续展示 SSE 事件时间线、等待状态、当前题、历史问答和底部回答输入栏。
 
 真实 LLM Web 模式：
 
@@ -144,6 +145,16 @@ curl -X POST http://localhost:8080/api/documents/parse-resume \
   }
 }
 ```
+
+题库预览：
+
+```bash
+curl "http://localhost:8080/api/question-bank?skill_category=go&scenario=fundamentals&limit=20"
+curl "http://localhost:8080/api/question-bank/facets"
+curl "http://localhost:8080/api/question-bank/go-001?view=admin"
+```
+
+默认候选人视图不会返回 `expected_points`、`rubric`、`sample_answer` 和 `follow_up_hints`。`view=admin` 会返回完整题目元数据，用于管理/演示。
 
 启动一场面试：
 
@@ -258,6 +269,7 @@ go run ./cmd/reindex -seed seeds/question_bank.json -mode mock
 ```
 
 Real embedding 模式需要设置 `INTERVIEW_EMBEDDING_API_KEY`，且 embedding 维度必须和 `question_bank.embedding` 的 `vector(N)` 一致。
+题库 seed 支持 `scenario`、`role_tags`、`rubric`、`sample_answer`、`follow_up_hints`、`locale`、`status` 等元数据；重跑 `cmd/reindex` 会同步这些字段并刷新 `updated_at`。
 
 ## 目录索引
 

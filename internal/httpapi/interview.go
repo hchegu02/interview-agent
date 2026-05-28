@@ -104,17 +104,20 @@ type answerInterviewRequest struct {
 }
 
 type interviewResponse struct {
-	SessionID string                  `json:"session_id"`
-	UserID    string                  `json:"user_id,omitempty"`
-	Mode      string                  `json:"mode"`
-	Status    string                  `json:"status"`
-	Phase     string                  `json:"phase"`
-	Progress  []interviewProgressStep `json:"progress"`
-	Question  *interviewQuestion      `json:"question,omitempty"`
-	Rounds    []interviewRound        `json:"rounds,omitempty"`
-	Report    *domain.Report          `json:"report,omitempty"`
-	CreatedAt time.Time               `json:"created_at"`
-	UpdatedAt time.Time               `json:"updated_at"`
+	SessionID        string                   `json:"session_id"`
+	UserID           string                   `json:"user_id,omitempty"`
+	Mode             string                   `json:"mode"`
+	Status           string                   `json:"status"`
+	Phase            string                   `json:"phase"`
+	Progress         []interviewProgressStep  `json:"progress"`
+	JobProfile       *domain.JobProfile       `json:"job_profile,omitempty"`
+	CandidateProfile *domain.CandidateProfile `json:"candidate_profile,omitempty"`
+	ProfileAnalysis  *domain.ProfileAnalysis  `json:"profile_analysis,omitempty"`
+	Question         *interviewQuestion       `json:"question,omitempty"`
+	Rounds           []interviewRound         `json:"rounds,omitempty"`
+	Report           *domain.Report           `json:"report,omitempty"`
+	CreatedAt        time.Time                `json:"created_at"`
+	UpdatedAt        time.Time                `json:"updated_at"`
 }
 
 type interviewProgressStep struct {
@@ -554,17 +557,20 @@ func fillPendingAnswer(sess *domain.Session, answer string) error {
 func buildInterviewResponse(sess *domain.Session) interviewResponse {
 	mode := sessionMode(sess)
 	return interviewResponse{
-		SessionID: sess.ID,
-		UserID:    sess.UserID,
-		Mode:      mode,
-		Status:    string(sess.Status),
-		Phase:     interviewPhase(sess),
-		Progress:  interviewProgress(sess),
-		Question:  buildInterviewQuestion(currentQuestion(sess), false),
-		Rounds:    buildInterviewRounds(sess, mode),
-		Report:    cloneReport(sess.Report),
-		CreatedAt: sess.CreatedAt,
-		UpdatedAt: sess.UpdatedAt,
+		SessionID:        sess.ID,
+		UserID:           sess.UserID,
+		Mode:             mode,
+		Status:           string(sess.Status),
+		Phase:            interviewPhase(sess),
+		Progress:         interviewProgress(sess),
+		JobProfile:       cloneJobProfile(sess.JobProfile),
+		CandidateProfile: cloneCandidateProfile(sess.CandProfile),
+		ProfileAnalysis:  cloneProfileAnalysis(sess.ProfileAnalysis),
+		Question:         buildInterviewQuestion(currentQuestion(sess), false),
+		Rounds:           buildInterviewRounds(sess, mode),
+		Report:           cloneReport(sess.Report),
+		CreatedAt:        sess.CreatedAt,
+		UpdatedAt:        sess.UpdatedAt,
 	}
 }
 
@@ -690,7 +696,7 @@ func interviewPhase(sess *domain.Session) string {
 		return "answering"
 	}
 	switch sess.CurrentNode {
-	case "parse_jd", "parse_resume", "gap_analyze", "retrieve_rag", "":
+	case "parse_jd", "parse_resume", "gap_analyze", "analyze_profile", "retrieve_rag", "":
 		return "preparing"
 	case "report":
 		return "reporting"
@@ -714,6 +720,9 @@ func interviewProgress(sess *domain.Session) []interviewProgressStep {
 	case "preparing":
 		current = 1
 		if sess != nil && sess.GapReport != nil {
+			current = 2
+		}
+		if sess != nil && sess.ProfileAnalysis != nil {
 			current = 2
 		}
 		if sess != nil && len(sess.CandidatePool) > 0 {

@@ -64,6 +64,38 @@
               <textarea id="resumeText" aria-label="候选人简历">两年 Go 后端经验，参与过秒杀活动、Redis 缓存优化、Kafka 消费链路和 PostgreSQL 查询优化。</textarea>
             </div>
           </div>
+          <section id="questionBankPanel" class="question-bank-panel" aria-label="题库预览">
+            <div class="question-bank-head">
+              <div>
+                <p class="eyebrow">题库预览</p>
+                <h2>检查本地题库覆盖面，再开始面试。</h2>
+              </div>
+              <label class="admin-toggle">
+                <input id="questionAdminView" type="checkbox" />
+                <span>管理视图</span>
+              </label>
+            </div>
+            <div class="question-filters">
+              <input id="questionSearch" type="search" placeholder="搜索题干、标签或编号" autocomplete="off" />
+              <select id="questionSkillFilter" aria-label="技能分类">
+                <option value="">全部技能</option>
+              </select>
+              <select id="questionScenarioFilter" aria-label="题目场景">
+                <option value="">全部场景</option>
+              </select>
+              <select id="questionDifficultyFilter" aria-label="难度">
+                <option value="">全部难度</option>
+              </select>
+              <button id="questionRefreshBtn" class="secondary" type="button">刷新</button>
+            </div>
+            <div class="question-bank-body">
+              <div>
+                <div id="questionCount" class="question-count">题库加载中</div>
+                <div id="questionList" class="question-list"></div>
+              </div>
+              <aside id="questionDetail" class="question-detail"></aside>
+            </div>
+          </section>
           <div class="setup-actions">
             <div id="setupNotice" class="setup-notice" role="status" aria-live="polite"></div>
             <button id="startBtn" class="primary" type="button">开始面试</button>
@@ -79,6 +111,7 @@
             </div>
             <span id="statusPill" class="status-pill">等待作答</span>
           </div>
+          <section id="profileAnalysisPanel" class="profile-analysis hidden" aria-label="JD 与简历匹配分析"></section>
           <div id="eventTimeline" class="event-timeline" aria-live="polite"></div>
 
           <div id="conversation" class="conversation"></div>
@@ -103,6 +136,9 @@
           </div>
 
           <div id="skillBreakdown" class="score-grid"></div>
+          <section id="reportProfileAnalysis" class="profile-analysis hidden" aria-label="JD 与简历匹配分析"></section>
+          <section id="reportTranscriptAnalysis" class="transcript-analysis hidden" aria-label="回答质量诊断"></section>
+          <section id="reportDrillPlan" class="drill-plan hidden" aria-label="下一轮训练计划"></section>
 
           <div class="report-summary">
             <section>

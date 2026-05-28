@@ -301,6 +301,62 @@ func TestGapAnalyze_NilLLM_MidMatchExplore(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
+// analyze_profile
+// -----------------------------------------------------------------------------
+
+func TestAnalyzeProfile_BuildsExplainableMatchReport(t *testing.T) {
+	node := NewAnalyzeProfileNode()
+	sess := buildGapSession(
+		[]string{"go", "redis", "kafka"},
+		[]string{"go", "redis"},
+	)
+	sess.JobProfile.MustHave = []string{"go", "kafka"}
+	sess.JobProfile.YearsRequired = 3
+	sess.CandProfile.Years = 2
+	sess.CandProfile.Projects = []domain.ResumeProject{
+		{
+			Name:       "秒杀系统",
+			Role:       "后端主力",
+			Highlights: []string{"用 Redis lua 实现库存预扣支撑 1w QPS"},
+			Stack:      []string{"go", "redis"},
+		},
+	}
+	sess.CandProfile.Highlights = []string{"用 Redis lua 实现库存预扣支撑 1w QPS"}
+	_ = NewGapAnalyzeNode(nil)(context.Background(), sess)
+
+	if err := node(context.Background(), sess); err != nil {
+		t.Fatalf("node failed: %v", err)
+	}
+	a := sess.ProfileAnalysis
+	if a == nil {
+		t.Fatal("profile analysis was not written")
+	}
+	if a.MatchScore <= 0 || a.MatchScore > 100 {
+		t.Fatalf("bad score: %+v", a)
+	}
+	if !contains(a.MatchedRequirements, "go") || !contains(a.MissingRequirements, "kafka") {
+		t.Fatalf("matched/missing wrong: %+v", a)
+	}
+	if len(a.RiskPoints) == 0 || !strings.Contains(strings.Join(a.RiskPoints, " "), "kafka") {
+		t.Fatalf("risk points should mention kafka: %+v", a.RiskPoints)
+	}
+	if len(a.ResumeSuggestions) == 0 {
+		t.Fatalf("resume suggestions empty: %+v", a)
+	}
+	if len(a.ProjectProbePlan) != 1 || !strings.Contains(a.ProjectProbePlan[0].SuggestedQuestion, "秒杀系统") {
+		t.Fatalf("project probe plan wrong: %+v", a.ProjectProbePlan)
+	}
+}
+
+func TestAnalyzeProfile_MissingInputsPermanent(t *testing.T) {
+	node := NewAnalyzeProfileNode()
+	err := node(context.Background(), &domain.Session{})
+	if !errors.Is(err, graph.ErrPermanent) {
+		t.Fatalf("expected permanent error, got %v", err)
+	}
+}
+
+// -----------------------------------------------------------------------------
 // retrieve_rag
 // -----------------------------------------------------------------------------
 

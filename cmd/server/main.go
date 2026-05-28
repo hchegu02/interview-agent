@@ -31,6 +31,7 @@ import (
 	"interview-agent/internal/httpapi"
 	"interview-agent/internal/llm"
 	"interview-agent/internal/observability"
+	"interview-agent/internal/questionbank"
 	"interview-agent/internal/retriever"
 )
 
@@ -75,6 +76,12 @@ func main() {
 	}
 
 	server := httpapi.NewServer(cfg)
+	questionBankStore, err := buildQuestionBankStore(deps)
+	if err != nil {
+		logger.Error("question bank setup failed", "err", err)
+		os.Exit(1)
+	}
+	server.SetQuestionBankStore(questionBankStore)
 
 	graphRunner, cleanup, err := buildInterviewRunner(ctx, cfg, deps, events, server.GraphMetricsCallback(), server.ObserveLLMCall)
 	if err != nil {
@@ -175,6 +182,17 @@ func firstNonNilCoordinator(coordinators []httpapi.SessionCoordinator) httpapi.S
 		return coordinator
 	}
 	return nil
+}
+
+func buildQuestionBankStore(deps appDeps) (questionbank.Store, error) {
+	if deps.PGPool != nil {
+		return questionbank.NewPGStore(deps.PGPool), nil
+	}
+	items, err := questionbank.LoadSeedFile("seeds/question_bank.json")
+	if err != nil {
+		return nil, err
+	}
+	return questionbank.NewMemoryStore(items), nil
 }
 
 func buildInterviewEventHub(ctx context.Context, cfg *config.Config) (httpapi.InterviewEventHub, func(), error) {

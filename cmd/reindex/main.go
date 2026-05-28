@@ -35,12 +35,19 @@ import (
 )
 
 type seedRow struct {
-	ID             string   `json:"id"`
-	Content        string   `json:"content"`
-	Tags           []string `json:"tags"`
-	SkillCategory  string   `json:"skill_category"`
-	Difficulty     int      `json:"difficulty"`
-	ExpectedPoints []string `json:"expected_points,omitempty"`
+	ID             string            `json:"id"`
+	Content        string            `json:"content"`
+	Tags           []string          `json:"tags"`
+	SkillCategory  string            `json:"skill_category"`
+	Difficulty     int               `json:"difficulty"`
+	ExpectedPoints []string          `json:"expected_points,omitempty"`
+	Scenario       string            `json:"scenario,omitempty"`
+	RoleTags       []string          `json:"role_tags,omitempty"`
+	Rubric         map[string]string `json:"rubric,omitempty"`
+	SampleAnswer   string            `json:"sample_answer,omitempty"`
+	FollowUpHints  []string          `json:"follow_up_hints,omitempty"`
+	Locale         string            `json:"locale,omitempty"`
+	Status         string            `json:"status,omitempty"`
 }
 
 func main() {
@@ -92,6 +99,13 @@ func run(ctx context.Context, seedPath, mode, baseURL, model string, dim, batch 
 	// 4. canonical tags
 	for i := range rows {
 		rows[i].Tags = retriever.CanonicalizeTags(rows[i].Tags)
+		rows[i].RoleTags = retriever.CanonicalizeTags(rows[i].RoleTags)
+		if rows[i].Locale == "" {
+			rows[i].Locale = "zh-CN"
+		}
+		if rows[i].Status == "" {
+			rows[i].Status = "active"
+		}
 	}
 
 	if dryRun {
@@ -212,27 +226,44 @@ func embedBatched(ctx context.Context, e embedding.Embedder, texts []string, bat
 	return out, nil
 }
 
-// 注：question_bank 表当前没有 updated_at 列（只有 created_at）。
 // 重跑 reindex 不更新 created_at——保留首次入库时间，符合"种子题库"语义。
-// 若后续要追审计时间戳，加一列 last_reindex_at 比改 created_at 干净。
+// updated_at 只表示题目内容/元数据最近一次被 reindex 覆盖的时间。
 const upsertSQL = `
-INSERT INTO question_bank (id, content, tags, skill_category, difficulty, expected_points, embedding)
-VALUES ($1, $2, $3, $4, $5, $6, $7::vector)
+INSERT INTO question_bank (
+    id, content, tags, skill_category, difficulty, expected_points,
+    scenario, role_tags, rubric, sample_answer, follow_up_hints, locale, status,
+    embedding
+)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14::vector)
 ON CONFLICT (id) DO UPDATE SET
-    content        = EXCLUDED.content,
-    tags           = EXCLUDED.tags,
-    skill_category = EXCLUDED.skill_category,
-    difficulty     = EXCLUDED.difficulty,
+    content         = EXCLUDED.content,
+    tags            = EXCLUDED.tags,
+    skill_category  = EXCLUDED.skill_category,
+    difficulty      = EXCLUDED.difficulty,
     expected_points = EXCLUDED.expected_points,
-    embedding      = EXCLUDED.embedding;
+    scenario        = EXCLUDED.scenario,
+    role_tags       = EXCLUDED.role_tags,
+    rubric          = EXCLUDED.rubric,
+    sample_answer   = EXCLUDED.sample_answer,
+    follow_up_hints = EXCLUDED.follow_up_hints,
+    locale          = EXCLUDED.locale,
+    status          = EXCLUDED.status,
+    embedding       = EXCLUDED.embedding,
+    updated_at = now();
 `
 
 func upsertAll(ctx context.Context, pool *pgxpool.Pool, rows []seedRow, vectors [][]float32) error {
 	// 简单实现：逐行 exec。30~300 行规模无所谓；上了量再切批 COPY。
 	for i, r := range rows {
 		vecLit := vectorLiteral(vectors[i])
+		rubric, err := json.Marshal(r.Rubric)
+		if err != nil {
+			return fmt.Errorf("row %s rubric: %w", r.ID, err)
+		}
 		if _, err := pool.Exec(ctx, upsertSQL,
-			r.ID, r.Content, r.Tags, r.SkillCategory, r.Difficulty, r.ExpectedPoints, vecLit); err != nil {
+			r.ID, r.Content, r.Tags, r.SkillCategory, r.Difficulty, r.ExpectedPoints,
+			r.Scenario, r.RoleTags, string(rubric), r.SampleAnswer, r.FollowUpHints, r.Locale, r.Status,
+			vecLit); err != nil {
 			return fmt.Errorf("row %s: %w", r.ID, err)
 		}
 	}

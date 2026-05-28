@@ -174,6 +174,31 @@ func WriteReportMarkdown(dir string, art *RunArtifact) error {
 				fmt.Fprintf(&b, "- %s\n", h)
 			}
 		}
+		if rep.TranscriptAnalysis != nil {
+			b.WriteString("\n### Transcript analysis\n\n")
+			fmt.Fprintf(&b, "- Rounds analyzed: %d\n", rep.TranscriptAnalysis.RoundsAnalyzed)
+			fmt.Fprintf(&b, "- Average answer chars: %d\n", rep.TranscriptAnalysis.AverageAnswerChars)
+			for _, d := range rep.TranscriptAnalysis.Dimensions {
+				fmt.Fprintf(&b, "- %s: %d", d.Name, d.Score)
+				if d.Advice != "" {
+					fmt.Fprintf(&b, " — %s", d.Advice)
+				}
+				b.WriteByte('\n')
+			}
+		}
+		if len(rep.DrillPlan) > 0 {
+			b.WriteString("\n### Drill plan\n")
+			for _, item := range rep.DrillPlan {
+				fmt.Fprintf(&b, "%d. %s (target %d): %s\n",
+					item.PracticeOrder, item.Skill, item.TargetScore, item.Reason)
+				if len(item.RecommendedQuestionIDs) > 0 {
+					fmt.Fprintf(&b, "   - question ids: %s\n", strings.Join(item.RecommendedQuestionIDs, ", "))
+				}
+				for _, q := range item.RecommendedQuestions {
+					fmt.Fprintf(&b, "   - %s\n", q)
+				}
+			}
+		}
 		if len(rep.SkillBreakdown) > 0 {
 			b.WriteString("\n### Skill breakdown\n\n")
 			b.WriteString("| skill | score |\n|-------|-------|\n")

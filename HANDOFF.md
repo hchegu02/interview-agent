@@ -22,7 +22,7 @@
 - 阶段 2.2：Graph 框架，含 `ErrSuspended` / `Resume`。
 - 阶段 2.3：`RealChatModel`，OpenAI-compatible HTTP，重试与 JSON schema 自校正。
 - 阶段 2.4：pgvector Retriever、LinearFusion、`cmd/reindex`、seeds。
-- 阶段 2.5：Setup 节点：`parse_jd`、`parse_resume`、`gap_analyze`、`retrieve_rag`。
+- 阶段 2.5：Setup 节点：`parse_jd`、`parse_resume`、`gap_analyze`、`analyze_profile`、`retrieve_rag`。
 - 阶段 2.6：Agent loop 节点：`pick_next`、`evaluate`、`critic`、`refine`、`probe_ask`、`probe_eval`、`update_memory`、`reflection_check`。
 - 阶段 2.7：真实 `report` 节点、`internal/graphs.BuildInterviewGraph`、agent loop 集成测试改用真实 report。
 - 阶段 2.8：最小 HTTP 接入：`POST /api/interview/start`、`POST /api/interview/answer`，内存 session store。
@@ -102,11 +102,19 @@
 - `internal/httpapi/metrics_graph_callback.go`：新增 Graph metrics callback，按 node + status 记录节点执行次数和耗时。
 - `internal/llm/recording.go`：`RecordingChatModel` 支持可选 observer，server 用它把每次 LLM 调用同步写入 metrics，demo 原有 Snapshot 行为不变。
 - `cmd/server/main.go`：server 启动时先创建 metrics recorder，再把 Graph callback 和 LLM observer 注入 runner；`/metrics` 现在能反映真实 start/answer 链路。
+- `migrations/003_question_bank_metadata.*.sql`：给 `question_bank` 增加 `scenario`、`role_tags`、`rubric`、`sample_answer`、`follow_up_hints`、`locale`、`status`、`updated_at`，为题库产品化打底。
+- `internal/questionbank/`：新增题库只读 Store，包含 memory seed store 和 PG store；默认只暴露 active 题。
+- `internal/httpapi/question_bank.go`：新增题库预览 API：`GET /api/question-bank`、`GET /api/question-bank/:id`、`GET /api/question-bank/facets`。候选人视图隐藏答案/评分字段，`view=admin` 返回完整元数据。
+- `cmd/reindex/main.go`：seed/reindex 已能写入题库元数据并在冲突更新时刷新 `updated_at`。
+- `seeds/question_bank.json`：先给 Go 基础题补了少量 rubric / sample_answer / follow_up_hints，证明新字段链路。
 - `Makefile`：新增 `demo-web` / `demo-web-real` / `test-core`，用于本地 Web 演示和核心回归。
+- `internal/nodes/analyze_profile.go` / `domain.ProfileAnalysis`：新增确定性 JD-简历匹配分析，不额外调用 LLM；输出匹配分、命中/缺失要求、风险点、简历优化建议和项目追问计划，Web 面试页与报告页会展示。
+- `domain.Report` / `internal/nodes/report.go`：新增 `TranscriptAnalysis` 和 `DrillPlan`，参考 interview-coach 的 transcript analysis / drill plan 思路，但用本地 `Rounds + WorkingMemory` 确定性生成，不额外调用 LLM。`DrillPlan` 会优先从本轮 `CandidatePool` 关联题库题 ID，Web 报告页和 demo `report.md` 已展示。
 
 ## 4. 当前已知风险 / TODO
 
 - Mock LLM 已有内置 demo 响应，可以无 fixture 跑通最小 start/answer；未知 prompt 仍会返回 fixture missing。
+- 题库 API 已是只读预览；还没有新增/编辑/禁用题目的管理接口，也没有前端题库页。
 - HTTP session store 已抽象；无 DSN 仍是内存 map，有 DSN 时可落 PG `sessions.state_json`。Redis snapshot / lease 已接入 start/get/answer 主流程，基础多实例 takeover 已完成。
 - `WorkingMemory.ScoredRounds` / `DegradedRounds` 已提成强类型字段；`ReflectTopic` 已作为 reflection_check → pick_next 的强类型补漏信号；降级原因已集中到 `DegradedReasons`；`Notes` 不再承载主流程协议，只兼容旧 `reflect_topic`。
 - `Score = -1` 仍是评估失败哨兵；所有统计逻辑必须先判 `<0`。
@@ -166,10 +174,10 @@ pgvector / PG session store 集成测试受 `INTEGRATION=1` + `INTERVIEW_POSTGRE
 推荐顺序：
 
 1. 真实浏览器流程验收：`make demo-web` 或 `go run ./cmd/server -config config/config.yaml.example`，跑上传简历、开始面试、SSE 更新、回答、报告、历史会话切换。
-2. OTel tracing：贯穿 HTTP → Graph → LLM / Parser / Retriever，能按 trace_id 定位慢节点。
-3. 熔断器半开期渐进放行 + Chaos 脚本，演示 LLM timeout、Redis down、PG down 时的降级和恢复。
-4. Prometheus SDK histogram bucket 化：把当前 duration summary 迁到标准 histogram，并补 409 lease conflict 计数。
-5. 跨多次 demo 运行的 prompt regression diff 工具（基于 `run.json` 做 token / schema_retries / report 评分趋势比较）。
+2. 前端题库预览页：搜索、技能/场景/难度/标签过滤、候选人视图隐藏答案、admin 视图展示 rubric。
+3. 扩充 seed：优先 Go / Redis / PG / troubleshooting，每类补足 rubric、sample_answer、follow_up_hints。
+4. 面试前题库范围选择：把 skill/scenario/difficulty/tag 选择传入 session，影响 retrieve_rag 查询。
+5. OTel tracing：贯穿 HTTP → Graph → LLM / Parser / Retriever，能按 trace_id 定位慢节点。
 
 ## 8. 不要做哪些事
 - 不要在 router 里做副作用。

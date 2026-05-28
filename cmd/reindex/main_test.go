@@ -38,3 +38,20 @@ func TestUpsertSQLWritesExpectedPoints(t *testing.T) {
 		t.Fatal("upsert SQL should update expected_points on conflict")
 	}
 }
+
+func TestUpsertSQLWritesQuestionMetadata(t *testing.T) {
+	for _, marker := range []string{
+		"scenario",
+		"role_tags",
+		"rubric",
+		"sample_answer",
+		"follow_up_hints",
+		"locale",
+		"status",
+		"updated_at = now()",
+	} {
+		if !strings.Contains(upsertSQL, marker) {
+			t.Fatalf("upsert SQL missing %q", marker)
+		}
+	}
+}

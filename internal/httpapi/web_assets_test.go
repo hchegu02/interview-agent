@@ -57,6 +57,9 @@ func TestWebAppIncludesLiveStatusAndUsableAnswerDock(t *testing.T) {
 	for _, marker := range []string{
 		`id="setupNotice"`,
 		`id="eventTimeline"`,
+		`id="profileAnalysisPanel"`,
+		`id="reportTranscriptAnalysis"`,
+		`id="reportDrillPlan"`,
 		`id="resumeFile"`,
 		`answer-hint`,
 	} {
@@ -76,6 +79,15 @@ func TestWebAppIncludesLiveStatusAndUsableAnswerDock(t *testing.T) {
 		"/api/documents/parse-resume",
 		"pushStreamEvent",
 		"renderEventTimeline",
+		"renderProfileAnalysis",
+		"renderTranscriptAnalysis",
+		"renderDrillPlan",
+		"renderRecommendedQuestionIds",
+		"jumpToQuestionBank",
+		"startDrillTraining",
+		"data-start-drill",
+		"本轮专项训练重点",
+		"data-jump-question",
 		"state.pendingAnswer",
 		"state.lastEventId = \"\"",
 	} {
@@ -92,8 +104,69 @@ func TestWebAppIncludesLiveStatusAndUsableAnswerDock(t *testing.T) {
 	styles := css.Body.String()
 	for _, marker := range []string{
 		".event-timeline",
+		".profile-analysis",
+		".transcript-analysis",
+		".drill-plan",
+		".drill-start",
+		".recommended-question-ids",
 		".answer-dock",
 		"position: sticky",
+	} {
+		if !strings.Contains(styles, marker) {
+			t.Fatalf("app.css missing marker %q", marker)
+		}
+	}
+}
+
+func TestWebAppIncludesQuestionBankPreview(t *testing.T) {
+	server := NewServer(&config.Config{})
+	router := server.Router()
+
+	index := httptest.NewRecorder()
+	router.ServeHTTP(index, httptest.NewRequest(http.MethodGet, "/", nil))
+	if index.Code != http.StatusOK {
+		t.Fatalf("index status = %d", index.Code)
+	}
+	html := index.Body.String()
+	for _, marker := range []string{
+		`id="questionBankPanel"`,
+		`id="questionSearch"`,
+		`id="questionSkillFilter"`,
+		`id="questionList"`,
+		`id="questionDetail"`,
+	} {
+		if !strings.Contains(html, marker) {
+			t.Fatalf("index html missing marker %q", marker)
+		}
+	}
+
+	js := httptest.NewRecorder()
+	router.ServeHTTP(js, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
+	if js.Code != http.StatusOK {
+		t.Fatalf("js status = %d", js.Code)
+	}
+	script := js.Body.String()
+	for _, marker := range []string{
+		"loadQuestionBank",
+		"/api/question-bank",
+		"renderQuestionBank",
+		"renderQuestionDetail",
+	} {
+		if !strings.Contains(script, marker) {
+			t.Fatalf("app.js missing marker %q", marker)
+		}
+	}
+
+	css := httptest.NewRecorder()
+	router.ServeHTTP(css, httptest.NewRequest(http.MethodGet, "/assets/app.css", nil))
+	if css.Code != http.StatusOK {
+		t.Fatalf("css status = %d", css.Code)
+	}
+	styles := css.Body.String()
+	for _, marker := range []string{
+		".question-bank-panel",
+		".question-filters",
+		".question-card",
 	} {
 		if !strings.Contains(styles, marker) {
 			t.Fatalf("app.css missing marker %q", marker)

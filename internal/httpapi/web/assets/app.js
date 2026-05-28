@@ -7,6 +7,12 @@ const state = {
   pendingAnswer: "",
   events: [],
   busy: false,
+  questionBank: {
+    items: [],
+    selectedId: "",
+    loading: false,
+    adminView: false,
+  },
 };
 
 const $ = (id) => document.getElementById(id);
@@ -20,6 +26,15 @@ const els = {
   resumeText: $("resumeText"),
   resumeFile: $("resumeFile"),
   resumeUploadBtn: $("resumeUploadBtn"),
+  questionSearch: $("questionSearch"),
+  questionSkillFilter: $("questionSkillFilter"),
+  questionScenarioFilter: $("questionScenarioFilter"),
+  questionDifficultyFilter: $("questionDifficultyFilter"),
+  questionRefreshBtn: $("questionRefreshBtn"),
+  questionAdminView: $("questionAdminView"),
+  questionCount: $("questionCount"),
+  questionList: $("questionList"),
+  questionDetail: $("questionDetail"),
   setupNotice: $("setupNotice"),
   startBtn: $("startBtn"),
   resetBtn: $("resetBtn"),
@@ -35,6 +50,7 @@ const els = {
   sessionMeta: $("sessionMeta"),
   sessionTitle: $("sessionTitle"),
   statusPill: $("statusPill"),
+  profileAnalysisPanel: $("profileAnalysisPanel"),
   eventTimeline: $("eventTimeline"),
   conversation: $("conversation"),
   answerForm: $("answerForm"),
@@ -45,11 +61,16 @@ const els = {
   backToSetupBtn: $("backToSetupBtn"),
   reportScore: $("reportScore"),
   skillBreakdown: $("skillBreakdown"),
+  reportProfileAnalysis: $("reportProfileAnalysis"),
+  reportTranscriptAnalysis: $("reportTranscriptAnalysis"),
+  reportDrillPlan: $("reportDrillPlan"),
   reportHighlights: $("reportHighlights"),
   reportImprovements: $("reportImprovements"),
   reportNextSteps: $("reportNextSteps"),
   reportRounds: $("reportRounds"),
 };
+
+let questionSearchTimer = null;
 
 const phaseText = {
   preparing: "准备题目",
@@ -241,6 +262,158 @@ async function loadSessions() {
   }
 }
 
+async function loadQuestionFacets() {
+  if (!els.questionSkillFilter) return;
+  try {
+    const facets = await api("/api/question-bank/facets");
+    fillFacetSelect(els.questionSkillFilter, "全部技能", facets.skill_categories || {});
+    fillFacetSelect(els.questionScenarioFilter, "全部场景", facets.scenarios || {});
+    fillFacetSelect(els.questionDifficultyFilter, "全部难度", facets.difficulties || {}, (value) => `难度 ${value}`);
+  } catch (err) {
+    renderQuestionBankError(err.message);
+  }
+}
+
+async function loadQuestionBank() {
+  if (!els.questionList || state.questionBank.loading) return;
+  state.questionBank.loading = true;
+  els.questionCount.textContent = "题库加载中";
+  try {
+    const params = new URLSearchParams({ limit: "8" });
+    const query = els.questionSearch.value.trim();
+    const skill = els.questionSkillFilter.value;
+    const scenario = els.questionScenarioFilter.value;
+    const difficulty = els.questionDifficultyFilter.value;
+    if (query) params.set("q", query);
+    if (skill) params.set("skill_category", skill);
+    if (scenario) params.set("scenario", scenario);
+    if (difficulty) params.set("difficulty", difficulty);
+    if (state.questionBank.adminView) params.set("view", "admin");
+
+    const data = await api(`/api/question-bank?${params.toString()}`);
+    state.questionBank.items = data.items || [];
+    if (!state.questionBank.items.some((item) => item.id === state.questionBank.selectedId)) {
+      state.questionBank.selectedId = state.questionBank.items[0]?.id || "";
+    }
+    if (query && state.questionBank.items.some((item) => item.id === query)) {
+      state.questionBank.selectedId = query;
+    }
+    renderQuestionBank();
+  } catch (err) {
+    renderQuestionBankError(err.message);
+  } finally {
+    state.questionBank.loading = false;
+  }
+}
+
+function fillFacetSelect(select, label, values, format = (value) => value) {
+  const current = select.value;
+  const keys = Object.keys(values).sort((a, b) => String(a).localeCompare(String(b), "zh-CN", { numeric: true }));
+  select.innerHTML = `<option value="">${escapeHtml(label)}</option>` + keys.map((key) => (
+    `<option value="${escapeHtml(key)}">${escapeHtml(format(key))} (${values[key]})</option>`
+  )).join("");
+  if (keys.includes(current)) {
+    select.value = current;
+  }
+}
+
+function renderQuestionBank() {
+  const items = state.questionBank.items;
+  els.questionCount.textContent = items.length
+    ? `显示 ${items.length} 道题`
+    : "没有匹配题目";
+  els.questionList.innerHTML = items.length ? items.map(renderQuestionCard).join("") : `
+    <div class="empty-state">当前筛选没有题目</div>
+  `;
+  els.questionList.querySelectorAll("[data-question-id]").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      state.questionBank.selectedId = btn.dataset.questionId;
+      renderQuestionBank();
+    });
+  });
+  renderQuestionDetail(items.find((item) => item.id === state.questionBank.selectedId));
+}
+
+function renderQuestionCard(item) {
+  const active = item.id === state.questionBank.selectedId ? "active" : "";
+  const tags = (item.tags || []).slice(0, 4).map((tag) => `<span>${escapeHtml(tag)}</span>`).join("");
+  return `
+    <button class="question-card ${active}" type="button" data-question-id="${escapeHtml(item.id)}">
+      <span class="question-card-meta">${escapeHtml(item.id)} · ${escapeHtml(item.skill_category || "未分类")} · 难度 ${escapeHtml(item.difficulty || "-")}</span>
+      <strong>${escapeHtml(item.content)}</strong>
+      <span class="question-card-foot">${escapeHtml(item.scenario || "general")}</span>
+      ${tags ? `<span class="question-tags">${tags}</span>` : ""}
+    </button>
+  `;
+}
+
+function renderQuestionDetail(item) {
+  if (!item) {
+    els.questionDetail.innerHTML = `<div class="empty-state">选择一道题查看详情</div>`;
+    return;
+  }
+  const expected = state.questionBank.adminView ? renderDetailList("评分要点", item.expected_points) : "";
+  const followUps = state.questionBank.adminView ? renderDetailList("追问提示", item.follow_up_hints) : "";
+  const rubric = state.questionBank.adminView ? renderRubric(item.rubric) : "";
+  const sample = state.questionBank.adminView && item.sample_answer
+    ? `<section><h3>参考回答</h3><p>${escapeHtml(item.sample_answer)}</p></section>`
+    : "";
+  els.questionDetail.innerHTML = `
+    <div class="question-detail-head">
+      <span>${escapeHtml(item.id)}</span>
+      <strong>${escapeHtml(item.skill_category || "未分类")}</strong>
+    </div>
+    <p class="question-detail-content">${escapeHtml(item.content)}</p>
+    <div class="question-detail-meta">
+      <span>难度 ${escapeHtml(item.difficulty || "-")}</span>
+      <span>${escapeHtml(item.scenario || "general")}</span>
+      <span>${escapeHtml(item.source || "manual")}</span>
+    </div>
+    ${renderQuestionTagLine(item.tags)}
+    ${state.questionBank.adminView ? expected + rubric + sample + followUps : `<p class="question-locked">候选人视图已隐藏答案和评分标准。</p>`}
+  `;
+}
+
+function renderQuestionTagLine(tags) {
+  if (!tags || !tags.length) return "";
+  return `<div class="question-tags detail">${tags.map((tag) => `<span>${escapeHtml(tag)}</span>`).join("")}</div>`;
+}
+
+function renderDetailList(title, items) {
+  if (!items || !items.length) return "";
+  return `
+    <section>
+      <h3>${escapeHtml(title)}</h3>
+      <ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>
+    </section>
+  `;
+}
+
+function renderRubric(rubric) {
+  if (!rubric || !Object.keys(rubric).length) return "";
+  return `
+    <section>
+      <h3>评分规则</h3>
+      <dl class="rubric-list">
+        ${Object.entries(rubric).map(([key, value]) => `
+          <div>
+            <dt>${escapeHtml(key)}</dt>
+            <dd>${escapeHtml(value)}</dd>
+          </div>
+        `).join("")}
+      </dl>
+    </section>
+  `;
+}
+
+function renderQuestionBankError(message) {
+  state.questionBank.items = [];
+  state.questionBank.selectedId = "";
+  els.questionCount.textContent = "题库不可用";
+  els.questionList.innerHTML = `<div class="empty-state">无法读取题库</div>`;
+  els.questionDetail.innerHTML = `<div class="system-line error">${escapeHtml(message)}</div>`;
+}
+
 function openStream(sessionId) {
   closeStream();
   if (!window.EventSource) {
@@ -337,6 +510,7 @@ function applySession(session) {
   state.session = { ...prev, ...session };
   setMode(state.session.mode || state.mode);
   renderProgress(state.session.progress || []);
+  renderProfileAnalysis(state.session);
 
   els.setupView.classList.add("hidden");
   els.statusPill.textContent = phaseText[state.session.phase] || "进行中";
@@ -357,6 +531,82 @@ function applySession(session) {
   window.requestAnimationFrame(() => {
     els.conversation.scrollTop = els.conversation.scrollHeight;
   });
+}
+
+function renderProfileAnalysis(session) {
+  const html = profileAnalysisHTML(session?.profile_analysis);
+  setProfileAnalysisPanel(els.profileAnalysisPanel, html);
+  setProfileAnalysisPanel(els.reportProfileAnalysis, html);
+}
+
+function setProfileAnalysisPanel(panel, html) {
+  if (!panel) return;
+  panel.classList.toggle("hidden", !html);
+  panel.innerHTML = html || "";
+}
+
+function profileAnalysisHTML(analysis) {
+  if (!analysis) return "";
+  return `
+    <div class="profile-score">
+      <span>匹配分</span>
+      <strong>${escapeHtml(analysis.match_score ?? 0)}</strong>
+    </div>
+    <div class="profile-main">
+      <div class="profile-summary">
+        <h2>JD / 简历分析</h2>
+        <p>${escapeHtml(analysis.summary || "暂无分析摘要")}</p>
+        <div class="profile-meta">
+          <span>年限差 ${formatYearsGap(analysis.years_gap)}</span>
+          <span>重点 ${escapeHtml((analysis.question_focus || []).join(" / ") || "-")}</span>
+        </div>
+      </div>
+      <div class="profile-columns">
+        ${renderAnalysisBlock("命中要求", analysis.matched_requirements, "good")}
+        ${renderAnalysisBlock("缺失要求", analysis.missing_requirements, "bad")}
+        ${renderAnalysisBlock("风险点", analysis.risk_points, "warn")}
+        ${renderAnalysisBlock("简历优化", analysis.resume_suggestions, "info")}
+      </div>
+      ${renderProjectProbePlan(analysis.project_probe_plan || [])}
+    </div>
+  `;
+}
+
+function renderAnalysisBlock(title, items, tone) {
+  const body = items && items.length
+    ? items.map((item) => `<span class="${tone}">${escapeHtml(item)}</span>`).join("")
+    : `<em>暂无</em>`;
+  return `
+    <section class="analysis-block">
+      <h3>${escapeHtml(title)}</h3>
+      <div>${body}</div>
+    </section>
+  `;
+}
+
+function renderProjectProbePlan(items) {
+  if (!items.length) return "";
+  return `
+    <section class="probe-plan">
+      <h3>项目追问计划</h3>
+      <div>
+        ${items.map((item) => `
+          <article>
+            <strong>${escapeHtml(item.project_name || "未命名项目")}</strong>
+            <span>${escapeHtml(item.focus || "项目细节")}</span>
+            <p>${escapeHtml(item.suggested_question || "")}</p>
+          </article>
+        `).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function formatYearsGap(value) {
+  const n = Number(value) || 0;
+  if (n > 0) return `+${n} 年`;
+  if (n < 0) return `${n} 年`;
+  return "0 年";
 }
 
 function renderProgress(progress) {
@@ -472,6 +722,8 @@ function renderReport(session) {
       <div class="meter"><i style="width:${clamp(score, 0, 100)}%"></i></div>
     </div>
   `).join("") || `<div class="empty-state">暂无技能分布</div>`;
+  renderTranscriptAnalysis(report.transcript_analysis);
+  renderDrillPlan(report.drill_plan || []);
   renderList(els.reportHighlights, report.highlights || []);
   renderList(els.reportImprovements, report.improvements || []);
   renderList(els.reportNextSteps, report.next_steps || []);
@@ -486,6 +738,147 @@ function renderReport(session) {
       ${round.feedback ? renderFeedbackCard(round.feedback) : ""}
     </article>
   `).join("") || `<div class="empty-state">暂无逐题记录</div>`;
+}
+
+function renderTranscriptAnalysis(analysis) {
+  if (!els.reportTranscriptAnalysis) return;
+  if (!analysis) {
+    els.reportTranscriptAnalysis.classList.add("hidden");
+    els.reportTranscriptAnalysis.innerHTML = "";
+    return;
+  }
+  els.reportTranscriptAnalysis.classList.remove("hidden");
+  els.reportTranscriptAnalysis.innerHTML = `
+    <div class="analysis-head">
+      <div>
+        <p class="eyebrow">回答诊断</p>
+        <h2>${escapeHtml(analysis.rounds_analyzed || 0)} 轮有效答题 · 平均 ${escapeHtml(analysis.average_answer_chars || 0)} 字</h2>
+      </div>
+    </div>
+    <div class="dimension-grid">
+      ${(analysis.dimensions || []).map((d) => `
+        <article class="dimension-card">
+          <div class="dimension-head">
+            <strong>${escapeHtml(d.name)}</strong>
+            <span>${escapeHtml(d.score ?? 0)}</span>
+          </div>
+          <div class="meter"><i style="width:${clamp(d.score, 0, 100)}%"></i></div>
+          ${(d.evidence || []).map((item) => `<p>${escapeHtml(item)}</p>`).join("")}
+          ${d.advice ? `<em>${escapeHtml(d.advice)}</em>` : ""}
+        </article>
+      `).join("")}
+    </div>
+    ${renderPatternList(analysis.patterns || [])}
+  `;
+}
+
+function renderPatternList(patterns) {
+  if (!patterns.length) return "";
+  return `
+    <div class="pattern-list">
+      ${patterns.map((item) => `<span>${escapeHtml(item)}</span>`).join("")}
+    </div>
+  `;
+}
+
+function renderDrillPlan(items) {
+  if (!els.reportDrillPlan) return;
+  if (!items.length) {
+    els.reportDrillPlan.classList.add("hidden");
+    els.reportDrillPlan.innerHTML = "";
+    return;
+  }
+  els.reportDrillPlan.classList.remove("hidden");
+  els.reportDrillPlan.innerHTML = `
+    <div class="analysis-head">
+      <div>
+        <p class="eyebrow">训练计划</p>
+        <h2>下一轮按弱项顺序练，不再泛刷题。</h2>
+      </div>
+      <button class="secondary drill-start" type="button" data-start-drill>按此计划训练</button>
+    </div>
+    <div class="drill-list">
+      ${items.map((item) => `
+        <article class="drill-card">
+          <div class="drill-order">${escapeHtml(item.practice_order || 1)}</div>
+          <div>
+            <div class="drill-head">
+              <strong>${escapeHtml(item.skill || "综合表达")}</strong>
+              <span>目标 ${escapeHtml(item.target_score || 75)} 分</span>
+            </div>
+            <p>${escapeHtml(item.reason || "")}</p>
+            ${renderRecommendedQuestionIds(item.recommended_question_ids || [])}
+            <ul>
+              ${(item.recommended_questions || []).map((q) => `<li>${escapeHtml(q)}</li>`).join("")}
+            </ul>
+          </div>
+        </article>
+      `).join("")}
+    </div>
+  `;
+}
+
+function renderRecommendedQuestionIds(ids) {
+  if (!ids.length) return "";
+  return `
+    <div class="recommended-question-ids">
+      ${ids.map((id) => `<button type="button" data-jump-question="${escapeHtml(id)}">题库题 ${escapeHtml(id)}</button>`).join("")}
+    </div>
+  `;
+}
+
+async function jumpToQuestionBank(questionId) {
+  if (!questionId || !els.questionSearch) return;
+  resetCurrent();
+  els.questionSearch.value = questionId;
+  els.questionSkillFilter.value = "";
+  els.questionScenarioFilter.value = "";
+  els.questionDifficultyFilter.value = "";
+  state.questionBank.selectedId = questionId;
+  await loadQuestionBank();
+  window.requestAnimationFrame(() => {
+    const panel = document.getElementById("questionBankPanel");
+    panel?.scrollIntoView({ behavior: "smooth", block: "start" });
+    const card = els.questionList?.querySelector(`[data-question-id="${cssEscape(questionId)}"]`);
+    card?.focus();
+  });
+}
+
+function startDrillTraining() {
+  const session = state.session;
+  const plan = session?.report?.drill_plan || [];
+  if (!plan.length) return;
+  const focus = plan.map((item) => `${item.skill || "综合表达"}：${item.reason || "继续训练"}`);
+  const questionIds = plan.flatMap((item) => item.recommended_question_ids || []);
+  const rawJD = session?.job_profile?.jd_raw_text || els.jdText.value.trim();
+  const rawResume = session?.candidate_profile?.resume_raw_text || els.resumeText.value.trim();
+
+  resetCurrent();
+  setMode("practice");
+  els.jdText.value = drillJDText(rawJD, focus, questionIds);
+  els.resumeText.value = rawResume;
+  showSetupNotice("已按报告训练计划预填弱项训练重点，确认后点击开始面试。");
+  window.requestAnimationFrame(() => {
+    els.setupView.scrollTo({ top: 0, behavior: "smooth" });
+    els.startBtn.focus();
+  });
+}
+
+function drillJDText(rawJD, focus, questionIds) {
+  const lines = [
+    rawJD || "技术面试弱项专项训练。",
+    "",
+    "本轮专项训练重点：",
+    ...focus.map((item) => `- ${item}`),
+  ];
+  if (questionIds.length) {
+    lines.push("", `优先覆盖题库题：${uniqueValues(questionIds).join("、")}`);
+  }
+  return lines.join("\n");
+}
+
+function uniqueValues(items) {
+  return [...new Set(items.filter(Boolean))];
 }
 
 function renderList(el, items) {
@@ -523,6 +916,7 @@ function resetCurrent() {
   state.events = [];
   els.answerText.value = "";
   els.conversation.innerHTML = "";
+  renderProfileAnalysis(null);
   showSetupNotice("");
   renderEventTimeline();
   els.setupView.classList.remove("hidden");
@@ -547,6 +941,11 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function cssEscape(value) {
+  if (window.CSS?.escape) return window.CSS.escape(String(value));
+  return String(value).replaceAll('"', '\\"').replaceAll("\\", "\\\\");
 }
 
 function clamp(n, min, max) {
@@ -579,9 +978,32 @@ els.answerText.addEventListener("keydown", (evt) => {
 });
 els.practiceModeBtn.addEventListener("click", () => setMode("practice"));
 els.examModeBtn.addEventListener("click", () => setMode("exam"));
+document.addEventListener("click", (evt) => {
+  const drillBtn = evt.target.closest("[data-start-drill]");
+  if (drillBtn) {
+    startDrillTraining();
+    return;
+  }
+  const btn = evt.target.closest("[data-jump-question]");
+  if (!btn) return;
+  jumpToQuestionBank(btn.dataset.jumpQuestion);
+});
+els.questionRefreshBtn.addEventListener("click", loadQuestionBank);
+els.questionSkillFilter.addEventListener("change", loadQuestionBank);
+els.questionScenarioFilter.addEventListener("change", loadQuestionBank);
+els.questionDifficultyFilter.addEventListener("change", loadQuestionBank);
+els.questionAdminView.addEventListener("change", () => {
+  state.questionBank.adminView = els.questionAdminView.checked;
+  loadQuestionBank();
+});
+els.questionSearch.addEventListener("input", () => {
+  window.clearTimeout(questionSearchTimer);
+  questionSearchTimer = window.setTimeout(loadQuestionBank, 220);
+});
 
 setMode("practice");
 renderProgress([]);
 renderEventTimeline();
 checkHealth();
 loadSessions();
+loadQuestionFacets().then(loadQuestionBank);
