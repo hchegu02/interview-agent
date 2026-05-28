@@ -30,6 +30,7 @@ import (
 	"interview-agent/internal/graphs"
 	"interview-agent/internal/httpapi"
 	"interview-agent/internal/llm"
+	"interview-agent/internal/nodes"
 	"interview-agent/internal/observability"
 	"interview-agent/internal/questionbank"
 	"interview-agent/internal/retriever"
@@ -76,6 +77,12 @@ func main() {
 	}
 
 	server := httpapi.NewServer(cfg)
+	profileAnalyzer, err := buildProfileAnalyzer(cfg)
+	if err != nil {
+		logger.Error("profile analyzer setup failed", "err", err)
+		os.Exit(1)
+	}
+	server.SetProfileAnalyzer(profileAnalyzer)
 	questionBankStore, err := buildQuestionBankStore(deps)
 	if err != nil {
 		logger.Error("question bank setup failed", "err", err)
@@ -285,6 +292,19 @@ type interviewRunnerBundle struct {
 // 第二个返回值 breakerState 是熔断器状态查询函数，给 /readyz 用；mock 模式为 nil。
 func buildChatModel(cfg *config.Config) (llm.ChatModel, func() string, error) {
 	return llm.BuildChatModel(cfg)
+}
+
+func buildProfileAnalyzer(cfg *config.Config) (*httpapi.NodeProfileAnalyzer, error) {
+	model, _, err := buildChatModel(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return httpapi.NewNodeProfileAnalyzer(
+		nodes.NewParseJDNode(model),
+		nodes.NewParseResumeNode(model),
+		nodes.NewGapAnalyzeNode(model),
+		nodes.NewAnalyzeProfileNode(),
+	), nil
 }
 
 func buildEmbedder(cfg *config.Config) (embedding.Embedder, error) {

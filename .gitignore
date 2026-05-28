@@ -18,6 +18,8 @@ config/config.yaml
 # =========================
 bin/
 dist/
+!internal/httpapi/web/dist/
+!internal/httpapi/web/dist/**
 build/
 *.exe
 *.test
@@ -98,8 +100,10 @@ postgres-data/
 # Node, if any
 # =========================
 node_modules/
+web/node_modules/
 npm-debug.log*
 pnpm-lock.yaml.tmp
+*.tsbuildinfo
 
 # =========================
 # AI coding tools / temp artifacts
@@ -109,6 +113,7 @@ pnpm-lock.yaml.tmp
 .aider*
 .vibecoding/
 .claude/
+.superpowers/
 
 # =========================
 # OS

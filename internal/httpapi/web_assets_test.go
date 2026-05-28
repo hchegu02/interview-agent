@@ -9,167 +9,73 @@ import (
 	"interview-agent/internal/config"
 )
 
-func TestRouterServesWebApp(t *testing.T) {
+func TestRouterRedirectsRootToResume(t *testing.T) {
 	server := NewServer(&config.Config{})
 	router := server.Router()
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	router.ServeHTTP(rec, req)
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusTemporaryRedirect {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusTemporaryRedirect)
 	}
-	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
-		t.Fatalf("content type = %q, want text/html", ct)
-	}
-	if !strings.Contains(rec.Body.String(), "InterviewAgent") {
-		t.Fatalf("index html missing app marker")
+	if loc := rec.Header().Get("Location"); loc != "/resume" {
+		t.Fatalf("location = %q, want /resume", loc)
 	}
 }
 
-func TestRouterServesWebAssets(t *testing.T) {
+func TestRouterServesReactAppRoutes(t *testing.T) {
 	server := NewServer(&config.Config{})
 	router := server.Router()
+
+	for _, path := range []string{"/resume", "/jd", "/interview", "/report", "/questions"} {
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s status = %d, body=%s", path, rec.Code, rec.Body.String())
+		}
+		if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+			t.Fatalf("%s content type = %q, want text/html", path, ct)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `id="root"`) || !strings.Contains(body, "/assets/") {
+			t.Fatalf("%s html missing React/Vite markers: %s", path, body)
+		}
+	}
+}
+
+func TestRouterServesViteAssets(t *testing.T) {
+	server := NewServer(&config.Config{})
+	router := server.Router()
+
+	index := httptest.NewRecorder()
+	router.ServeHTTP(index, httptest.NewRequest(http.MethodGet, "/resume", nil))
+	if index.Code != http.StatusOK {
+		t.Fatalf("index status = %d", index.Code)
+	}
+	assetPath := firstAssetPath(index.Body.String(), ".js")
+	if assetPath == "" {
+		t.Fatalf("index html missing JS asset: %s", index.Body.String())
+	}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/assets/app.js", nil)
-	router.ServeHTTP(rec, req)
-
+	router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, assetPath, nil))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("asset status = %d, body=%s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "startInterview") {
-		t.Fatalf("asset body missing app code")
+	if !strings.Contains(rec.Body.String(), "interview_agent_draft_v1") {
+		t.Fatalf("asset body missing React app marker")
 	}
-}
-
-func TestWebAppIncludesLiveStatusAndUsableAnswerDock(t *testing.T) {
-	server := NewServer(&config.Config{})
-	router := server.Router()
-
-	index := httptest.NewRecorder()
-	router.ServeHTTP(index, httptest.NewRequest(http.MethodGet, "/", nil))
-	if index.Code != http.StatusOK {
-		t.Fatalf("index status = %d", index.Code)
-	}
-	html := index.Body.String()
-	for _, marker := range []string{
-		`id="setupNotice"`,
-		`id="eventTimeline"`,
-		`id="profileAnalysisPanel"`,
-		`id="reportTranscriptAnalysis"`,
-		`id="reportDrillPlan"`,
-		`id="resumeFile"`,
-		`answer-hint`,
-	} {
-		if !strings.Contains(html, marker) {
-			t.Fatalf("index html missing marker %q", marker)
-		}
-	}
-
-	js := httptest.NewRecorder()
-	router.ServeHTTP(js, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
-	if js.Code != http.StatusOK {
-		t.Fatalf("js status = %d", js.Code)
-	}
-	script := js.Body.String()
-	for _, marker := range []string{
-		"parseResumeFile",
-		"/api/documents/parse-resume",
-		"pushStreamEvent",
-		"renderEventTimeline",
-		"renderProfileAnalysis",
-		"renderTranscriptAnalysis",
-		"renderDrillPlan",
-		"renderRecommendedQuestionIds",
-		"jumpToQuestionBank",
-		"startDrillTraining",
-		"data-start-drill",
-		"本轮专项训练重点",
-		"data-jump-question",
-		"state.pendingAnswer",
-		"state.lastEventId = \"\"",
-	} {
-		if !strings.Contains(script, marker) {
-			t.Fatalf("app.js missing marker %q", marker)
-		}
-	}
-
-	css := httptest.NewRecorder()
-	router.ServeHTTP(css, httptest.NewRequest(http.MethodGet, "/assets/app.css", nil))
-	if css.Code != http.StatusOK {
-		t.Fatalf("css status = %d", css.Code)
-	}
-	styles := css.Body.String()
-	for _, marker := range []string{
-		".event-timeline",
-		".profile-analysis",
-		".transcript-analysis",
-		".drill-plan",
-		".drill-start",
-		".recommended-question-ids",
-		".answer-dock",
-		"position: sticky",
-	} {
-		if !strings.Contains(styles, marker) {
-			t.Fatalf("app.css missing marker %q", marker)
-		}
+	if cc := rec.Header().Get("Cache-Control"); !strings.Contains(cc, "immutable") {
+		t.Fatalf("cache-control = %q, want immutable", cc)
 	}
 }
 
-func TestWebAppIncludesQuestionBankPreview(t *testing.T) {
-	server := NewServer(&config.Config{})
-	router := server.Router()
-
-	index := httptest.NewRecorder()
-	router.ServeHTTP(index, httptest.NewRequest(http.MethodGet, "/", nil))
-	if index.Code != http.StatusOK {
-		t.Fatalf("index status = %d", index.Code)
-	}
-	html := index.Body.String()
-	for _, marker := range []string{
-		`id="questionBankPanel"`,
-		`id="questionSearch"`,
-		`id="questionSkillFilter"`,
-		`id="questionList"`,
-		`id="questionDetail"`,
-	} {
-		if !strings.Contains(html, marker) {
-			t.Fatalf("index html missing marker %q", marker)
+func firstAssetPath(html, suffix string) string {
+	for _, part := range strings.Split(html, `"`) {
+		if strings.HasPrefix(part, "/assets/") && strings.HasSuffix(part, suffix) {
+			return part
 		}
 	}
-
-	js := httptest.NewRecorder()
-	router.ServeHTTP(js, httptest.NewRequest(http.MethodGet, "/assets/app.js", nil))
-	if js.Code != http.StatusOK {
-		t.Fatalf("js status = %d", js.Code)
-	}
-	script := js.Body.String()
-	for _, marker := range []string{
-		"loadQuestionBank",
-		"/api/question-bank",
-		"renderQuestionBank",
-		"renderQuestionDetail",
-	} {
-		if !strings.Contains(script, marker) {
-			t.Fatalf("app.js missing marker %q", marker)
-		}
-	}
-
-	css := httptest.NewRecorder()
-	router.ServeHTTP(css, httptest.NewRequest(http.MethodGet, "/assets/app.css", nil))
-	if css.Code != http.StatusOK {
-		t.Fatalf("css status = %d", css.Code)
-	}
-	styles := css.Body.String()
-	for _, marker := range []string{
-		".question-bank-panel",
-		".question-filters",
-		".question-card",
-	} {
-		if !strings.Contains(styles, marker) {
-			t.Fatalf("app.css missing marker %q", marker)
-		}
-	}
+	return ""
 }

@@ -1,4 +1,4 @@
-.PHONY: help tidy build run test test-core test-race lint migrate-up migrate-down seed demo demo-web demo-web-real demo-pg demo-pg-full demo-mock demo-real load-test docker-up docker-up-cluster docker-down clean
+.PHONY: help tidy build web-build run test test-core test-race lint migrate-up migrate-down seed demo demo-web demo-web-real demo-pg demo-pg-full demo-mock demo-real load-test docker-up docker-up-cluster docker-down clean
 
 GO ?= go
 APP := bin/server
@@ -12,6 +12,9 @@ tidy: ## go mod tidy
 
 build: ## build server binary
 	$(GO) build -o $(APP) ./cmd/server
+
+web-build: ## build React web frontend
+	npm --prefix web run build
 
 run: build ## run server with local config
 	$(APP) -config $(CONFIG)
@@ -44,10 +47,10 @@ seed: ## load demo question bank rows
 demo: build ## smoke test: start, ping, stop
 	sh ./scripts/smoke.sh
 
-demo-web: ## run web interview server in mock mode
+demo-web: web-build ## run web interview server in mock mode
 	INTERVIEW_LLM_MODE=mock INTERVIEW_EMBEDDING_MODE=mock $(GO) run ./cmd/server -config $(CONFIG)
 
-demo-web-real: ## run web interview server with real LLM; API key may come from env or YAML
+demo-web-real: web-build ## run web interview server with real LLM; API key may come from env or YAML
 	INTERVIEW_LLM_MODE=real INTERVIEW_EMBEDDING_MODE=mock $(GO) run ./cmd/server -config $(CONFIG)
 
 demo-pg: build ## smoke test against configured PG DSN

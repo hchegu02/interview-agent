@@ -1,11 +1,13 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 
 	"interview-agent/internal/config"
+	"interview-agent/internal/domain"
 	"interview-agent/internal/parser"
 	"interview-agent/internal/questionbank"
 )
@@ -16,6 +18,7 @@ type Server struct {
 	interview       *InterviewService
 	documentParser  parser.DocumentParser
 	questionBank    questionbank.Store
+	profileAnalyzer ProfileAnalyzer
 	metricsRecorder *metricsRecorder
 
 	// breakerState 可选注入：real 模式下接 BreakingChatModel.State，返回
@@ -38,6 +41,14 @@ func (s *Server) SetBreakerState(fn func() string) {
 	s.breakerState = fn
 }
 
+type ProfileAnalyzer interface {
+	AnalyzeProfile(ctx context.Context, req profileAnalyzeRequest) (*domain.Session, error)
+}
+
+func (s *Server) SetProfileAnalyzer(analyzer ProfileAnalyzer) {
+	s.profileAnalyzer = analyzer
+}
+
 // Router 构造 Gin 引擎。
 // 中间件顺序：trace id → recovery；/api/interview/{start,answer} 子组额外挂 MaxInFlight 限流。
 // SSE stream 使用独立 MaxStreams 限流，避免长连接消耗短请求容量。
@@ -57,6 +68,7 @@ func (s *Server) Router() *gin.Engine {
 	{
 		api.GET("/ping", s.ping)
 		api.POST("/documents/parse-resume", s.parseResumeDocument)
+		api.POST("/profile/analyze", s.analyzeProfile)
 		api.GET("/question-bank", s.listQuestionBank)
 		api.GET("/question-bank/facets", s.questionBankFacets)
 		api.GET("/question-bank/:id", s.getQuestionBankItem)
