@@ -31,8 +31,10 @@ lint: ## run golangci-lint
 migrate-up: ## apply DB migrations (requires docker postgres up)
 	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/001_init.up.sql
 	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/002_question_bank_expected_points.up.sql
+	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/003_question_bank_metadata.up.sql
 
 migrate-down: ## roll back DB migrations
+	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/003_question_bank_metadata.down.sql
 	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/002_question_bank_expected_points.down.sql
 	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/001_init.down.sql
 

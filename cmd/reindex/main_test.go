@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -53,5 +54,45 @@ func TestUpsertSQLWritesQuestionMetadata(t *testing.T) {
 		if !strings.Contains(upsertSQL, marker) {
 			t.Fatalf("upsert SQL missing %q", marker)
 		}
+	}
+}
+
+func TestNormalizeSeedRowMetadataKeepsDatabaseArraysNonNull(t *testing.T) {
+	row := seedRow{
+		ID:            "go-003",
+		Content:       "sync.Mutex 饥饿模式",
+		SkillCategory: "go",
+		Difficulty:    4,
+	}
+
+	normalizeSeedRowMetadata(&row)
+
+	if row.Tags == nil {
+		t.Fatal("Tags is nil")
+	}
+	if row.RoleTags == nil {
+		t.Fatal("RoleTags is nil")
+	}
+	if row.ExpectedPoints == nil {
+		t.Fatal("ExpectedPoints is nil")
+	}
+	if row.FollowUpHints == nil {
+		t.Fatal("FollowUpHints is nil")
+	}
+	if row.Rubric == nil {
+		t.Fatal("Rubric is nil")
+	}
+	raw, err := json.Marshal(row.Rubric)
+	if err != nil {
+		t.Fatalf("marshal rubric: %v", err)
+	}
+	if string(raw) != "{}" {
+		t.Fatalf("rubric json = %s, want {}", raw)
+	}
+	if row.Locale != "zh-CN" {
+		t.Fatalf("Locale = %q, want zh-CN", row.Locale)
+	}
+	if row.Status != "active" {
+		t.Fatalf("Status = %q, want active", row.Status)
 	}
 }

@@ -98,14 +98,7 @@ func run(ctx context.Context, seedPath, mode, baseURL, model string, dim, batch 
 
 	// 4. canonical tags
 	for i := range rows {
-		rows[i].Tags = retriever.CanonicalizeTags(rows[i].Tags)
-		rows[i].RoleTags = retriever.CanonicalizeTags(rows[i].RoleTags)
-		if rows[i].Locale == "" {
-			rows[i].Locale = "zh-CN"
-		}
-		if rows[i].Status == "" {
-			rows[i].Status = "active"
-		}
+		normalizeSeedRowMetadata(&rows[i])
 	}
 
 	if dryRun {
@@ -173,6 +166,29 @@ func loadSeeds(path string) ([]seedRow, error) {
 		}
 	}
 	return rows, nil
+}
+
+func normalizeSeedRowMetadata(r *seedRow) {
+	r.Tags = nonNilStrings(retriever.CanonicalizeTags(r.Tags))
+	r.RoleTags = nonNilStrings(retriever.CanonicalizeTags(r.RoleTags))
+	r.ExpectedPoints = nonNilStrings(r.ExpectedPoints)
+	r.FollowUpHints = nonNilStrings(r.FollowUpHints)
+	if r.Rubric == nil {
+		r.Rubric = map[string]string{}
+	}
+	if r.Locale == "" {
+		r.Locale = "zh-CN"
+	}
+	if r.Status == "" {
+		r.Status = "active"
+	}
+}
+
+func nonNilStrings(in []string) []string {
+	if in == nil {
+		return []string{}
+	}
+	return in
 }
 
 func buildEmbedder(mode, baseURL, model string, dim int) (embedding.Embedder, error) {
