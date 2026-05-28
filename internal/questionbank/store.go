@@ -13,22 +13,26 @@ import (
 )
 
 type Item struct {
-	ID             string            `json:"id"`
-	Content        string            `json:"content"`
-	Tags           []string          `json:"tags,omitempty"`
-	SkillCategory  string            `json:"skill_category,omitempty"`
-	Difficulty     int               `json:"difficulty,omitempty"`
-	ExpectedPoints []string          `json:"expected_points,omitempty"`
-	Source         string            `json:"source,omitempty"`
-	Scenario       string            `json:"scenario,omitempty"`
-	RoleTags       []string          `json:"role_tags,omitempty"`
-	Rubric         map[string]string `json:"rubric,omitempty"`
-	SampleAnswer   string            `json:"sample_answer,omitempty"`
-	FollowUpHints  []string          `json:"follow_up_hints,omitempty"`
-	Locale         string            `json:"locale,omitempty"`
-	Status         string            `json:"status,omitempty"`
-	CreatedAt      time.Time         `json:"created_at,omitempty"`
-	UpdatedAt      time.Time         `json:"updated_at,omitempty"`
+	ID              string            `json:"id"`
+	Content         string            `json:"content"`
+	Tags            []string          `json:"tags,omitempty"`
+	SkillCategory   string            `json:"skill_category,omitempty"`
+	Difficulty      int               `json:"difficulty,omitempty"`
+	ExpectedPoints  []string          `json:"expected_points,omitempty"`
+	Source          string            `json:"source,omitempty"`
+	Scenario        string            `json:"scenario,omitempty"`
+	RoleTags        []string          `json:"role_tags,omitempty"`
+	Rubric          map[string]string `json:"rubric,omitempty"`
+	SampleAnswer    string            `json:"sample_answer,omitempty"`
+	FollowUpHints   []string          `json:"follow_up_hints,omitempty"`
+	Locale          string            `json:"locale,omitempty"`
+	Status          string            `json:"status,omitempty"`
+	EmbeddingStatus string            `json:"embedding_status,omitempty"`
+	EmbeddingModel  string            `json:"embedding_model,omitempty"`
+	EmbeddedAt      time.Time         `json:"embedded_at,omitempty"`
+	EmbeddingError  string            `json:"embedding_error,omitempty"`
+	CreatedAt       time.Time         `json:"created_at,omitempty"`
+	UpdatedAt       time.Time         `json:"updated_at,omitempty"`
 }
 
 type Filter struct {
@@ -60,9 +64,24 @@ type Store interface {
 	Facets(ctx context.Context) (Facets, error)
 }
 
+type Writer interface {
+	Upsert(ctx context.Context, items []Item) error
+}
+
+type EmbeddingWriter interface {
+	UpsertEmbeddings(ctx context.Context, vectors []ItemEmbedding) error
+}
+
+type ItemEmbedding struct {
+	ID     string
+	Vector []float32
+	Model  string
+}
+
 type MemoryStore struct {
-	items []Item
-	byID  map[string]Item
+	items      []Item
+	byID       map[string]Item
+	embeddings map[string]ItemEmbedding
 }
 
 func NewMemoryStore(items []Item) *MemoryStore {
@@ -76,7 +95,7 @@ func NewMemoryStore(items []Item) *MemoryStore {
 	sort.SliceStable(normalized, func(i, j int) bool {
 		return normalized[i].ID < normalized[j].ID
 	})
-	return &MemoryStore{items: normalized, byID: byID}
+	return &MemoryStore{items: normalized, byID: byID, embeddings: map[string]ItemEmbedding{}}
 }
 
 func LoadSeedFile(path string) ([]Item, error) {
@@ -169,6 +188,61 @@ func (s *MemoryStore) Facets(_ context.Context) (Facets, error) {
 	return f, nil
 }
 
+func (s *MemoryStore) Upsert(_ context.Context, items []Item) error {
+	if s.byID == nil {
+		s.byID = map[string]Item{}
+	}
+	for _, item := range items {
+		item = normalizeItem(item)
+		s.byID[item.ID] = cloneItem(item)
+	}
+	s.items = s.items[:0]
+	for _, item := range s.byID {
+		s.items = append(s.items, cloneItem(item))
+	}
+	sort.SliceStable(s.items, func(i, j int) bool {
+		return s.items[i].ID < s.items[j].ID
+	})
+	return nil
+}
+
+func (s *MemoryStore) UpsertEmbeddings(_ context.Context, vectors []ItemEmbedding) error {
+	if s.embeddings == nil {
+		s.embeddings = map[string]ItemEmbedding{}
+	}
+	for _, vector := range vectors {
+		vector.Vector = append([]float32(nil), vector.Vector...)
+		s.embeddings[vector.ID] = vector
+		if item, ok := s.byID[vector.ID]; ok {
+			item.EmbeddingStatus = "embedded"
+			item.EmbeddingModel = vector.Model
+			item.EmbeddedAt = time.Now().UTC()
+			item.EmbeddingError = ""
+			s.byID[vector.ID] = item
+		}
+	}
+	for i := range s.items {
+		if vector, ok := s.embeddings[s.items[i].ID]; ok {
+			s.items[i].EmbeddingStatus = "embedded"
+			s.items[i].EmbeddingModel = vector.Model
+			s.items[i].EmbeddedAt = time.Now().UTC()
+			s.items[i].EmbeddingError = ""
+		}
+	}
+	return nil
+}
+
+func (s *MemoryStore) Embedding(id string) ([]float32, string, bool) {
+	if s == nil || s.embeddings == nil {
+		return nil, "", false
+	}
+	vector, ok := s.embeddings[id]
+	if !ok {
+		return nil, "", false
+	}
+	return append([]float32(nil), vector.Vector...), vector.Model, true
+}
+
 func matchesFilter(item Item, filter Filter) bool {
 	status := filter.Status
 	if status == "" {
@@ -202,6 +276,9 @@ func matchesFilter(item Item, filter Filter) bool {
 func normalizeItem(item Item) Item {
 	if item.Status == "" {
 		item.Status = "active"
+	}
+	if item.EmbeddingStatus == "" {
+		item.EmbeddingStatus = "pending"
 	}
 	if item.Locale == "" {
 		item.Locale = "zh-CN"

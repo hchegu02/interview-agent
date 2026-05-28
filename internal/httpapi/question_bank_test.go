@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"bytes"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -78,6 +80,9 @@ func TestQuestionBankGet_AdminViewIncludesAnswerFields(t *testing.T) {
 			t.Fatalf("admin response missing %q: %s", marker, raw)
 		}
 	}
+	if !strings.Contains(raw, "embedding_status") {
+		t.Fatalf("admin response should include embedding_status: %s", raw)
+	}
 }
 
 func TestQuestionBankFacets(t *testing.T) {
@@ -98,5 +103,100 @@ func TestQuestionBankFacets(t *testing.T) {
 		if !strings.Contains(rec.Body.String(), marker) {
 			t.Fatalf("facets missing %q: %s", marker, rec.Body.String())
 		}
+	}
+}
+
+func TestQuestionBankImport_LocalJSONThenCommit(t *testing.T) {
+	store := questionbank.NewMemoryStore(nil)
+	importStore := questionbank.NewMemoryImportStore()
+	server := NewServer(&config.Config{})
+	server.SetQuestionBankStore(store)
+	server.SetQuestionBankImportService(questionbank.NewImportService(questionbank.ImportServiceDeps{
+		Imports: importStore,
+		Writer:  store,
+	}))
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("source_type", "question_bank"); err != nil {
+		t.Fatal(err)
+	}
+	part, err := writer.CreateFormFile("file", "questions.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte(`[{"id":"go-import-001","content":"Go channel close 语义是什么？","skill_category":"go","difficulty":3}]`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/question-bank/imports", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	server.Router().ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var created struct {
+		Job questionbank.ImportJob `json:"job"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if created.Job.Status != questionbank.ImportStatusReady || created.Job.ValidItems != 1 {
+		t.Fatalf("job = %+v", created.Job)
+	}
+	if _, err := store.Get(req.Context(), "go-import-001"); err == nil {
+		t.Fatal("uploaded item should not be visible before commit")
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/question-bank/imports/"+created.Job.ID+"/commit", nil)
+	server.Router().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if _, err := store.Get(req.Context(), "go-import-001"); err != nil {
+		t.Fatalf("committed item should be visible: %v", err)
+	}
+}
+
+func TestQuestionBankImport_AsyncLocalJSON(t *testing.T) {
+	store := questionbank.NewMemoryStore(nil)
+	importStore := questionbank.NewMemoryImportStore()
+	server := NewServer(&config.Config{})
+	server.SetQuestionBankStore(store)
+	server.SetQuestionBankImportService(questionbank.NewImportService(questionbank.ImportServiceDeps{
+		Imports: importStore,
+		Writer:  store,
+	}))
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("source_type", "question_bank"); err != nil {
+		t.Fatal(err)
+	}
+	part, err := writer.CreateFormFile("file", "questions.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte(`[{"id":"async-http-001","content":"Redis 慢查询如何定位？","skill_category":"redis","difficulty":3}]`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/question-bank/imports?async=true", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	server.Router().ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"status":"queued"`) {
+		t.Fatalf("async response should return queued job: %s", rec.Body.String())
 	}
 }

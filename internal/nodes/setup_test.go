@@ -433,6 +433,37 @@ func TestRetrieveRAG_Success(t *testing.T) {
 	}
 }
 
+func TestRetrieveRAG_PassesQuestionBankFilterToRetriever(t *testing.T) {
+	embedder := &stubEmbedder{dim: 1024}
+	r := newFakeRetriever([]string{"redis-001"}, nil)
+	node := NewRetrieveRAGNode(embedder, r, RetrieveRAGOptions{TopK: 10})
+
+	sess := buildRAGSession([]string{"go", "redis"}, []string{"redis"})
+	sess.QuestionBankFilter = &domain.QuestionBankFilter{
+		SkillCategories: []string{"redis"},
+		Scenarios:       []string{"troubleshooting"},
+		DifficultyMin:   2,
+		DifficultyMax:   4,
+		Tags:            []string{"cache"},
+	}
+
+	if err := node(context.Background(), sess); err != nil {
+		t.Fatalf("node failed: %v", err)
+	}
+	if got := r.lastQ.SkillCategories; len(got) != 1 || got[0] != "redis" {
+		t.Fatalf("skill categories = %+v, want [redis]", got)
+	}
+	if got := r.lastQ.Scenarios; len(got) != 1 || got[0] != "troubleshooting" {
+		t.Fatalf("scenarios = %+v, want [troubleshooting]", got)
+	}
+	if r.lastQ.DifficultyMin != 2 || r.lastQ.DifficultyMax != 4 {
+		t.Fatalf("difficulty range = %d..%d, want 2..4", r.lastQ.DifficultyMin, r.lastQ.DifficultyMax)
+	}
+	if got := r.lastQ.FilterTags; len(got) != 1 || got[0] != "cache" {
+		t.Fatalf("filter tags = %+v, want [cache]", got)
+	}
+}
+
 func TestRetrieveRAG_EmbedderFails_Fallback(t *testing.T) {
 	embedder := &stubEmbedder{dim: 1024, err: errors.New("embed boom")}
 	r := newFakeRetriever(nil, nil)
@@ -467,6 +498,27 @@ func TestRetrieveRAG_RetrieverEmpty_Fallback(t *testing.T) {
 	}
 	if sess.CandidatePool[0].Source != "fallback" {
 		t.Errorf("expected fallback source, got %s", sess.CandidatePool[0].Source)
+	}
+}
+
+func TestRetrieveRAG_FallbackHonorsQuestionBankFilter(t *testing.T) {
+	embedder := &stubEmbedder{dim: 1024}
+	r := newFakeRetriever(nil, errors.New("pg down"))
+	node := NewRetrieveRAGNode(embedder, r, RetrieveRAGOptions{TopK: 5})
+
+	sess := buildRAGSession([]string{"go", "redis"}, []string{"redis"})
+	sess.QuestionBankFilter = &domain.QuestionBankFilter{SkillCategories: []string{"redis"}}
+
+	if err := node(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	if len(sess.CandidatePool) == 0 {
+		t.Fatal("expected filtered fallback pool")
+	}
+	for _, q := range sess.CandidatePool {
+		if q.SkillCategory != "redis" {
+			t.Fatalf("fallback should honor redis scope, got %+v", sess.CandidatePool)
+		}
 	}
 }
 

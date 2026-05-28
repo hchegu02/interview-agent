@@ -18,20 +18,32 @@ type questionBankListResponse struct {
 }
 
 type questionBankItem struct {
-	ID             string            `json:"id"`
-	Content        string            `json:"content"`
-	Tags           []string          `json:"tags,omitempty"`
-	SkillCategory  string            `json:"skill_category,omitempty"`
-	Difficulty     int               `json:"difficulty,omitempty"`
-	Source         string            `json:"source,omitempty"`
-	Scenario       string            `json:"scenario,omitempty"`
-	RoleTags       []string          `json:"role_tags,omitempty"`
-	Locale         string            `json:"locale,omitempty"`
-	Status         string            `json:"status,omitempty"`
-	ExpectedPoints []string          `json:"expected_points,omitempty"`
-	Rubric         map[string]string `json:"rubric,omitempty"`
-	SampleAnswer   string            `json:"sample_answer,omitempty"`
-	FollowUpHints  []string          `json:"follow_up_hints,omitempty"`
+	ID              string            `json:"id"`
+	Content         string            `json:"content"`
+	Tags            []string          `json:"tags,omitempty"`
+	SkillCategory   string            `json:"skill_category,omitempty"`
+	Difficulty      int               `json:"difficulty,omitempty"`
+	Source          string            `json:"source,omitempty"`
+	Scenario        string            `json:"scenario,omitempty"`
+	RoleTags        []string          `json:"role_tags,omitempty"`
+	Locale          string            `json:"locale,omitempty"`
+	Status          string            `json:"status,omitempty"`
+	EmbeddingStatus string            `json:"embedding_status,omitempty"`
+	EmbeddingModel  string            `json:"embedding_model,omitempty"`
+	EmbeddingError  string            `json:"embedding_error,omitempty"`
+	ExpectedPoints  []string          `json:"expected_points,omitempty"`
+	Rubric          map[string]string `json:"rubric,omitempty"`
+	SampleAnswer    string            `json:"sample_answer,omitempty"`
+	FollowUpHints   []string          `json:"follow_up_hints,omitempty"`
+}
+
+type questionBankImportResponse struct {
+	Job   questionbank.ImportJob    `json:"job"`
+	Items []questionbank.ImportItem `json:"items,omitempty"`
+}
+
+type questionBankImportListResponse struct {
+	Jobs []questionbank.ImportJob `json:"jobs"`
 }
 
 func (s *Server) listQuestionBank(c *gin.Context) {
@@ -91,6 +103,117 @@ func (s *Server) questionBankFacets(c *gin.Context) {
 	c.JSON(http.StatusOK, facets)
 }
 
+func (s *Server) createQuestionBankImport(c *gin.Context) {
+	if s.questionImports == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "question bank import service not configured"})
+		return
+	}
+	sourceType := strings.TrimSpace(c.PostForm("source_type"))
+	if sourceType == "" {
+		sourceType = questionbank.ImportSourceQuestionBank
+	}
+	if sourceType != questionbank.ImportSourceQuestionBank && sourceType != questionbank.ImportSourceDocument {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "source_type must be question_bank or document"})
+		return
+	}
+	fileHeader, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "import file is required"})
+		return
+	}
+	file, err := fileHeader.Open()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "open import file failed"})
+		return
+	}
+	defer file.Close()
+
+	importFile := questionbank.ImportFile{
+		Filename:    fileHeader.Filename,
+		ContentType: fileHeader.Header.Get("Content-Type"),
+		Reader:      file,
+		Size:        fileHeader.Size,
+	}
+	var job questionbank.ImportJob
+	if c.Query("async") == "true" || c.PostForm("async") == "true" {
+		job, err = s.questionImports.EnqueueImport(c.Request.Context(), sourceType, importFile)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "job": job})
+			return
+		}
+		c.JSON(http.StatusAccepted, questionBankImportResponse{Job: job})
+		return
+	}
+	switch sourceType {
+	case questionbank.ImportSourceQuestionBank:
+		job, err = s.questionImports.ImportLocalQuestionBank(c.Request.Context(), importFile)
+	case questionbank.ImportSourceDocument:
+		job, err = s.questionImports.ImportDocument(c.Request.Context(), importFile)
+	}
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "job": job})
+		return
+	}
+	c.JSON(http.StatusCreated, questionBankImportResponse{Job: job})
+}
+
+func (s *Server) listQuestionBankImports(c *gin.Context) {
+	if s.questionImports == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "question bank import service not configured"})
+		return
+	}
+	jobs, err := s.questionImports.List(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "list question bank imports failed"})
+		return
+	}
+	c.JSON(http.StatusOK, questionBankImportListResponse{Jobs: jobs})
+}
+
+func (s *Server) getQuestionBankImport(c *gin.Context) {
+	if s.questionImports == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "question bank import service not configured"})
+		return
+	}
+	job, items, err := s.questionImports.Get(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		if errors.Is(err, questionbank.ErrImportNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "question bank import not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "get question bank import failed"})
+		return
+	}
+	c.JSON(http.StatusOK, questionBankImportResponse{Job: job, Items: items})
+}
+
+func (s *Server) commitQuestionBankImport(c *gin.Context) {
+	if s.questionImports == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "question bank import service not configured"})
+		return
+	}
+	var job questionbank.ImportJob
+	var err error
+	if c.Query("async") == "true" || c.PostForm("async") == "true" {
+		job, err = s.questionImports.EnqueueCommit(c.Request.Context(), c.Param("id"))
+		if err == nil {
+			c.JSON(http.StatusAccepted, questionBankImportResponse{Job: job})
+			return
+		}
+	} else {
+		job, err = s.questionImports.Commit(c.Request.Context(), c.Param("id"))
+	}
+	if err != nil {
+		if errors.Is(err, questionbank.ErrImportNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "question bank import not found"})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, questionBankImportResponse{Job: job})
+}
+
 func questionBankFilterFromQuery(c *gin.Context) (questionbank.Filter, error) {
 	limit, err := parseOptionalInt(c.Query("limit"))
 	if err != nil {
@@ -131,6 +254,9 @@ func buildQuestionBankItem(item questionbank.Item, admin bool) questionBankItem 
 		out.Rubric = item.Rubric
 		out.SampleAnswer = item.SampleAnswer
 		out.FollowUpHints = append([]string(nil), item.FollowUpHints...)
+		out.EmbeddingStatus = item.EmbeddingStatus
+		out.EmbeddingModel = item.EmbeddingModel
+		out.EmbeddingError = item.EmbeddingError
 	}
 	return out
 }

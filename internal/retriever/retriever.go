@@ -23,6 +23,14 @@ type Query struct {
 	Difficulty     int       // 目标难度 1-5；用作软过滤 ±2 和 difficulty_score
 	K              int       // 期望返回 top-K（默认 5）
 
+	// 下面这些字段是用户选择的题库范围，作为硬过滤条件进入 SQL。
+	// 空值表示不限制；Tags 仍用于主题打分，FilterTags 只用于候选集约束。
+	SkillCategories []string
+	Scenarios       []string
+	DifficultyMin   int
+	DifficultyMax   int
+	FilterTags      []string
+
 	// VectorCandidates / TagCandidates 控制两路召回宽度，调权时偶尔会改。
 	// 0 时走默认：VectorCandidates = K * 5, TagCandidates = K * 3
 	VectorCandidates int

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analysisSummary, drillJDText } from "./draftStore";
+import { analysisSummary, buildDraft, draftScopeSummary, drillJDText } from "./draftStore";
 
 describe("draftStore helpers", () => {
   it("builds drill JD text from weak-area plan and question ids", () => {
@@ -24,5 +24,32 @@ describe("draftStore helpers", () => {
     });
 
     expect(got).toBe("72 分 · 匹配良好，需要验证项目深度。");
+  });
+
+  it("summarizes question bank scope for the JD page", () => {
+    const got = draftScopeSummary({
+      skill_categories: ["redis", "go"],
+      scenarios: ["troubleshooting"],
+      difficulty_min: 2,
+      difficulty_max: 4,
+      tags: ["cache"],
+    });
+
+    expect(got).toBe("技能 redis / go · 场景 troubleshooting · 难度 2-4 · 标签 cache");
+  });
+
+  it("merges scope changes with the current in-memory draft", () => {
+    const got = buildDraft({
+      resume_text: "默认简历",
+      jd_text: "默认 JD",
+      updated_at: "old",
+    }, {
+      question_bank_filter: { skill_categories: ["redis"] },
+    }, "2026-05-28T00:00:00.000Z");
+
+    expect(got.resume_text).toBe("默认简历");
+    expect(got.jd_text).toBe("默认 JD");
+    expect(got.question_bank_filter?.skill_categories).toEqual(["redis"]);
+    expect(got.updated_at).toBe("2026-05-28T00:00:00.000Z");
   });
 });

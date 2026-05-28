@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { apiClient } from "./apiClient";
-import { analysisSummary, clearDraft, drillJDText, loadDraft, saveDraft } from "./draftStore";
+import { analysisSummary, buildDraft, clearDraft, DRAFT_KEY, draftScopeSummary, drillJDText, loadDraft, normalizeQuestionBankFilter, saveDraft } from "./draftStore";
 import { normalizeRoute, questionURL, routes, type Route } from "./routes";
 import { useInterviewStream, type StreamEvent } from "./useInterviewStream";
 import type {
@@ -13,6 +13,8 @@ import type {
   Mode,
   ProfileAnalyzeResponse,
   ProfileAnalysis,
+  QuestionBankImportJob,
+  QuestionBankImportItem,
   QuestionBankItem,
   QuestionFacets,
   Session,
@@ -79,7 +81,11 @@ function App() {
   }, [refreshSessions]);
 
   const updateDraft = useCallback((patch: Partial<Draft>) => {
-    setDraft(saveDraft(patch));
+    setDraft((prev) => {
+      const next = buildDraft(prev, patch);
+      window.localStorage.setItem(DRAFT_KEY, JSON.stringify(next));
+      return next;
+    });
   }, []);
 
   const pushEvent = useCallback((event: StreamEvent) => {
@@ -126,6 +132,7 @@ function App() {
         mode,
         jd_text: draft.jd_text.trim(),
         resume_text: draft.resume_text.trim(),
+        question_bank_filter: normalizeQuestionBankFilter(draft.question_bank_filter),
       });
       setSession(next);
       setNotice("");
@@ -314,6 +321,16 @@ function JDPage({ draft, busy, updateDraft, analyze, startInterview }: {
   analyze: () => Promise<void>;
   startInterview: () => Promise<void>;
 }) {
+  const [facets, setFacets] = useState<QuestionFacets>({ skill_categories: {}, scenarios: {}, tags: {}, difficulties: {} });
+  const [facetError, setFacetError] = useState("");
+  useEffect(() => {
+    apiClient.questionFacets().then(setFacets).catch((err) => setFacetError(errorMessage(err)));
+  }, []);
+  const scope = normalizeQuestionBankFilter(draft.question_bank_filter);
+  const setScope = (patch: Partial<NonNullable<Draft["question_bank_filter"]>>) => {
+    updateDraft({ question_bank_filter: normalizeQuestionBankFilter({ ...(scope || {}), ...patch }) });
+  };
+  const difficulty = scope?.difficulty_min && scope.difficulty_min === scope.difficulty_max ? String(scope.difficulty_min) : "";
   return (
     <section className="page jd-page">
       <PageHeader eyebrow="Step 2 · JD 分析" title="再把岗位要求和简历做一次可解释匹配。" copy="分析不会创建面试；确认后才会正式启动 Graph 并生成第一题。" />
@@ -325,6 +342,15 @@ function JDPage({ draft, busy, updateDraft, analyze, startInterview }: {
         <aside className="control-panel">
           <h2>准备检查</h2>
           <p>{analysisSummary(draft.analysis)}</p>
+          <div className="scope-panel">
+            <h3>题库范围</h3>
+            <p>{draftScopeSummary(scope)}</p>
+            <Select value={scope?.skill_categories?.[0] || ""} onChange={(value) => setScope({ skill_categories: value ? [value] : [] })} label="全部技能" values={facets.skill_categories} />
+            <Select value={scope?.scenarios?.[0] || ""} onChange={(value) => setScope({ scenarios: value ? [value] : [] })} label="全部场景" values={facets.scenarios} />
+            <Select value={difficulty} onChange={(value) => setScope({ difficulty_min: value ? Number(value) : undefined, difficulty_max: value ? Number(value) : undefined })} label="全部难度" values={facets.difficulties} format={(v) => `难度 ${v}`} />
+            <input value={(scope?.tags || []).join(", ")} onChange={(evt) => setScope({ tags: evt.target.value.split(",") })} placeholder="标签，用逗号分隔" />
+            {facetError && <span className="scope-error">{facetError}</span>}
+          </div>
           <button className="secondary" disabled={busy || !draft.jd_text.trim() || !draft.resume_text.trim()} onClick={analyze}>
             {busy ? "分析中" : "分析 JD / 简历"}
           </button>
@@ -428,6 +454,11 @@ function ReportPage({ session, startDrill, jumpQuestion }: {
 function QuestionBankPage({ jumpId }: { jumpId: string }) {
   const [items, setItems] = useState<QuestionBankItem[]>([]);
   const [facets, setFacets] = useState<QuestionFacets>({ skill_categories: {}, scenarios: {}, tags: {}, difficulties: {} });
+  const [imports, setImports] = useState<QuestionBankImportJob[]>([]);
+  const [importItems, setImportItems] = useState<QuestionBankImportItem[]>([]);
+  const [selectedImportId, setSelectedImportId] = useState("");
+  const [importSource, setImportSource] = useState<"question_bank" | "document">("question_bank");
+  const [importBusy, setImportBusy] = useState(false);
   const [selectedId, setSelectedId] = useState(jumpId);
   const [query, setQuery] = useState(jumpId);
   const [skill, setSkill] = useState("");
@@ -435,11 +466,28 @@ function QuestionBankPage({ jumpId }: { jumpId: string }) {
   const [difficulty, setDifficulty] = useState("");
   const [admin, setAdmin] = useState(false);
   const [error, setError] = useState("");
+  const importFileRef = React.useRef<HTMLInputElement>(null);
   const selected = items.find((item) => item.id === selectedId);
+
+  const refreshImports = useCallback(() => {
+    apiClient.listQuestionImports().then((data) => {
+      const jobs = data.jobs || [];
+      setImports(jobs);
+      setSelectedImportId((prev) => prev || jobs[0]?.id || "");
+    }).catch((err) => setError(errorMessage(err)));
+  }, []);
 
   useEffect(() => {
     apiClient.questionFacets().then(setFacets).catch((err) => setError(errorMessage(err)));
-  }, []);
+    refreshImports();
+  }, [refreshImports]);
+
+  const hasRunningImport = imports.some((job) => ["queued", "parsing", "generating", "validating", "committing"].includes(job.status));
+  useEffect(() => {
+    if (!hasRunningImport) return;
+    const t = window.setInterval(refreshImports, 1200);
+    return () => window.clearInterval(t);
+  }, [hasRunningImport, refreshImports]);
 
   useEffect(() => {
     if (jumpId) {
@@ -464,13 +512,86 @@ function QuestionBankPage({ jumpId }: { jumpId: string }) {
   }, [admin, difficulty, query, scenario, selectedId, skill]);
 
   useEffect(() => {
+    if (!selectedImportId) {
+      setImportItems([]);
+      return;
+    }
+    apiClient.getQuestionImport(selectedImportId)
+      .then((data) => setImportItems(data.items || []))
+      .catch((err) => setError(errorMessage(err)));
+  }, [selectedImportId]);
+
+  useEffect(() => {
     const t = window.setTimeout(load, 180);
     return () => window.clearTimeout(t);
   }, [load]);
 
+  const uploadImport = async (file?: File) => {
+    if (!file) return;
+    setImportBusy(true);
+    setError("");
+    try {
+      const data = await apiClient.createQuestionImport(importSource, file);
+      setSelectedImportId(data.job.id);
+      refreshImports();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setImportBusy(false);
+      if (importFileRef.current) importFileRef.current.value = "";
+    }
+  };
+
+  const commitImport = async (id: string) => {
+    if (!id) return;
+    setImportBusy(true);
+    setError("");
+    try {
+      await apiClient.commitQuestionImport(id);
+      refreshImports();
+      load();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setImportBusy(false);
+    }
+  };
+
   return (
     <section className="page questions-page">
       <PageHeader eyebrow="题库工作区" title="题库独立管理，面试页只保留面试。" copy="候选人视图隐藏答案和评分标准；管理视图用于检查 rubric 和追问提示。" />
+      <section className="import-workbench">
+        <div className="import-actions">
+          <div>
+            <p className="eyebrow">导入流水线</p>
+            <h2>先暂存校验，再提交进 RAG 题库。</h2>
+          </div>
+          <div className="segmented">
+            <button className={importSource === "question_bank" ? "active" : ""} onClick={() => setImportSource("question_bank")}>本地题库</button>
+            <button className={importSource === "document" ? "active" : ""} onClick={() => setImportSource("document")}>文档生成</button>
+          </div>
+          <input
+            ref={importFileRef}
+            className="visually-hidden"
+            type="file"
+            accept=".json,.csv,.md,.markdown,.txt,.pdf,.docx,text/plain,text/markdown,application/json,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            onChange={(evt) => uploadImport(evt.target.files?.[0])}
+          />
+          <button className="secondary" disabled={importBusy} onClick={() => importFileRef.current?.click()}>{importBusy ? "处理中" : "上传导入"}</button>
+        </div>
+        <div className="import-grid">
+          <div className="import-list">
+            {imports.length ? imports.map((job) => (
+              <button key={job.id} className={`import-row ${job.id === selectedImportId ? "active" : ""}`} onClick={() => setSelectedImportId(job.id)}>
+                <strong>{job.filename || job.id}</strong>
+                <span>{importSourceLabel(job.source_type)} · {job.status}</span>
+                <em>{job.valid_items}/{job.total_items} 有效</em>
+              </button>
+            )) : <div className="empty-state">暂无导入任务</div>}
+          </div>
+          <ImportDetail jobs={imports} selectedId={selectedImportId} items={importItems} busy={importBusy} commitImport={commitImport} />
+        </div>
+      </section>
       <div className="question-toolbar">
         <input value={query} onChange={(evt) => setQuery(evt.target.value)} placeholder="搜索题干、标签或编号" />
         <Select value={skill} onChange={setSkill} label="全部技能" values={facets.skill_categories} />
@@ -487,6 +608,44 @@ function QuestionBankPage({ jumpId }: { jumpId: string }) {
         <QuestionDetail item={selected} admin={admin} />
       </div>
     </section>
+  );
+}
+
+function ImportDetail({ jobs, selectedId, items, busy, commitImport }: {
+  jobs: QuestionBankImportJob[];
+  selectedId: string;
+  items: QuestionBankImportItem[];
+  busy: boolean;
+  commitImport: (id: string) => void;
+}) {
+  const job = jobs.find((item) => item.id === selectedId);
+  if (!job) return <aside className="import-detail"><div className="empty-state">选择导入任务</div></aside>;
+  return (
+    <aside className="import-detail">
+      <div className="import-detail-head">
+        <div>
+          <strong>{job.status}</strong>
+          <span>{job.id}</span>
+        </div>
+        <button className="primary" disabled={busy || job.status !== "ready" || job.valid_items === 0} onClick={() => commitImport(job.id)}>提交入库</button>
+      </div>
+      <div className="import-stats">
+        <span>切片 {job.total_chunks}</span>
+        <span>有效 {job.valid_items}</span>
+        <span>无效 {job.invalid_items}</span>
+        <span>已入库 {job.imported_items}</span>
+      </div>
+      {job.error && <p className="system-line error">{job.error}</p>}
+      <div className="import-items">
+        {items.slice(0, 6).map((item) => (
+          <article key={item.id} className={`import-item ${item.status}`}>
+            <div><strong>{item.question_id}</strong><span>{item.status}</span></div>
+            <p>{item.item.content || "空题干"}</p>
+            {!!item.errors?.length && <em>{item.errors.join("；")}</em>}
+          </article>
+        ))}
+      </div>
+    </aside>
   );
 }
 
@@ -592,7 +751,7 @@ function QuestionCard({ item, active, onClick }: { item: QuestionBankItem; activ
 
 function QuestionDetail({ item, admin }: { item?: QuestionBankItem; admin: boolean }) {
   if (!item) return <aside className="question-detail"><div className="empty-state">选择一道题查看详情</div></aside>;
-  return <aside className="question-detail"><div className="question-detail-head"><span>{item.id}</span><strong>{item.skill_category || "未分类"}</strong></div><p className="question-detail-content">{item.content}</p><div className="question-detail-meta"><span>难度 {item.difficulty || "-"}</span><span>{item.scenario || "general"}</span><span>{item.source || "manual"}</span></div><div className="question-tags detail">{item.tags?.map((tag) => <span key={tag}>{tag}</span>)}</div>{admin ? <><DetailList title="评分要点" items={item.expected_points} /><Rubric rubric={item.rubric} />{item.sample_answer && <section><h3>参考回答</h3><p>{item.sample_answer}</p></section>}<DetailList title="追问提示" items={item.follow_up_hints} /></> : <p className="question-locked">候选人视图已隐藏答案和评分标准。</p>}</aside>;
+  return <aside className="question-detail"><div className="question-detail-head"><span>{item.id}</span><strong>{item.skill_category || "未分类"}</strong></div><p className="question-detail-content">{item.content}</p><div className="question-detail-meta"><span>难度 {item.difficulty || "-"}</span><span>{item.scenario || "general"}</span><span>{item.source || "manual"}</span></div><div className="question-tags detail">{item.tags?.map((tag) => <span key={tag}>{tag}</span>)}</div>{admin ? <><section><h3>向量状态</h3><p>{item.embedding_status || "pending"}{item.embedding_model ? ` · ${item.embedding_model}` : ""}</p>{item.embedding_error && <p>{item.embedding_error}</p>}</section><DetailList title="评分要点" items={item.expected_points} /><Rubric rubric={item.rubric} />{item.sample_answer && <section><h3>参考回答</h3><p>{item.sample_answer}</p></section>}<DetailList title="追问提示" items={item.follow_up_hints} /></> : <p className="question-locked">候选人视图已隐藏答案和评分标准。</p>}</aside>;
 }
 
 function DetailList({ title, items }: { title: string; items?: string[] }) {
@@ -626,6 +785,10 @@ function errorMessage(err: unknown): string {
 
 function modeLabel(mode: Mode) {
   return mode === "practice" ? "模拟" : "考试";
+}
+
+function importSourceLabel(source: string) {
+  return source === "document" ? "文档生成" : "本地题库";
 }
 
 function formatTime(value: string) {

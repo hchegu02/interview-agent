@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -90,11 +91,12 @@ func NewInterviewServiceWithStoreEventsAndCoordinator(runner interviewRunner, st
 }
 
 type startInterviewRequest struct {
-	SessionID  string `json:"session_id"`
-	UserID     string `json:"user_id"`
-	Mode       string `json:"mode"`
-	JDText     string `json:"jd_text" binding:"required"`
-	ResumeText string `json:"resume_text" binding:"required"`
+	SessionID          string                     `json:"session_id"`
+	UserID             string                     `json:"user_id"`
+	Mode               string                     `json:"mode"`
+	JDText             string                     `json:"jd_text" binding:"required"`
+	ResumeText         string                     `json:"resume_text" binding:"required"`
+	QuestionBankFilter *domain.QuestionBankFilter `json:"question_bank_filter,omitempty"`
 }
 
 type answerInterviewRequest struct {
@@ -276,7 +278,8 @@ func (s *InterviewService) Start(ctx context.Context, req startInterviewRequest)
 		CandProfile: &domain.CandidateProfile{
 			ResumeRawText: req.ResumeText,
 		},
-		WorkingMemory: domain.NewWorkingMemory(),
+		QuestionBankFilter: cloneQuestionBankFilter(req.QuestionBankFilter),
+		WorkingMemory:      domain.NewWorkingMemory(),
 	}
 	leaseAcquired := false
 	if err := s.acquireSessionLease(ctx, sess.ID); err != nil {
@@ -311,6 +314,44 @@ func (s *InterviewService) Start(ctx context.Context, req startInterviewRequest)
 	}
 	s.publishEvent(ctx, interviewEventSessionCreated, sess, "", "")
 	return sess, nil
+}
+
+func cloneQuestionBankFilter(filter *domain.QuestionBankFilter) *domain.QuestionBankFilter {
+	if filter == nil {
+		return nil
+	}
+	out := &domain.QuestionBankFilter{
+		SkillCategories: compactInterviewStrings(filter.SkillCategories),
+		Scenarios:       compactInterviewStrings(filter.Scenarios),
+		DifficultyMin:   normalizeScopeDifficulty(filter.DifficultyMin),
+		DifficultyMax:   normalizeScopeDifficulty(filter.DifficultyMax),
+		Tags:            compactInterviewStrings(filter.Tags),
+	}
+	if out.DifficultyMin > 0 && out.DifficultyMax > 0 && out.DifficultyMin > out.DifficultyMax {
+		out.DifficultyMin, out.DifficultyMax = out.DifficultyMax, out.DifficultyMin
+	}
+	if len(out.SkillCategories) == 0 && len(out.Scenarios) == 0 && out.DifficultyMin == 0 && out.DifficultyMax == 0 && len(out.Tags) == 0 {
+		return nil
+	}
+	return out
+}
+
+func compactInterviewStrings(items []string) []string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func normalizeScopeDifficulty(n int) int {
+	if n < 1 || n > 5 {
+		return 0
+	}
+	return n
 }
 
 func (s *InterviewService) Answer(ctx context.Context, req answerInterviewRequest) (*domain.Session, error) {

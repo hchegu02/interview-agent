@@ -108,7 +108,7 @@ func NewRetrieveRAGNode(
 		vectors, err := embedder.Embed(ctx, []string{queryText})
 		if err != nil || len(vectors) != 1 || len(vectors[0]) == 0 {
 			markDegraded(sess, fmt.Sprintf("embed failed: %v", err))
-			sess.CandidatePool = cloneFallback(targetDiff)
+			sess.CandidatePool = cloneFallback(targetDiff, sess.QuestionBankFilter)
 			return nil
 		}
 
@@ -118,17 +118,22 @@ func NewRetrieveRAGNode(
 			Tags:             queryTags,
 			Difficulty:       targetDiff,
 			K:                opts.TopK,
+			SkillCategories:  filterSkillCategories(sess.QuestionBankFilter),
+			Scenarios:        filterScenarios(sess.QuestionBankFilter),
+			DifficultyMin:    filterDifficultyMin(sess.QuestionBankFilter),
+			DifficultyMax:    filterDifficultyMax(sess.QuestionBankFilter),
+			FilterTags:       filterTags(sess.QuestionBankFilter),
 			VectorCandidates: opts.VectorCandidates,
 			TagCandidates:    opts.TagCandidates,
 		})
 		if err != nil {
 			markDegraded(sess, fmt.Sprintf("retrieve failed: %v", err))
-			sess.CandidatePool = cloneFallback(targetDiff)
+			sess.CandidatePool = cloneFallback(targetDiff, sess.QuestionBankFilter)
 			return nil
 		}
 		if len(results) == 0 {
 			markDegraded(sess, "retrieve returned 0 results")
-			sess.CandidatePool = cloneFallback(targetDiff)
+			sess.CandidatePool = cloneFallback(targetDiff, sess.QuestionBankFilter)
 			return nil
 		}
 
@@ -148,6 +153,41 @@ func NewRetrieveRAGNode(
 		sess.CandidatePool = pool
 		return nil
 	}
+}
+
+func filterSkillCategories(filter *domain.QuestionBankFilter) []string {
+	if filter == nil {
+		return nil
+	}
+	return append([]string(nil), filter.SkillCategories...)
+}
+
+func filterScenarios(filter *domain.QuestionBankFilter) []string {
+	if filter == nil {
+		return nil
+	}
+	return append([]string(nil), filter.Scenarios...)
+}
+
+func filterDifficultyMin(filter *domain.QuestionBankFilter) int {
+	if filter == nil {
+		return 0
+	}
+	return filter.DifficultyMin
+}
+
+func filterDifficultyMax(filter *domain.QuestionBankFilter) int {
+	if filter == nil {
+		return 0
+	}
+	return filter.DifficultyMax
+}
+
+func filterTags(filter *domain.QuestionBankFilter) []string {
+	if filter == nil {
+		return nil
+	}
+	return append([]string(nil), filter.Tags...)
 }
 
 // buildQueryTags 决定本次 RAG 的目标标签集。
@@ -217,17 +257,54 @@ func markDegraded(sess *domain.Session, reason string) {
 
 // cloneFallback 按目标难度筛选 fallback 题，避免难度爆炸式偏离。
 // 难度差 ≤ 2 的题入选；都不满足时直接返回全集。
-func cloneFallback(targetDiff int) []domain.Question {
+func cloneFallback(targetDiff int, filter *domain.QuestionBankFilter) []domain.Question {
 	out := make([]domain.Question, 0, len(fallbackQuestions))
 	for _, q := range fallbackQuestions {
-		if abs(q.Difficulty-targetDiff) <= 2 {
+		if abs(q.Difficulty-targetDiff) <= 2 && matchesFallbackFilter(q, filter) {
 			out = append(out, q)
+		}
+	}
+	if len(out) == 0 {
+		for _, q := range fallbackQuestions {
+			if abs(q.Difficulty-targetDiff) <= 2 {
+				out = append(out, q)
+			}
 		}
 	}
 	if len(out) == 0 {
 		out = append(out, fallbackQuestions...)
 	}
 	return out
+}
+
+func matchesFallbackFilter(q domain.Question, filter *domain.QuestionBankFilter) bool {
+	if filter == nil {
+		return true
+	}
+	if len(filter.SkillCategories) > 0 && !containsAnyString([]string{q.SkillCategory}, filter.SkillCategories) {
+		return false
+	}
+	if filter.DifficultyMin > 0 && q.Difficulty < filter.DifficultyMin {
+		return false
+	}
+	if filter.DifficultyMax > 0 && q.Difficulty > filter.DifficultyMax {
+		return false
+	}
+	if len(filter.Tags) > 0 && !containsAnyString(q.Tags, filter.Tags) {
+		return false
+	}
+	return true
+}
+
+func containsAnyString(items, targets []string) bool {
+	for _, item := range items {
+		for _, target := range targets {
+			if strings.EqualFold(strings.TrimSpace(item), strings.TrimSpace(target)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func abs(x int) int {

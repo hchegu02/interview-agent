@@ -33,7 +33,7 @@ func (s *PGStore) List(ctx context.Context, filter Filter) (ListResult, error) {
 	query := `
 SELECT id, content, tags, skill_category, difficulty, expected_points, source,
        scenario, role_tags, rubric, sample_answer, follow_up_hints, locale, status,
-       created_at, updated_at
+       embedding_status, embedding_model, embedded_at, embedding_error, created_at, updated_at
 FROM question_bank
 ` + where + `
 ORDER BY skill_category, difficulty, id
@@ -62,7 +62,7 @@ func (s *PGStore) Get(ctx context.Context, id string) (Item, error) {
 	row := s.Pool.QueryRow(ctx, `
 SELECT id, content, tags, skill_category, difficulty, expected_points, source,
        scenario, role_tags, rubric, sample_answer, follow_up_hints, locale, status,
-       created_at, updated_at
+       embedding_status, embedding_model, embedded_at, embedding_error, created_at, updated_at
 FROM question_bank
 WHERE id = $1
 `, id)
@@ -118,6 +118,90 @@ WHERE status = 'active'
 		}
 	}
 	return f, rows.Err()
+}
+
+func (s *PGStore) Upsert(ctx context.Context, items []Item) error {
+	if s == nil || s.Pool == nil || len(items) == 0 {
+		return nil
+	}
+	batch := &pgx.Batch{}
+	for _, item := range items {
+		item = normalizeItem(item)
+		rubric, err := json.Marshal(item.Rubric)
+		if err != nil {
+			return fmt.Errorf("marshal question rubric: %w", err)
+		}
+		batch.Queue(`
+INSERT INTO question_bank (
+    id, content, tags, skill_category, difficulty, expected_points, source,
+    scenario, role_tags, rubric, sample_answer, follow_up_hints, locale, status,
+    embedding_status, embedding_error, updated_at
+) VALUES (
+    $1, $2, $3, $4, $5, $6, $7,
+    $8, $9, $10::jsonb, $11, $12, $13, $14,
+    'pending', '', now()
+)
+ON CONFLICT (id) DO UPDATE SET
+    content = EXCLUDED.content,
+    tags = EXCLUDED.tags,
+    skill_category = EXCLUDED.skill_category,
+    difficulty = EXCLUDED.difficulty,
+    expected_points = EXCLUDED.expected_points,
+    source = EXCLUDED.source,
+    scenario = EXCLUDED.scenario,
+    role_tags = EXCLUDED.role_tags,
+    rubric = EXCLUDED.rubric,
+    sample_answer = EXCLUDED.sample_answer,
+    follow_up_hints = EXCLUDED.follow_up_hints,
+    locale = EXCLUDED.locale,
+    status = EXCLUDED.status,
+    embedding_status = CASE
+        WHEN question_bank.content IS DISTINCT FROM EXCLUDED.content THEN 'pending'
+        ELSE question_bank.embedding_status
+    END,
+    embedding_error = CASE
+        WHEN question_bank.content IS DISTINCT FROM EXCLUDED.content THEN ''
+        ELSE question_bank.embedding_error
+    END,
+    updated_at = now()
+`, item.ID, item.Content, item.Tags, item.SkillCategory, item.Difficulty, item.ExpectedPoints, item.Source,
+			item.Scenario, item.RoleTags, string(rubric), item.SampleAnswer, item.FollowUpHints, item.Locale, item.Status)
+	}
+	br := s.Pool.SendBatch(ctx, batch)
+	defer br.Close()
+	for range items {
+		if _, err := br.Exec(); err != nil {
+			return fmt.Errorf("question bank upsert: %w", err)
+		}
+	}
+	return nil
+}
+
+func (s *PGStore) UpsertEmbeddings(ctx context.Context, vectors []ItemEmbedding) error {
+	if s == nil || s.Pool == nil || len(vectors) == 0 {
+		return nil
+	}
+	batch := &pgx.Batch{}
+	for _, vector := range vectors {
+		batch.Queue(`
+UPDATE question_bank
+SET embedding = $2::vector,
+    embedding_status = 'embedded',
+    embedding_model = $3,
+    embedded_at = now(),
+    embedding_error = '',
+    updated_at = now()
+WHERE id = $1
+`, vector.ID, vectorLiteral(vector.Vector), vector.Model)
+	}
+	br := s.Pool.SendBatch(ctx, batch)
+	defer br.Close()
+	for range vectors {
+		if _, err := br.Exec(); err != nil {
+			return fmt.Errorf("question bank embedding upsert: %w", err)
+		}
+	}
+	return nil
 }
 
 func buildWhere(filter Filter) (string, []any) {
@@ -180,6 +264,7 @@ func scanItem(row itemScanner) (Item, error) {
 		&item.ID, &item.Content, &item.Tags, &item.SkillCategory, &item.Difficulty,
 		&item.ExpectedPoints, &item.Source, &item.Scenario, &item.RoleTags, &rubricRaw,
 		&item.SampleAnswer, &item.FollowUpHints, &item.Locale, &item.Status,
+		&item.EmbeddingStatus, &item.EmbeddingModel, &item.EmbeddedAt, &item.EmbeddingError,
 		&item.CreatedAt, &item.UpdatedAt,
 	); err != nil {
 		return Item{}, err
@@ -188,4 +273,18 @@ func scanItem(row itemScanner) (Item, error) {
 		_ = json.Unmarshal(rubricRaw, &item.Rubric)
 	}
 	return normalizeItem(item), nil
+}
+
+func vectorLiteral(v []float32) string {
+	var sb strings.Builder
+	sb.Grow(len(v) * 12)
+	sb.WriteByte('[')
+	for i, x := range v {
+		if i > 0 {
+			sb.WriteByte(',')
+		}
+		fmt.Fprintf(&sb, "%g", x)
+	}
+	sb.WriteByte(']')
+	return sb.String()
 }

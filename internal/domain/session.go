@@ -65,6 +65,10 @@ type Session struct {
 	// 不直接给候选人——Agent 决策驱动出题顺序
 	CandidatePool []Question `json:"candidate_pool,omitempty"`
 
+	// QuestionBankFilter 是用户在准备阶段选择的题库范围。
+	// retrieve_rag 会把它转换成 Retriever 的硬过滤条件。
+	QuestionBankFilter *QuestionBankFilter `json:"question_bank_filter,omitempty"`
+
 	// Agent 运行时记忆，每轮读写
 	WorkingMemory *WorkingMemory `json:"working_memory,omitempty"`
 
@@ -185,6 +189,16 @@ type GapReport struct {
 	OverlapScore  float64     `json:"overlap_score"` // 0~1
 	Strategy      GapStrategy `json:"strategy"`
 	Reason        string      `json:"reason,omitempty"` // LLM 给的简短解释，可用于报告页透出
+}
+
+// QuestionBankFilter 描述一次面试允许使用的题库范围。
+// 空字段表示不限制；多个值表示命中任意一个即可。
+type QuestionBankFilter struct {
+	SkillCategories []string `json:"skill_categories,omitempty"`
+	Scenarios       []string `json:"scenarios,omitempty"`
+	DifficultyMin   int      `json:"difficulty_min,omitempty"`
+	DifficultyMax   int      `json:"difficulty_max,omitempty"`
+	Tags            []string `json:"tags,omitempty"`
 }
 
 // Question 是一道面试题。

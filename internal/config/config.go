@@ -29,12 +29,13 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Addr          string        `yaml:"addr"`
-	ReadTimeout   time.Duration `yaml:"read_timeout"`
-	WriteTimeout  time.Duration `yaml:"write_timeout"`
-	ShutdownGrace time.Duration `yaml:"shutdown_grace"`
-	MaxInFlight   int           `yaml:"max_in_flight"` // 背压阈值
-	MaxStreams    int           `yaml:"max_streams"`   // SSE 长连接背压阈值
+	Addr           string        `yaml:"addr"`
+	ReadTimeout    time.Duration `yaml:"read_timeout"`
+	WriteTimeout   time.Duration `yaml:"write_timeout"`
+	ShutdownGrace  time.Duration `yaml:"shutdown_grace"`
+	MaxInFlight    int           `yaml:"max_in_flight"` // 背压阈值
+	MaxStreams     int           `yaml:"max_streams"`   // SSE 长连接背压阈值
+	ImportSpoolDir string        `yaml:"import_spool_dir"`
 }
 
 type PostgresConfig struct {
@@ -143,6 +144,9 @@ func Load(path string) (*Config, error) {
 	if v := os.Getenv("INTERVIEW_RATELIMIT_BACKEND"); v != "" {
 		cfg.RateLimit.Backend = v
 	}
+	if v := os.Getenv("INTERVIEW_IMPORT_SPOOL_DIR"); v != "" {
+		cfg.Server.ImportSpoolDir = v
+	}
 
 	if err := cfg.validate(); err != nil {
 		return nil, err
@@ -162,12 +166,13 @@ type sensitiveYAMLKeys struct {
 func defaults() *Config {
 	return &Config{
 		Server: ServerConfig{
-			Addr:          ":8080",
-			ReadTimeout:   15 * time.Second,
-			WriteTimeout:  60 * time.Second, // SSE 长连接需要大一些
-			ShutdownGrace: 30 * time.Second,
-			MaxInFlight:   200,
-			MaxStreams:    100,
+			Addr:           ":8080",
+			ReadTimeout:    15 * time.Second,
+			WriteTimeout:   60 * time.Second, // SSE 长连接需要大一些
+			ShutdownGrace:  30 * time.Second,
+			MaxInFlight:    200,
+			MaxStreams:     100,
+			ImportSpoolDir: "data/import-spool",
 		},
 		Postgres: PostgresConfig{
 			// 算法注释（亮点之一）：

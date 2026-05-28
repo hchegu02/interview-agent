@@ -301,6 +301,21 @@ func TestIntegration_VectorLiteralFormat(t *testing.T) {
 	}
 }
 
+func TestRetrieveSQLIncludesQuestionBankHardFilters(t *testing.T) {
+	for _, want := range []string{
+		"skill_category = ANY($6::text[])",
+		"scenario = ANY($7::text[])",
+		"difficulty >= $8",
+		"difficulty <= $9",
+		"tags && $10::text[]",
+		"embedding IS NOT NULL",
+	} {
+		if !strings.Contains(retrieveSQL, want) {
+			t.Fatalf("retrieveSQL missing hard filter %q", want)
+		}
+	}
+}
+
 func TestLinearFusionPreservesExpectedPoints(t *testing.T) {
 	fusion := NewLinearFusion(0, 0, 0)
 	results := fusion.Fuse([]Candidate{{

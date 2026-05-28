@@ -32,6 +32,7 @@ import (
 	"interview-agent/internal/llm"
 	"interview-agent/internal/nodes"
 	"interview-agent/internal/observability"
+	"interview-agent/internal/parser"
 	"interview-agent/internal/questionbank"
 	"interview-agent/internal/retriever"
 )
@@ -89,6 +90,22 @@ func main() {
 		os.Exit(1)
 	}
 	server.SetQuestionBankStore(questionBankStore)
+	questionImportService, err := buildQuestionBankImportService(cfg, deps, questionBankStore)
+	if err != nil {
+		logger.Error("question bank import setup failed", "err", err)
+		os.Exit(1)
+	}
+	server.SetQuestionBankImportService(questionImportService)
+	go func() {
+		n, err := questionImportService.RecoverPendingJobs(context.Background())
+		if err != nil {
+			logger.Error("question bank import recovery failed", "err", err)
+			return
+		}
+		if n > 0 {
+			logger.Info("question bank import recovery scheduled", "jobs", n)
+		}
+	}()
 
 	graphRunner, cleanup, err := buildInterviewRunner(ctx, cfg, deps, events, server.GraphMetricsCallback(), server.ObserveLLMCall)
 	if err != nil {
@@ -200,6 +217,36 @@ func buildQuestionBankStore(deps appDeps) (questionbank.Store, error) {
 		return nil, err
 	}
 	return questionbank.NewMemoryStore(items), nil
+}
+
+func buildQuestionBankImportService(cfg *config.Config, deps appDeps, store questionbank.Store) (*questionbank.ImportService, error) {
+	writer, ok := store.(questionbank.Writer)
+	if !ok {
+		return nil, fmt.Errorf("question bank store does not support writes")
+	}
+	var importStore questionbank.ImportStore
+	if deps.PGPool != nil {
+		importStore = questionbank.NewPGImportStore(deps.PGPool)
+	} else {
+		importStore = questionbank.NewMemoryImportStore()
+	}
+	model, _, err := buildChatModel(cfg)
+	if err != nil {
+		return nil, err
+	}
+	embedder, err := buildEmbedder(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return questionbank.NewImportService(questionbank.ImportServiceDeps{
+		Imports:  importStore,
+		Writer:   writer,
+		Parser:   parser.NewDispatcher(),
+		Model:    model,
+		Embedder: embedder,
+		Spool:    questionbank.NewLocalImportSpool(cfg.Server.ImportSpoolDir),
+		OwnerID:  hostnameOwnerID(),
+	}), nil
 }
 
 func buildInterviewEventHub(ctx context.Context, cfg *config.Config) (httpapi.InterviewEventHub, func(), error) {

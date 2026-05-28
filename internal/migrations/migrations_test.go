@@ -144,3 +144,69 @@ func TestQuestionBankMetadataMigration(t *testing.T) {
 		t.Fatal("metadata migration should add scenario index")
 	}
 }
+
+func TestQuestionBankImportMigration(t *testing.T) {
+	up := read(t, "004_question_bank_imports.up.sql")
+	down := read(t, "004_question_bank_imports.down.sql")
+	for _, tbl := range []string{
+		"question_bank_import_jobs",
+		"question_bank_import_chunks",
+		"question_bank_import_items",
+	} {
+		if !strings.Contains(up, "CREATE TABLE IF NOT EXISTS "+tbl) {
+			t.Fatalf("import migration missing table %q", tbl)
+		}
+		if !strings.Contains(down, "DROP TABLE IF EXISTS "+tbl) {
+			t.Fatalf("import migration down should drop table %q", tbl)
+		}
+	}
+	for _, idx := range []string{
+		"idx_qb_import_jobs_status",
+		"idx_qb_import_chunks_job",
+		"idx_qb_import_items_job_status",
+	} {
+		if !strings.Contains(up, idx) {
+			t.Fatalf("import migration missing index %q", idx)
+		}
+	}
+}
+
+func TestQuestionBankEmbeddingStatusMigration(t *testing.T) {
+	up := read(t, "005_question_bank_embedding_status.up.sql")
+	down := read(t, "005_question_bank_embedding_status.down.sql")
+	for _, col := range []string{
+		"embedding_status",
+		"embedding_model",
+		"embedded_at",
+		"embedding_error",
+	} {
+		if !strings.Contains(up, col) {
+			t.Fatalf("embedding status migration missing column %q", col)
+		}
+		if !strings.Contains(down, "DROP COLUMN IF EXISTS "+col) {
+			t.Fatalf("embedding status down migration should drop column %q", col)
+		}
+	}
+	if !strings.Contains(up, "idx_question_bank_embedding_status") {
+		t.Fatal("embedding status migration should add status index")
+	}
+	if !strings.Contains(up, "embedding IS NOT NULL") {
+		t.Fatal("embedding status migration should mark existing vectors as embedded")
+	}
+}
+
+func TestQuestionBankImportLeaseMigration(t *testing.T) {
+	up := read(t, "006_question_bank_import_lease.up.sql")
+	down := read(t, "006_question_bank_import_lease.down.sql")
+	for _, col := range []string{"owner_id", "lease_until"} {
+		if !strings.Contains(up, col) {
+			t.Fatalf("import lease migration missing column %q", col)
+		}
+		if !strings.Contains(down, "DROP COLUMN IF EXISTS "+col) {
+			t.Fatalf("import lease down migration should drop column %q", col)
+		}
+	}
+	if !strings.Contains(up, "idx_qb_import_jobs_lease") {
+		t.Fatal("import lease migration should add lease index")
+	}
+}

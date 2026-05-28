@@ -3,8 +3,17 @@ export type Mode = "practice" | "exam";
 export type Draft = {
   resume_text: string;
   jd_text: string;
+  question_bank_filter?: QuestionBankFilter;
   analysis?: ProfileAnalyzeResponse;
   updated_at: string;
+};
+
+export type QuestionBankFilter = {
+  skill_categories?: string[];
+  scenarios?: string[];
+  difficulty_min?: number;
+  difficulty_max?: number;
+  tags?: string[];
 };
 
 export type ProfileAnalyzeResponse = {
@@ -78,6 +87,7 @@ export type Session = {
   job_profile?: JobProfile;
   candidate_profile?: CandidateProfile;
   profile_analysis?: ProfileAnalysis;
+  question_bank_filter?: QuestionBankFilter;
   question?: InterviewQuestion;
   rounds?: InterviewRound[];
   report?: Report;
@@ -176,6 +186,9 @@ export type QuestionBankItem = {
   role_tags?: string[];
   locale?: string;
   status?: string;
+  embedding_status?: string;
+  embedding_model?: string;
+  embedding_error?: string;
   expected_points?: string[];
   rubric?: Record<string, string>;
   sample_answer?: string;
@@ -187,4 +200,27 @@ export type QuestionFacets = {
   scenarios: Record<string, number>;
   tags: Record<string, number>;
   difficulties: Record<string, number>;
+};
+
+export type QuestionBankImportJob = {
+  id: string;
+  source_type: "question_bank" | "document";
+  filename: string;
+  status: string;
+  total_chunks: number;
+  total_items: number;
+  valid_items: number;
+  invalid_items: number;
+  imported_items: number;
+  error?: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type QuestionBankImportItem = {
+  id: string;
+  question_id: string;
+  status: string;
+  item: QuestionBankItem;
+  errors?: string[];
 };

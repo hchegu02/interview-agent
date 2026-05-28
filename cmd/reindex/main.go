@@ -125,7 +125,7 @@ func run(ctx context.Context, seedPath, mode, baseURL, model string, dim, batch 
 	}
 
 	t0 := time.Now()
-	if err := upsertAll(ctx, pool, rows, vectors); err != nil {
+	if err := upsertAll(ctx, pool, rows, vectors, embedder.Name()); err != nil {
 		return fmt.Errorf("upsert: %w", err)
 	}
 	log.Printf("upserted %d rows in %s", len(rows), time.Since(t0))
@@ -248,9 +248,9 @@ const upsertSQL = `
 INSERT INTO question_bank (
     id, content, tags, skill_category, difficulty, expected_points,
     scenario, role_tags, rubric, sample_answer, follow_up_hints, locale, status,
-    embedding
+    embedding, embedding_status, embedding_model, embedded_at, embedding_error
 )
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14::vector)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, $12, $13, $14::vector, 'embedded', $15, now(), '')
 ON CONFLICT (id) DO UPDATE SET
     content         = EXCLUDED.content,
     tags            = EXCLUDED.tags,
@@ -265,10 +265,14 @@ ON CONFLICT (id) DO UPDATE SET
     locale          = EXCLUDED.locale,
     status          = EXCLUDED.status,
     embedding       = EXCLUDED.embedding,
+    embedding_status = EXCLUDED.embedding_status,
+    embedding_model  = EXCLUDED.embedding_model,
+    embedded_at      = EXCLUDED.embedded_at,
+    embedding_error  = EXCLUDED.embedding_error,
     updated_at = now();
 `
 
-func upsertAll(ctx context.Context, pool *pgxpool.Pool, rows []seedRow, vectors [][]float32) error {
+func upsertAll(ctx context.Context, pool *pgxpool.Pool, rows []seedRow, vectors [][]float32, model string) error {
 	// 简单实现：逐行 exec。30~300 行规模无所谓；上了量再切批 COPY。
 	for i, r := range rows {
 		vecLit := vectorLiteral(vectors[i])
@@ -279,7 +283,7 @@ func upsertAll(ctx context.Context, pool *pgxpool.Pool, rows []seedRow, vectors 
 		if _, err := pool.Exec(ctx, upsertSQL,
 			r.ID, r.Content, r.Tags, r.SkillCategory, r.Difficulty, r.ExpectedPoints,
 			r.Scenario, r.RoleTags, string(rubric), r.SampleAnswer, r.FollowUpHints, r.Locale, r.Status,
-			vecLit); err != nil {
+			vecLit, model); err != nil {
 			return fmt.Errorf("row %s: %w", r.ID, err)
 		}
 	}

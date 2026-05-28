@@ -138,6 +138,42 @@ func TestInterviewStart_ReturnsFirstQuestion(t *testing.T) {
 	}
 }
 
+func TestInterviewService_StartStoresQuestionBankFilter(t *testing.T) {
+	svc := NewInterviewService(fakeInterviewRunner{})
+
+	sess, err := svc.Start(context.Background(), startInterviewRequest{
+		SessionID:  "scope-start",
+		UserID:     "u1",
+		JDText:     "jd",
+		ResumeText: "resume",
+		QuestionBankFilter: &domain.QuestionBankFilter{
+			SkillCategories: []string{"redis", "go"},
+			Scenarios:       []string{"troubleshooting"},
+			DifficultyMin:   2,
+			DifficultyMax:   4,
+			Tags:            []string{"cache", "performance"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if sess.QuestionBankFilter == nil {
+		t.Fatal("question bank filter should be stored on session")
+	}
+	if got := sess.QuestionBankFilter.SkillCategories; len(got) != 2 || got[0] != "redis" || got[1] != "go" {
+		t.Fatalf("skill categories = %+v, want [redis go]", got)
+	}
+	if got := sess.QuestionBankFilter.Scenarios; len(got) != 1 || got[0] != "troubleshooting" {
+		t.Fatalf("scenarios = %+v, want [troubleshooting]", got)
+	}
+	if sess.QuestionBankFilter.DifficultyMin != 2 || sess.QuestionBankFilter.DifficultyMax != 4 {
+		t.Fatalf("difficulty range = %d..%d, want 2..4", sess.QuestionBankFilter.DifficultyMin, sess.QuestionBankFilter.DifficultyMax)
+	}
+	if got := sess.QuestionBankFilter.Tags; len(got) != 2 || got[0] != "cache" || got[1] != "performance" {
+		t.Fatalf("tags = %+v, want [cache performance]", got)
+	}
+}
+
 func TestInterviewResponse_DoesNotExposeInternalRuntimeNames(t *testing.T) {
 	svc := NewInterviewService(fakeInterviewRunner{})
 	server := NewServerWithInterview(&config.Config{}, svc)

@@ -1,5 +1,8 @@
 import type {
   ProfileAnalyzeResponse,
+  QuestionBankFilter,
+  QuestionBankImportItem,
+  QuestionBankImportJob,
   QuestionBankItem,
   QuestionFacets,
   Session,
@@ -43,7 +46,7 @@ export const apiClient = {
     body: JSON.stringify({ jd_text: jdText, resume_text: resumeText }),
   }),
 
-  startInterview: (payload: { user_id: string; mode: string; jd_text: string; resume_text: string }) =>
+  startInterview: (payload: { user_id: string; mode: string; jd_text: string; resume_text: string; question_bank_filter?: QuestionBankFilter }) =>
     api<Session>("/api/interview/start", {
       method: "POST",
       body: JSON.stringify(payload),
@@ -67,4 +70,26 @@ export const apiClient = {
 
   questionBank: (params: URLSearchParams) =>
     api<{ items: QuestionBankItem[]; next_cursor?: string; limit: number }>(`/api/question-bank?${params.toString()}`),
+
+  listQuestionImports: () =>
+    api<{ jobs: QuestionBankImportJob[] }>("/api/question-bank/imports"),
+
+  getQuestionImport: (id: string) =>
+    api<{ job: QuestionBankImportJob; items?: QuestionBankImportItem[] }>(`/api/question-bank/imports/${encodeURIComponent(id)}`),
+
+  createQuestionImport: (sourceType: "question_bank" | "document", file: File, async = true) => {
+    const form = new FormData();
+    form.append("source_type", sourceType);
+    form.append("file", file);
+    const suffix = async ? "?async=true" : "";
+    return api<{ job: QuestionBankImportJob }>(`/api/question-bank/imports${suffix}`, {
+      method: "POST",
+      form,
+    });
+  },
+
+  commitQuestionImport: (id: string, async = true) =>
+    api<{ job: QuestionBankImportJob }>(`/api/question-bank/imports/${encodeURIComponent(id)}/commit${async ? "?async=true" : ""}`, {
+      method: "POST",
+    }),
 };

@@ -18,6 +18,7 @@ type Server struct {
 	interview       *InterviewService
 	documentParser  parser.DocumentParser
 	questionBank    questionbank.Store
+	questionImports *questionbank.ImportService
 	profileAnalyzer ProfileAnalyzer
 	metricsRecorder *metricsRecorder
 
@@ -49,6 +50,10 @@ func (s *Server) SetProfileAnalyzer(analyzer ProfileAnalyzer) {
 	s.profileAnalyzer = analyzer
 }
 
+func (s *Server) SetQuestionBankImportService(service *questionbank.ImportService) {
+	s.questionImports = service
+}
+
 // Router 构造 Gin 引擎。
 // 中间件顺序：trace id → recovery；/api/interview/{start,answer} 子组额外挂 MaxInFlight 限流。
 // SSE stream 使用独立 MaxStreams 限流，避免长连接消耗短请求容量。
@@ -69,6 +74,10 @@ func (s *Server) Router() *gin.Engine {
 		api.GET("/ping", s.ping)
 		api.POST("/documents/parse-resume", s.parseResumeDocument)
 		api.POST("/profile/analyze", s.analyzeProfile)
+		api.POST("/question-bank/imports", s.createQuestionBankImport)
+		api.GET("/question-bank/imports", s.listQuestionBankImports)
+		api.GET("/question-bank/imports/:id", s.getQuestionBankImport)
+		api.POST("/question-bank/imports/:id/commit", s.commitQuestionBankImport)
 		api.GET("/question-bank", s.listQuestionBank)
 		api.GET("/question-bank/facets", s.questionBankFacets)
 		api.GET("/question-bank/:id", s.getQuestionBankItem)

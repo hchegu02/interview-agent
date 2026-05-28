@@ -56,6 +56,11 @@ func NewPGVectorRetriever(pool *pgxpool.Pool, fusion Fusion) *PGVectorRetriever 
 //	$3 = target difficulty (smallint)
 //	$4 = vector candidate limit (int)
 //	$5 = tag candidate limit (int)
+//	$6 = hard skill_category filter (text[])
+//	$7 = hard scenario filter (text[])
+//	$8 = hard min difficulty (int, 0 means unset)
+//	$9 = hard max difficulty (int, 0 means unset)
+//	$10 = hard tags-overlap filter (text[])
 //
 // 关键 design notes：
 //   - vector_candidates 用 MATERIALIZED 强制物化，避免 PG 把 CTE 内联导致
@@ -70,6 +75,12 @@ WITH vector_candidates AS MATERIALIZED (
     SELECT id, embedding <=> $1::vector AS vec_dist
     FROM question_bank
     WHERE difficulty BETWEEN GREATEST($3 - 2, 1) AND LEAST($3 + 2, 5)
+      AND embedding IS NOT NULL
+      AND (cardinality($6::text[]) = 0 OR skill_category = ANY($6::text[]))
+      AND (cardinality($7::text[]) = 0 OR scenario = ANY($7::text[]))
+      AND ($8::int = 0 OR difficulty >= $8)
+      AND ($9::int = 0 OR difficulty <= $9)
+      AND (cardinality($10::text[]) = 0 OR tags && $10::text[])
     ORDER BY embedding <=> $1::vector
     LIMIT $4
 ),
@@ -77,7 +88,13 @@ tag_candidates AS MATERIALIZED (
     SELECT id
     FROM question_bank
     WHERE tags && $2::text[]
+      AND embedding IS NOT NULL
       AND difficulty BETWEEN GREATEST($3 - 2, 1) AND LEAST($3 + 2, 5)
+      AND (cardinality($6::text[]) = 0 OR skill_category = ANY($6::text[]))
+      AND (cardinality($7::text[]) = 0 OR scenario = ANY($7::text[]))
+      AND ($8::int = 0 OR difficulty >= $8)
+      AND ($9::int = 0 OR difficulty <= $9)
+      AND (cardinality($10::text[]) = 0 OR tags && $10::text[])
     LIMIT $5
 ),
 candidates AS (
@@ -125,6 +142,13 @@ func (r *PGVectorRetriever) Retrieve(ctx context.Context, q Query) ([]Result, er
 		// 我们要的是空数组，避免 tags && NULL 永远 false
 		canonical = []string{}
 	}
+	skillCategories := compactQueryStrings(q.SkillCategories)
+	scenarios := compactQueryStrings(q.Scenarios)
+	filterTags := CanonicalizeTags(q.FilterTags)
+	if filterTags == nil {
+		filterTags = []string{}
+	}
+	diffMin, diffMax := normalizeHardDifficultyRange(q.DifficultyMin, q.DifficultyMax)
 
 	// pgvector 接受 '[0.1,0.2,...]' 文本格式作为 vector 类型字面量
 	vecLit := vectorLiteral(q.QueryEmbedding)
@@ -149,7 +173,7 @@ func (r *PGVectorRetriever) Retrieve(ctx context.Context, q Query) ([]Result, er
 		_ = err
 	}
 
-	rows, err := tx.Query(ctx, retrieveSQL, vecLit, canonical, diff, vecN, tagN)
+	rows, err := tx.Query(ctx, retrieveSQL, vecLit, canonical, diff, vecN, tagN, skillCategories, scenarios, diffMin, diffMax, filterTags)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}
@@ -175,6 +199,33 @@ func (r *PGVectorRetriever) Retrieve(ctx context.Context, q Query) ([]Result, er
 		results = results[:K]
 	}
 	return results, nil
+}
+
+func compactQueryStrings(items []string) []string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func normalizeHardDifficultyRange(min, max int) (int, int) {
+	min = normalizeHardDifficulty(min)
+	max = normalizeHardDifficulty(max)
+	if min > 0 && max > 0 && min > max {
+		return max, min
+	}
+	return min, max
+}
+
+func normalizeHardDifficulty(n int) int {
+	if n < 1 || n > 5 {
+		return 0
+	}
+	return n
 }
 
 // vectorLiteral 把 float32 切片格式化成 pgvector 字面量 '[0.1,0.2,...]'。
