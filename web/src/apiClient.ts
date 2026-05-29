@@ -92,4 +92,10 @@ export const apiClient = {
     api<{ job: QuestionBankImportJob }>(`/api/question-bank/imports/${encodeURIComponent(id)}/commit${async ? "?async=true" : ""}`, {
       method: "POST",
     }),
+
+  reviewQuestionImportItems: (id: string, action: string, itemIds: string[] = []) =>
+    api<{ job: QuestionBankImportJob; items?: QuestionBankImportItem[] }>(`/api/question-bank/imports/${encodeURIComponent(id)}/items/review`, {
+      method: "POST",
+      body: JSON.stringify({ action, item_ids: itemIds }),
+    }),
 };

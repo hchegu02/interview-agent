@@ -163,6 +163,69 @@ func TestQuestionBankImport_LocalJSONThenCommit(t *testing.T) {
 	}
 }
 
+func TestQuestionBankImport_ReviewRejectsItemBeforeCommit(t *testing.T) {
+	store := questionbank.NewMemoryStore(nil)
+	importStore := questionbank.NewMemoryImportStore()
+	server := NewServer(&config.Config{})
+	server.SetQuestionBankStore(store)
+	server.SetQuestionBankImportService(questionbank.NewImportService(questionbank.ImportServiceDeps{
+		Imports: importStore,
+		Writer:  store,
+	}))
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("source_type", "question_bank"); err != nil {
+		t.Fatal(err)
+	}
+	part, err := writer.CreateFormFile("file", "questions.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write([]byte(`[{"id":"go-reject-http-001","content":"Go map 并发读写？","skill_category":"go","difficulty":3}]`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/question-bank/imports", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	server.Router().ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var created struct {
+		Job questionbank.ImportJob `json:"job"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	reviewBody := strings.NewReader(`{"action":"reject","item_ids":["` + created.Job.ID + `:go-reject-http-001"]}`)
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/question-bank/imports/"+created.Job.ID+"/items/review", reviewBody)
+	req.Header.Set("Content-Type", "application/json")
+	server.Router().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("review status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"review_status":"rejected"`) {
+		t.Fatalf("review response should include rejected item: %s", rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/question-bank/imports/"+created.Job.ID+"/commit", nil)
+	server.Router().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if _, err := store.Get(req.Context(), "go-reject-http-001"); err == nil {
+		t.Fatal("rejected item should not be visible after commit")
+	}
+}
+
 func TestQuestionBankImport_AsyncLocalJSON(t *testing.T) {
 	store := questionbank.NewMemoryStore(nil)
 	importStore := questionbank.NewMemoryImportStore()

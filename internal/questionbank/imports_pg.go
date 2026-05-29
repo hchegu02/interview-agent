@@ -182,15 +182,16 @@ func (s *PGImportStore) AddItems(ctx context.Context, items []ImportItem) error 
 		}
 		batch.Queue(`
 INSERT INTO question_bank_import_items (
-    id, job_id, chunk_id, question_id, status, item_json, errors, raw_json, created_at, updated_at
-) VALUES ($1,$2,NULLIF($3,''),$4,$5,$6::jsonb,$7,$8::jsonb,$9,$10)
+    id, job_id, chunk_id, question_id, status, review_status, item_json, errors, raw_json, created_at, updated_at
+) VALUES ($1,$2,NULLIF($3,''),$4,$5,$6,$7::jsonb,$8,$9::jsonb,$10,$11)
 ON CONFLICT (id) DO UPDATE SET
     status=EXCLUDED.status,
+    review_status=EXCLUDED.review_status,
     item_json=EXCLUDED.item_json,
     errors=EXCLUDED.errors,
     raw_json=EXCLUDED.raw_json,
     updated_at=now()
-`, item.ID, item.JobID, item.ChunkID, item.QuestionID, item.Status, string(itemJSON), item.Errors, string(rawJSON), item.CreatedAt, item.UpdatedAt)
+`, item.ID, item.JobID, item.ChunkID, item.QuestionID, item.Status, normalizedImportReviewStatus(item.ReviewStatus), string(itemJSON), item.Errors, string(rawJSON), item.CreatedAt, item.UpdatedAt)
 	}
 	br := s.Pool.SendBatch(ctx, batch)
 	defer br.Close()
@@ -204,7 +205,7 @@ ON CONFLICT (id) DO UPDATE SET
 
 func (s *PGImportStore) ListItems(ctx context.Context, jobID string) ([]ImportItem, error) {
 	rows, err := s.Pool.Query(ctx, `
-SELECT id, job_id, COALESCE(chunk_id, ''), question_id, status, item_json, raw_json, errors, created_at, updated_at
+SELECT id, job_id, COALESCE(chunk_id, ''), question_id, status, COALESCE(review_status, 'accepted'), item_json, raw_json, errors, created_at, updated_at
 FROM question_bank_import_items
 WHERE job_id=$1
 ORDER BY created_at, id
@@ -218,7 +219,7 @@ ORDER BY created_at, id
 		var item ImportItem
 		var itemJSON []byte
 		var rawJSON []byte
-		if err := rows.Scan(&item.ID, &item.JobID, &item.ChunkID, &item.QuestionID, &item.Status, &itemJSON, &rawJSON, &item.Errors, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.JobID, &item.ChunkID, &item.QuestionID, &item.Status, &item.ReviewStatus, &itemJSON, &rawJSON, &item.Errors, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal(itemJSON, &item.Item)
@@ -242,9 +243,9 @@ func (s *PGImportStore) UpdateItems(ctx context.Context, items []ImportItem) err
 		itemJSON, _ := json.Marshal(item.Item)
 		batch.Queue(`
 UPDATE question_bank_import_items
-SET status=$2, item_json=$3::jsonb, errors=$4, updated_at=now()
+SET status=$2, review_status=$3, item_json=$4::jsonb, errors=$5, updated_at=now()
 WHERE id=$1
-`, item.ID, item.Status, string(itemJSON), item.Errors)
+`, item.ID, item.Status, normalizedImportReviewStatus(item.ReviewStatus), string(itemJSON), item.Errors)
 	}
 	br := s.Pool.SendBatch(ctx, batch)
 	defer br.Close()
@@ -252,6 +253,21 @@ WHERE id=$1
 		if _, err := br.Exec(); err != nil {
 			return fmt.Errorf("update question bank import items: %w", err)
 		}
+	}
+	return nil
+}
+
+func (s *PGImportStore) UpdateItemReviews(ctx context.Context, jobID string, itemIDs []string, reviewStatus string) error {
+	if len(itemIDs) == 0 {
+		return nil
+	}
+	_, err := s.Pool.Exec(ctx, `
+UPDATE question_bank_import_items
+SET review_status=$3, updated_at=now()
+WHERE job_id=$1 AND id=ANY($2) AND status='valid'
+`, jobID, itemIDs, normalizedImportReviewStatus(reviewStatus))
+	if err != nil {
+		return fmt.Errorf("update question bank import item reviews: %w", err)
 	}
 	return nil
 }

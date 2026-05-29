@@ -46,6 +46,11 @@ type questionBankImportListResponse struct {
 	Jobs []questionbank.ImportJob `json:"jobs"`
 }
 
+type questionBankImportReviewRequest struct {
+	Action  string   `json:"action"`
+	ItemIDs []string `json:"item_ids"`
+}
+
 func (s *Server) listQuestionBank(c *gin.Context) {
 	if s.questionBank == nil {
 		c.JSON(http.StatusNotImplemented, gin.H{"error": "question bank store not configured"})
@@ -182,6 +187,48 @@ func (s *Server) getQuestionBankImport(c *gin.Context) {
 			return
 		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "get question bank import failed"})
+		return
+	}
+	c.JSON(http.StatusOK, questionBankImportResponse{Job: job, Items: items})
+}
+
+func (s *Server) reviewQuestionBankImportItems(c *gin.Context) {
+	if s.questionImports == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "question bank import service not configured"})
+		return
+	}
+	var req questionBankImportReviewRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid review request"})
+		return
+	}
+	action := strings.TrimSpace(req.Action)
+	var (
+		job   questionbank.ImportJob
+		items []questionbank.ImportItem
+		err   error
+	)
+	switch action {
+	case "accept":
+		job, items, err = s.questionImports.ReviewItems(c.Request.Context(), c.Param("id"), req.ItemIDs, questionbank.ImportReviewStatusAccepted)
+	case "reject":
+		job, items, err = s.questionImports.ReviewItems(c.Request.Context(), c.Param("id"), req.ItemIDs, questionbank.ImportReviewStatusRejected)
+	case "accept_all_valid":
+		job, items, err = s.questionImports.ReviewAllValidItems(c.Request.Context(), c.Param("id"), questionbank.ImportReviewStatusAccepted, false)
+	case "reject_all_valid":
+		job, items, err = s.questionImports.ReviewAllValidItems(c.Request.Context(), c.Param("id"), questionbank.ImportReviewStatusRejected, false)
+	case "accept_complete_valid":
+		job, items, err = s.questionImports.ReviewAllValidItems(c.Request.Context(), c.Param("id"), questionbank.ImportReviewStatusAccepted, true)
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported review action"})
+		return
+	}
+	if err != nil {
+		if errors.Is(err, questionbank.ErrImportNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "question bank import not found"})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, questionBankImportResponse{Job: job, Items: items})

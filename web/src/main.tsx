@@ -557,6 +557,21 @@ function QuestionBankPage({ jumpId }: { jumpId: string }) {
     }
   };
 
+  const reviewImport = async (id: string, action: string, itemIds: string[] = []) => {
+    if (!id) return;
+    setImportBusy(true);
+    setError("");
+    try {
+      const data = await apiClient.reviewQuestionImportItems(id, action, itemIds);
+      setImportItems(data.items || []);
+      refreshImports();
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setImportBusy(false);
+    }
+  };
+
   return (
     <section className="page questions-page">
       <PageHeader eyebrow="题库工作区" title="题库独立管理，面试页只保留面试。" copy="候选人视图隐藏答案和评分标准；管理视图用于检查 rubric 和追问提示。" />
@@ -589,7 +604,7 @@ function QuestionBankPage({ jumpId }: { jumpId: string }) {
               </button>
             )) : <div className="empty-state">暂无导入任务</div>}
           </div>
-          <ImportDetail jobs={imports} selectedId={selectedImportId} items={importItems} busy={importBusy} commitImport={commitImport} />
+          <ImportDetail jobs={imports} selectedId={selectedImportId} items={importItems} busy={importBusy} commitImport={commitImport} reviewImport={reviewImport} />
         </div>
       </section>
       <div className="question-toolbar">
@@ -611,15 +626,18 @@ function QuestionBankPage({ jumpId }: { jumpId: string }) {
   );
 }
 
-function ImportDetail({ jobs, selectedId, items, busy, commitImport }: {
+function ImportDetail({ jobs, selectedId, items, busy, commitImport, reviewImport }: {
   jobs: QuestionBankImportJob[];
   selectedId: string;
   items: QuestionBankImportItem[];
   busy: boolean;
   commitImport: (id: string) => void;
+  reviewImport: (id: string, action: string, itemIds?: string[]) => void;
 }) {
   const job = jobs.find((item) => item.id === selectedId);
   if (!job) return <aside className="import-detail"><div className="empty-state">选择导入任务</div></aside>;
+  const accepted = items.filter((item) => item.status === "valid" && reviewStatus(item) === "accepted").length;
+  const rejected = items.filter((item) => item.status === "valid" && reviewStatus(item) === "rejected").length;
   return (
     <aside className="import-detail">
       <div className="import-detail-head">
@@ -627,20 +645,37 @@ function ImportDetail({ jobs, selectedId, items, busy, commitImport }: {
           <strong>{job.status}</strong>
           <span>{job.id}</span>
         </div>
-        <button className="primary" disabled={busy || job.status !== "ready" || job.valid_items === 0} onClick={() => commitImport(job.id)}>提交入库</button>
+        <button className="primary" disabled={busy || job.status !== "ready" || accepted === 0} onClick={() => commitImport(job.id)}>提交入库</button>
       </div>
       <div className="import-stats">
         <span>切片 {job.total_chunks}</span>
         <span>有效 {job.valid_items}</span>
+        <span>接受 {accepted}</span>
+        <span>拒绝 {rejected}</span>
         <span>无效 {job.invalid_items}</span>
         <span>已入库 {job.imported_items}</span>
       </div>
+      <div className="import-review-toolbar">
+        <button className="secondary" disabled={busy || job.status !== "ready"} onClick={() => reviewImport(job.id, "accept_all_valid")}>接受全部有效</button>
+        <button className="secondary" disabled={busy || job.status !== "ready"} onClick={() => reviewImport(job.id, "accept_complete_valid")}>接受字段完整</button>
+        <button className="secondary" disabled={busy || job.status !== "ready"} onClick={() => reviewImport(job.id, "reject_all_valid")}>拒绝全部有效</button>
+        <span>质量分规则预留</span>
+      </div>
       {job.error && <p className="system-line error">{job.error}</p>}
       <div className="import-items">
-        {items.slice(0, 6).map((item) => (
-          <article key={item.id} className={`import-item ${item.status}`}>
-            <div><strong>{item.question_id}</strong><span>{item.status}</span></div>
+        {items.map((item) => (
+          <article key={item.id} className={`import-item ${item.status} review-${reviewStatus(item)}`}>
+            <div>
+              <strong>{item.question_id}</strong>
+              <span>{item.status} · {reviewStatusLabel(reviewStatus(item))}</span>
+            </div>
             <p>{item.item.content || "空题干"}</p>
+            {item.status === "valid" && (
+              <div className="import-item-actions">
+                <button className={reviewStatus(item) === "accepted" ? "active" : ""} disabled={busy || job.status !== "ready"} onClick={() => reviewImport(job.id, "accept", [item.id])}>接受</button>
+                <button className={reviewStatus(item) === "rejected" ? "active danger" : "danger"} disabled={busy || job.status !== "ready"} onClick={() => reviewImport(job.id, "reject", [item.id])}>拒绝</button>
+              </div>
+            )}
             <ImportDiff item={item} />
             {!!item.errors?.length && <em>{item.errors.join("；")}</em>}
           </article>
@@ -648,6 +683,14 @@ function ImportDetail({ jobs, selectedId, items, busy, commitImport }: {
       </div>
     </aside>
   );
+}
+
+function reviewStatus(item: QuestionBankImportItem) {
+  return item.review_status || "accepted";
+}
+
+function reviewStatusLabel(status: string) {
+  return status === "rejected" ? "已拒绝" : "已接受";
 }
 
 function ImportDiff({ item }: { item: QuestionBankImportItem }) {
