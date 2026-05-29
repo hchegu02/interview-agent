@@ -75,6 +75,8 @@ WITH vector_candidates AS MATERIALIZED (
     SELECT id, embedding <=> $1::vector AS vec_dist
     FROM question_bank
     WHERE difficulty BETWEEN GREATEST($3 - 2, 1) AND LEAST($3 + 2, 5)
+      AND status = 'active'
+      AND embedding_status = 'embedded'
       AND embedding IS NOT NULL
       AND (cardinality($6::text[]) = 0 OR skill_category = ANY($6::text[]))
       AND (cardinality($7::text[]) = 0 OR scenario = ANY($7::text[]))
@@ -88,6 +90,8 @@ tag_candidates AS MATERIALIZED (
     SELECT id
     FROM question_bank
     WHERE tags && $2::text[]
+      AND status = 'active'
+      AND embedding_status = 'embedded'
       AND embedding IS NOT NULL
       AND difficulty BETWEEN GREATEST($3 - 2, 1) AND LEAST($3 + 2, 5)
       AND (cardinality($6::text[]) = 0 OR skill_category = ANY($6::text[]))
