@@ -904,7 +904,7 @@ h3 {
 
 .import-grid {
   display: grid;
-  grid-template-columns: minmax(220px, 0.75fr) minmax(0, 1.25fr);
+  grid-template-columns: minmax(220px, 0.6fr) minmax(520px, 1.4fr);
   gap: 12px;
 }
 
@@ -985,7 +985,7 @@ h3 {
   border-radius: 8px;
 }
 
-.import-item div {
+.import-item > div:first-child {
   display: flex;
   justify-content: space-between;
   gap: 8px;
@@ -1002,19 +1002,23 @@ h3 {
   border-color: #fed7aa;
 }
 
-.import-diff {
+.import-item .import-diff {
   display: grid;
-  gap: 4px;
+  gap: 8px;
   margin-top: 10px;
   padding-top: 8px;
   border-top: 1px solid #e2e8f0;
 }
 
-.import-diff-row {
+.import-item .import-diff-row {
   display: grid;
-  grid-template-columns: 64px minmax(0, 1fr) minmax(0, 1fr) 42px;
-  gap: 6px;
+  grid-template-columns: 72px minmax(0, 1fr) minmax(0, 1fr) max-content;
+  gap: 8px;
   align-items: start;
+  padding: 8px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
 }
 
 .import-diff-row span,
@@ -1026,8 +1030,9 @@ h3 {
 
 .import-diff-row code {
   min-width: 0;
-  padding: 3px 5px;
-  overflow-wrap: anywhere;
+  padding: 5px 7px;
+  overflow-wrap: break-word;
+  word-break: normal;
   color: #0f172a;
   background: #ffffff;
   border: 1px solid #e2e8f0;
@@ -1035,6 +1040,12 @@ h3 {
   font-family: inherit;
   font-size: 11px;
   line-height: 1.35;
+}
+
+@media (max-width: 1280px) {
+  .questions-page .import-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 .question-toolbar {
