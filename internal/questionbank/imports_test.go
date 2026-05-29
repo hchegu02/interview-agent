@@ -93,6 +93,55 @@ func TestImportService_ImportLocalJSONStagesItemsBeforeCommit(t *testing.T) {
 	if len(items) != 1 || items[0].Status != ImportItemStatusValid {
 		t.Fatalf("items = %+v, want one valid staged item", items)
 	}
+	if items[0].ReviewStatus != ImportReviewStatusAccepted {
+		t.Fatalf("review_status = %q, want accepted by default", items[0].ReviewStatus)
+	}
+}
+
+func TestImportService_CommitSkipsRejectedItems(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore(nil)
+	imports := NewMemoryImportStore()
+	service := NewImportService(ImportServiceDeps{
+		Imports: imports,
+		Writer:  store,
+	})
+
+	job, err := service.ImportLocalQuestionBank(ctx, ImportFile{
+		Filename: "questions.json",
+		Reader: bytes.NewBufferString(`[
+			{"id":"go-accept-001","content":"Go channel close 行为？","skill_category":"go","difficulty":3},
+			{"id":"go-reject-001","content":"Go map 并发读写？","skill_category":"go","difficulty":3}
+		]`),
+		Size: 256,
+	})
+	if err != nil {
+		t.Fatalf("ImportLocalQuestionBank: %v", err)
+	}
+	items, err := imports.ListItems(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("items = %+v, want two staged items", items)
+	}
+
+	if _, _, err := service.ReviewItems(ctx, job.ID, []string{job.ID + ":go-reject-001"}, ImportReviewStatusRejected); err != nil {
+		t.Fatalf("ReviewItems: %v", err)
+	}
+	committed, err := service.Commit(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if committed.ImportedItems != 1 {
+		t.Fatalf("ImportedItems = %d, want 1", committed.ImportedItems)
+	}
+	if _, err := store.Get(ctx, "go-accept-001"); err != nil {
+		t.Fatalf("accepted item should be committed: %v", err)
+	}
+	if _, err := store.Get(ctx, "go-reject-001"); err == nil {
+		t.Fatal("rejected item should not be committed")
+	}
 }
 
 func TestImportService_ImportLocalQuestionOnlyUsesLLMEnrichment(t *testing.T) {

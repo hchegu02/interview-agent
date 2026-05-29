@@ -42,6 +42,9 @@ const (
 	ImportItemStatusRejected = "rejected"
 	ImportItemStatusImported = "imported"
 
+	ImportReviewStatusAccepted = "accepted"
+	ImportReviewStatusRejected = "rejected"
+
 	localEnrichmentBatchSize = 2
 )
 
@@ -80,6 +83,7 @@ type ImportItem struct {
 	ChunkID      string    `json:"chunk_id,omitempty"`
 	QuestionID   string    `json:"question_id"`
 	Status       string    `json:"status"`
+	ReviewStatus string    `json:"review_status"`
 	Item         Item      `json:"item"`
 	OriginalItem *Item     `json:"original_item,omitempty"`
 	Errors       []string  `json:"errors,omitempty"`
@@ -117,6 +121,7 @@ type ImportStore interface {
 	AddItems(ctx context.Context, items []ImportItem) error
 	ListItems(ctx context.Context, jobID string) ([]ImportItem, error)
 	UpdateItems(ctx context.Context, items []ImportItem) error
+	UpdateItemReviews(ctx context.Context, jobID string, itemIDs []string, reviewStatus string) error
 	ResetJobData(ctx context.Context, jobID string) error
 	TryAcquireJob(ctx context.Context, jobID, ownerID string, leaseFor time.Duration) (ImportJob, bool, error)
 }
@@ -470,6 +475,73 @@ func (s *ImportService) Commit(ctx context.Context, jobID string) (ImportJob, er
 	return s.commitReadyJob(ctx, jobID)
 }
 
+func (s *ImportService) ReviewItems(ctx context.Context, jobID string, itemIDs []string, reviewStatus string) (ImportJob, []ImportItem, error) {
+	if s == nil || s.imports == nil {
+		return ImportJob{}, nil, errors.New("question bank import review not configured")
+	}
+	job, err := s.imports.GetJob(ctx, jobID)
+	if err != nil {
+		return ImportJob{}, nil, err
+	}
+	if job.Status != ImportStatusReady {
+		return ImportJob{}, nil, fmt.Errorf("import job %s is %s, not ready", job.ID, job.Status)
+	}
+	if reviewStatus != ImportReviewStatusAccepted && reviewStatus != ImportReviewStatusRejected {
+		return ImportJob{}, nil, fmt.Errorf("unsupported import review_status %q", reviewStatus)
+	}
+	if len(itemIDs) == 0 {
+		return ImportJob{}, nil, errors.New("import review requires at least one item id")
+	}
+	if err := s.imports.UpdateItemReviews(ctx, jobID, itemIDs, reviewStatus); err != nil {
+		return ImportJob{}, nil, err
+	}
+	items, err := s.imports.ListItems(ctx, jobID)
+	if err != nil {
+		return ImportJob{}, nil, err
+	}
+	return job, items, nil
+}
+
+func (s *ImportService) ReviewAllValidItems(ctx context.Context, jobID string, reviewStatus string, completeOnly bool) (ImportJob, []ImportItem, error) {
+	if s == nil || s.imports == nil {
+		return ImportJob{}, nil, errors.New("question bank import review not configured")
+	}
+	job, err := s.imports.GetJob(ctx, jobID)
+	if err != nil {
+		return ImportJob{}, nil, err
+	}
+	if job.Status != ImportStatusReady {
+		return ImportJob{}, nil, fmt.Errorf("import job %s is %s, not ready", job.ID, job.Status)
+	}
+	if reviewStatus != ImportReviewStatusAccepted && reviewStatus != ImportReviewStatusRejected {
+		return ImportJob{}, nil, fmt.Errorf("unsupported import review_status %q", reviewStatus)
+	}
+	items, err := s.imports.ListItems(ctx, jobID)
+	if err != nil {
+		return ImportJob{}, nil, err
+	}
+	var ids []string
+	for _, item := range items {
+		if item.Status != ImportItemStatusValid {
+			continue
+		}
+		if completeOnly && !importItemHasCompleteReviewFields(item.Item) {
+			continue
+		}
+		ids = append(ids, item.ID)
+	}
+	if len(ids) > 0 {
+		if err := s.imports.UpdateItemReviews(ctx, jobID, ids, reviewStatus); err != nil {
+			return ImportJob{}, nil, err
+		}
+		items, err = s.imports.ListItems(ctx, jobID)
+		if err != nil {
+			return ImportJob{}, nil, err
+		}
+	}
+	return job, items, nil
+}
+
 func (s *ImportService) commitReadyJob(ctx context.Context, jobID string) (ImportJob, error) {
 	job, err := s.imports.GetJob(ctx, jobID)
 	if err != nil {
@@ -491,7 +563,7 @@ func (s *ImportService) commitReadyJob(ctx context.Context, jobID string) (Impor
 	var items []Item
 	var updated []ImportItem
 	for _, item := range importItems {
-		if item.Status != ImportItemStatusValid {
+		if item.Status != ImportItemStatusValid || !importItemAccepted(item) {
 			continue
 		}
 		items = append(items, item.Item)
@@ -588,6 +660,7 @@ func (s *ImportService) stageItemsWithOriginals(ctx context.Context, job ImportJ
 			ChunkID:      chunkID,
 			QuestionID:   item.ID,
 			Status:       status,
+			ReviewStatus: ImportReviewStatusAccepted,
 			Item:         item,
 			OriginalItem: original,
 			Errors:       errs,
@@ -989,6 +1062,28 @@ func splitImportList(raw string) []string {
 	return out
 }
 
+func importItemAccepted(item ImportItem) bool {
+	return item.ReviewStatus == "" || item.ReviewStatus == ImportReviewStatusAccepted
+}
+
+func normalizedImportReviewStatus(status string) string {
+	if status == ImportReviewStatusRejected {
+		return ImportReviewStatusRejected
+	}
+	return ImportReviewStatusAccepted
+}
+
+func importItemHasCompleteReviewFields(item Item) bool {
+	return strings.TrimSpace(item.Content) != "" &&
+		strings.TrimSpace(item.SkillCategory) != "" &&
+		item.Difficulty > 0 &&
+		len(item.Tags) > 0 &&
+		len(item.ExpectedPoints) > 0 &&
+		len(item.Rubric) > 0 &&
+		strings.TrimSpace(item.SampleAnswer) != "" &&
+		len(item.FollowUpHints) > 0
+}
+
 func embedText(item Item) string {
 	var sb strings.Builder
 	sb.WriteString(item.Content)
@@ -1241,6 +1336,26 @@ func (s *MemoryImportStore) UpdateItems(_ context.Context, items []ImportItem) e
 				}
 			}
 		}
+	}
+	return nil
+}
+
+func (s *MemoryImportStore) UpdateItemReviews(_ context.Context, jobID string, itemIDs []string, reviewStatus string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	wanted := map[string]struct{}{}
+	for _, id := range itemIDs {
+		wanted[id] = struct{}{}
+	}
+	for i := range s.items[jobID] {
+		if _, ok := wanted[s.items[jobID][i].ID]; !ok {
+			continue
+		}
+		if s.items[jobID][i].Status != ImportItemStatusValid {
+			continue
+		}
+		s.items[jobID][i].ReviewStatus = reviewStatus
+		s.items[jobID][i].UpdatedAt = time.Now().UTC()
 	}
 	return nil
 }

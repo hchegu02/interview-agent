@@ -309,9 +309,30 @@ func TestRetrieveSQLIncludesQuestionBankHardFilters(t *testing.T) {
 		"difficulty <= $9",
 		"tags && $10::text[]",
 		"embedding IS NOT NULL",
+		"status = 'active'",
+		"embedding_status = 'embedded'",
 	} {
 		if !strings.Contains(retrieveSQL, want) {
 			t.Fatalf("retrieveSQL missing hard filter %q", want)
+		}
+	}
+}
+
+func TestRetrieveSQLRequiresEmbeddedActiveItemsInBothCandidatePaths(t *testing.T) {
+	for _, cte := range []string{"vector_candidates", "tag_candidates"} {
+		start := strings.Index(retrieveSQL, cte+" AS MATERIALIZED")
+		if start < 0 {
+			t.Fatalf("retrieveSQL missing %s CTE", cte)
+		}
+		end := strings.Index(retrieveSQL[start:], "),")
+		if end < 0 {
+			t.Fatalf("retrieveSQL malformed %s CTE", cte)
+		}
+		body := retrieveSQL[start : start+end]
+		for _, want := range []string{"status = 'active'", "embedding_status = 'embedded'", "embedding IS NOT NULL"} {
+			if !strings.Contains(body, want) {
+				t.Fatalf("%s CTE missing %q", cte, want)
+			}
 		}
 	}
 }

@@ -77,6 +77,7 @@ func (s *Server) Router() *gin.Engine {
 		api.POST("/question-bank/imports", s.createQuestionBankImport)
 		api.GET("/question-bank/imports", s.listQuestionBankImports)
 		api.GET("/question-bank/imports/:id", s.getQuestionBankImport)
+		api.POST("/question-bank/imports/:id/items/review", s.reviewQuestionBankImportItems)
 		api.POST("/question-bank/imports/:id/commit", s.commitQuestionBankImport)
 		api.GET("/question-bank", s.listQuestionBank)
 		api.GET("/question-bank/facets", s.questionBankFacets)

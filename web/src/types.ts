@@ -221,6 +221,7 @@ export type QuestionBankImportItem = {
   id: string;
   question_id: string;
   status: string;
+  review_status: "accepted" | "rejected";
   item: QuestionBankItem;
   original_item?: QuestionBankItem;
   errors?: string[];

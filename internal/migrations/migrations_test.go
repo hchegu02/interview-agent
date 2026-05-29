@@ -195,6 +195,20 @@ func TestQuestionBankEmbeddingStatusMigration(t *testing.T) {
 	}
 }
 
+func TestQuestionBankImportReviewStatusMigration(t *testing.T) {
+	up := read(t, "007_question_bank_import_review_status.up.sql")
+	down := read(t, "007_question_bank_import_review_status.down.sql")
+	if !strings.Contains(up, "review_status") {
+		t.Fatal("import review migration missing review_status column")
+	}
+	if !strings.Contains(up, "idx_qb_import_items_job_review") {
+		t.Fatal("import review migration should add review index")
+	}
+	if !strings.Contains(down, "DROP COLUMN IF EXISTS review_status") {
+		t.Fatal("import review down migration should drop review_status column")
+	}
+}
+
 func TestQuestionBankImportLeaseMigration(t *testing.T) {
 	up := read(t, "006_question_bank_import_lease.up.sql")
 	down := read(t, "006_question_bank_import_lease.down.sql")

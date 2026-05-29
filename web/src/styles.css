@@ -978,11 +978,39 @@ h3 {
   font-weight: 900;
 }
 
+.import-review-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin: 10px 0;
+}
+
+.import-review-toolbar button,
+.import-item-actions button {
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.import-review-toolbar span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
 .import-item {
   padding: 10px;
   background: #f8fafc;
   border: 1px solid var(--line);
   border-radius: 8px;
+}
+
+.import-item.review-rejected {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  opacity: 0.72;
 }
 
 .import-item > div:first-child {
@@ -1000,6 +1028,28 @@ h3 {
 .import-item.invalid {
   background: #fff7ed;
   border-color: #fed7aa;
+}
+
+.import-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.import-item-actions button.active {
+  color: #075985;
+  background: #e0f2fe;
+  border-color: #38bdf8;
+}
+
+.import-item-actions button.danger {
+  color: #991b1b;
+}
+
+.import-item-actions button.danger.active {
+  background: #fee2e2;
+  border-color: #fca5a5;
 }
 
 .import-item .import-diff {
