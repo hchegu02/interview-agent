@@ -46,14 +46,14 @@ func (s SessionStatus) Validate() error {
 //   - 加 PendingDecision：pick_next 决策后等用户答题时挂在这里
 //   - 加 CandidatePool：retrieve_rag 召回的题库候选（Agent 从中选）
 type Session struct {
-	ID          string        `json:"id"` // ULID
-	UserID      string        `json:"user_id"`
+	ID          string        `json:"id"`             // ULID
+	UserID      string        `json:"user_id"`        // 这个 session 属于哪个用户
 	Mode        string        `json:"mode,omitempty"` // exam | practice，前端业务模式
-	Status      SessionStatus `json:"status"`
-	CurrentNode string        `json:"current_node"` // graph 节点名，断点恢复用
+	Status      SessionStatus `json:"status"`         // session 当前状态，控制流程走向
+	CurrentNode string        `json:"current_node"`   // graph 节点名，断点恢复用
 
-	JobProfile  *JobProfile       `json:"job_profile,omitempty"`
-	CandProfile *CandidateProfile `json:"candidate_profile,omitempty"`
+	JobProfile  *JobProfile       `json:"job_profile,omitempty"`       // job_profile 节点产物，LLM 从 JD 文本抽取的岗位画像
+	CandProfile *CandidateProfile `json:"candidate_profile,omitempty"` // candidate_profile 节点产物，LLM 从简历文本抽取的候选人画像
 
 	// gap_analyze 节点产物，agent loop 用 Strategy 调整提问倾向
 	GapReport *GapReport `json:"gap_report,omitempty"`
@@ -162,6 +162,8 @@ type ProjectProbePlan struct {
 //   - cover_gap: 低匹配 → 用题库题覆盖 missing skills，定位水平
 type GapStrategy string
 
+// 三种提问策略，agent loop 根据 GapReport.Strategy 调整提问倾向。
+
 const (
 	GapStrategyValidate GapStrategy = "validate"
 	GapStrategyExplore  GapStrategy = "explore"
@@ -263,3 +265,18 @@ type DrillPlanItem struct {
 	RecommendedQuestionIDs []string `json:"recommended_question_ids,omitempty"`
 	RecommendedQuestions   []string `json:"recommended_questions,omitempty"`
 }
+
+// 关于“为什么不把流程控制全交给状态机”：
+//
+// 这里已经在用 graph 作为持久化流程状态机：
+//   - CurrentNode 是断点程序计数器，Run/Resume 依赖它恢复执行；
+//   - AddEdge/AddBranch/Router 定义节点流转；
+//   - ErrSuspended 表示等待外部输入，而不是业务失败。
+//
+// SessionStatus 只保留 created/running/paused/completed/failed 这种粗粒度生命周期。
+// 题目选择、追问、反思、结束等细粒度决策必须落在 PendingDecision、Rounds、
+// WorkingMemory 这些领域数据里。否则会把“流程位置”和“业务事实”混成一个巨大的
+// enum，最后状态爆炸，恢复、测试、报告追溯都会更难。
+//
+// 节点内部如果继续变复杂，优先拆纯函数/小 router/独立领域方法；不要再新增一套
+// 与 graph 并行的状态机。
