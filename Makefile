@@ -1,4 +1,4 @@
-.PHONY: help tidy build web-build run test test-core test-race lint migrate-up migrate-down seed demo demo-web demo-web-real demo-pg demo-pg-full demo-mock demo-real load-test docker-up docker-up-cluster docker-down clean
+.PHONY: help tidy build web-build run test test-core test-race lint migrate-up migrate-down seed real-rag-reindex demo demo-web demo-web-real demo-pg demo-pg-full demo-mock demo-real demo-real-full load-test docker-up docker-up-cluster docker-down clean
 
 GO ?= go
 APP := bin/server
@@ -35,14 +35,28 @@ migrate-up: ## apply DB migrations (requires docker postgres up)
 	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/001_init.up.sql
 	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/002_question_bank_expected_points.up.sql
 	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/003_question_bank_metadata.up.sql
+	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/004_question_bank_imports.up.sql
+	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/005_question_bank_embedding_status.up.sql
+	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/006_question_bank_import_lease.up.sql
+	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/007_question_bank_import_review_status.up.sql
+	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/008_question_bank_import_field_provenance.up.sql
 
 migrate-down: ## roll back DB migrations
+	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/008_question_bank_import_field_provenance.down.sql
+	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/007_question_bank_import_review_status.down.sql
+	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/006_question_bank_import_lease.down.sql
+	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/005_question_bank_embedding_status.down.sql
+	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/004_question_bank_imports.down.sql
 	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/003_question_bank_metadata.down.sql
 	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/002_question_bank_expected_points.down.sql
 	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/001_init.down.sql
 
 seed: ## load demo question bank rows
 	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/seed_question_bank.sql
+
+real-rag-reindex: ## rebuild question_bank embeddings with real embedding API
+	@[ -n "$$INTERVIEW_EMBEDDING_API_KEY" ] || (echo "INTERVIEW_EMBEDDING_API_KEY required" && exit 1)
+	$(GO) run ./cmd/reindex -seed seeds/question_bank.json -mode real -base-url "$${INTERVIEW_EMBEDDING_BASE_URL:-http://127.0.0.1:8000/v1}" -model "$${INTERVIEW_EMBEDDING_MODEL:-BAAI/bge-m3}" -dim "$${INTERVIEW_EMBEDDING_DIMENSION:-1024}"
 
 demo: build ## smoke test: start, ping, stop
 	sh ./scripts/smoke.sh
@@ -69,6 +83,9 @@ demo-real: ## run cmd/demo end-to-end against real LLM (requires INTERVIEW_LLM_A
 	@[ -n "$$INTERVIEW_LLM_API_KEY" ] || (echo "INTERVIEW_LLM_API_KEY required" && exit 1)
 	INTERVIEW_LLM_MODE=real INTERVIEW_EMBEDDING_MODE=mock \
 	$(GO) run ./cmd/demo -config config/config.yaml.example -script testdata/demo/example.yaml
+
+demo-real-full: ## run Docker PG/Redis + real embedding reindex + real CLI/Web E2E
+	pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/real_e2e.ps1
 
 load-test: ## run k6 load test against local cluster (stage 8)
 	docker run --rm -i --network=host grafana/k6 run - < chaos/k6_load_1000users.js

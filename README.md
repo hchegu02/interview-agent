@@ -31,6 +31,116 @@
 
 仍未完成：OTel tracing、Chaos 故障注入脚本、压测报告、Helm chart、题单预览节点和 RAG 评估指标；Prometheus 目前用轻量 summary / counter / gauge，还没接 Prometheus SDK histogram。
 
+## 项目架构
+
+### 总体分层
+
+```text
+web/ React + Vite
+  |
+  | HTTP JSON / SSE
+  v
+cmd/server
+  |
+  +-- internal/httpapi       Gin 路由、SSE、背压、metrics、session service
+  +-- internal/graphs        面试 Graph 装配
+  |     |
+  |     +-- internal/graph   通用 frontier-based graph runner
+  |     +-- internal/nodes   JD/简历解析、RAG、出题、评估、追问、报告节点
+  |
+  +-- internal/domain        Session 聚合根、画像、题目、轮次、报告
+  +-- internal/llm           mock/real ChatModel、限流、熔断、调用记录
+  +-- internal/embedding     mock/real embedding
+  +-- internal/retriever     pgvector 检索与 fallback retriever
+  +-- internal/questionbank  题库存储、导入、审核、commit
+  +-- internal/parser        PDF/DOCX/TXT/Markdown 简历解析
+  +-- internal/config        YAML + 环境变量配置
+  +-- internal/observability 日志、trace id、graph/LLM 指标回调
+```
+
+前端构建产物会被 Go 服务通过 `internal/httpapi/web_assets.go` 暴露；开发和演示入口仍以 `cmd/server` 为准。
+
+### 运行时依赖装配
+
+`cmd/server/main.go` 是唯一服务入口，启动时按配置装配依赖：
+
+- `config.Load` 读取 `config/config.yaml.example` 或指定 YAML，并用环境变量覆盖敏感项。
+- `INTERVIEW_POSTGRES_DSN` 为空时使用内存 session store、内存题库 seed 和 fallback retriever；非空时连接 PostgreSQL/pgvector，启用 PG session store、PG 题库和 pgvector retriever。
+- `INTERVIEW_REDIS_URL` 为空时使用内存事件总线；非空时使用 Redis Streams 事件总线，并启用 Redis session snapshot / lease / takeover。
+- `llm.mode=mock|real` 控制 ChatModel；real 模式会套 `LimitedChatModel` 和 `BreakingChatModel`，`/readyz` 通过 breaker state 暴露 degraded 状态。
+- `embedding.mode=mock|real` 控制题库检索 query embedding 和题库导入 embedding。
+
+### HTTP/API 层
+
+`internal/httpapi.Server` 持有路由和业务 service。核心路由分三类：
+
+- 只读/健康：`/healthz`、`/readyz`、`/metrics`、`/api/ping`、会话查询、题库查询。
+- 长连接：`GET /api/interview/stream`，使用独立 `server.max_streams` 背压，支持 snapshot、heartbeat 和 `Last-Event-ID`。
+- 会触发 LLM/Graph 的写入口：`POST /api/interview/start`、`POST /api/interview/answer`，使用 `server.max_in_flight` 背压。
+
+HTTP 层不直接实现面试决策，只负责请求校验、归属校验、调用 `InterviewService`、转换响应和发布/订阅事件。
+
+### 面试 Graph 流程
+
+`internal/graphs.BuildInterviewGraph` 把节点装成一个可恢复的 Graph：
+
+```text
+parse_jd
+  -> parse_resume
+  -> gap_analyze
+  -> analyze_profile
+  -> retrieve_rag
+  -> pick_next
+      -> evaluate
+      -> critic
+      -> refine 或 probe_ask
+      -> probe_eval
+      -> update_memory
+      -> reflection_check
+      -> pick_next 或 report
+```
+
+`internal/graph` 的执行模型是 frontier-based runner：每轮执行当前 frontier，按静态边或 router 计算下一轮。节点返回 `ErrSuspended` 时，Graph 正常暂停并把 `Session.CurrentNode` 留作断点；用户通过 `answer` 提交答案后，服务调用 `Resume` 从断点后续节点继续跑。
+
+### 核心数据结构
+
+`internal/domain.Session` 是一次面试的聚合根，同一份 JSON 结构被 HTTP 响应、Redis snapshot 和 PG `sessions.state_json` 复用。关键字段：
+
+- `JobProfile` / `CandProfile`：JD 和简历画像。
+- `GapReport` / `ProfileAnalysis`：匹配分析和提问策略依据。
+- `CandidatePool` / `QuestionBankFilter`：RAG 召回候选池和用户限定范围。
+- `WorkingMemory`：Agent 循环里的预算、覆盖度、降级原因等运行时记忆。
+- `Rounds`：按时间追加的问答、追问、评估记录。
+- `PendingDecision` / `CurrentNode`：暂停等待用户输入和恢复执行所需状态。
+- `Report`：终评报告。
+
+设计上避免把所有细节塞进一个巨大状态枚举：`SessionStatus` 只表达 created/running/paused/completed/failed 这种生命周期，细粒度流程由 Graph、`CurrentNode`、`Rounds` 和 `WorkingMemory` 表达。
+
+### 存储、事件和降级路径
+
+| 能力 | 默认本地模式 | 配置外部依赖后 |
+|---|---|---|
+| 会话存储 | 内存 map，进程重启丢失 | PostgreSQL `sessions.state_json` |
+| 会话恢复/租约 | 无跨实例恢复 | Redis snapshot + lease，冲突返回 HTTP 409 |
+| 事件总线 | 内存 hub | Redis Streams |
+| 题库 | `seeds/question_bank.json` 加载到内存 | PostgreSQL `question_bank` |
+| RAG 检索 | fallback retriever，明确记录降级 | pgvector |
+| LLM | mock fixture | OpenAI-compatible real LLM + limiter + breaker |
+| Embedding | mock vector | OpenAI-compatible embedding |
+
+Redis snapshot 写入失败不会中断主流程，会记录到 `WorkingMemory.DegradedReasons["redis_snapshot"]`；Redis lease 获取/续约失败会阻断，因为它决定多实例下同一 session 的写入所有权。
+
+### 题库导入链路
+
+题库相关 API 位于 `internal/httpapi/question_bank.go`，核心逻辑在 `internal/questionbank/`：
+
+1. 上传题库文件或普通文档到 `POST /api/question-bank/imports`。
+2. `parser.Dispatcher` 解析文件文本。
+3. LLM 从文档中抽取候选题，或直接解析结构化题库。
+4. import job 和 item 进入内存或 PG import store。
+5. 人工 review 后调用 commit，写入题库 store。
+6. real embedding 模式下写入 embedding 字段，供 pgvector 检索。
+
 ## 快速启动
 
 ```bash
@@ -66,6 +176,81 @@ $env:INTERVIEW_LLM_API_KEY="sk-xxx"
 $env:INTERVIEW_LLM_MODE="real"
 $env:INTERVIEW_EMBEDDING_MODE="mock"
 go run ./cmd/server -config config/config.yaml.example
+```
+
+## Docker
+
+应用镜像会先构建 Web 静态资源，再把 Go server 编译成单二进制。镜像不包含 `.env`、本地 `config/config.yaml` 或 API key；真实 LLM / embedding 只能通过运行时环境变量注入。
+
+```powershell
+docker build -t interview-agent:local .
+```
+
+只启动本地依赖：
+
+```powershell
+docker compose up -d postgres redis
+```
+
+启动三实例 mock 集群和 nginx 轮询入口：
+
+```powershell
+docker compose --profile cluster up -d --build
+Invoke-RestMethod http://127.0.0.1:8080/healthz
+Invoke-RestMethod http://127.0.0.1:8080/readyz
+```
+
+Web 演示入口是 `http://127.0.0.1:8080`。compose 默认使用 `INTERVIEW_LLM_MODE=mock` 和 `INTERVIEW_EMBEDDING_MODE=mock`，同时连接容器内 PostgreSQL/pgvector 与 Redis；如果切真实模式，只改运行时环境变量，不要把密钥写入镜像或仓库。
+
+## 真实完整演示
+
+真实完整演示会跑 **PostgreSQL + pgvector + Redis Streams + real LLM + real embedding**，覆盖 CLI 和 Web/SSE 两个入口：
+
+```powershell
+$env:INTERVIEW_LLM_API_KEY="sk-xxx"
+$env:INTERVIEW_EMBEDDING_API_KEY="dummy"
+$env:INTERVIEW_EMBEDDING_BASE_URL="http://127.0.0.1:8000/v1"
+$env:INTERVIEW_EMBEDDING_MODEL="BAAI/bge-m3"
+$env:INTERVIEW_EMBEDDING_DIMENSION="1024"
+$env:INTERVIEW_POSTGRES_DSN="postgres://interview:interview@localhost:5432/interview?sslmode=disable"
+$env:INTERVIEW_REDIS_URL="redis://localhost:6379/0"
+
+./scripts/real_e2e.ps1
+```
+
+默认真实演示使用本地 OpenAI-compatible embedding 服务，启动方式见 `tools/bge_server/README.md`。如果改用云端 embedding，把 `INTERVIEW_EMBEDDING_BASE_URL`、`INTERVIEW_EMBEDDING_MODEL` 和 `INTERVIEW_EMBEDDING_API_KEY` 换成对应 provider 的值。
+
+脚本会依次执行：
+
+1. `docker compose up -d postgres redis`
+2. 应用 `001` 到 `008` 全部 migration。
+3. 运行 `cmd/reindex`，用 real embedding 写入 `question_bank.embedding`。
+4. 校验 active 且 embedded 的题目数量大于 0。
+5. 运行 `cmd/demo`，产出 `tmp/demos/real-*/run.json` 和 `report.md`。
+6. 在 `http://127.0.0.1:18080` 启动真实 server，跑 Web/SSE smoke，验证 start、answer、SSE snapshot/progress、completed session detail、report 和 sessions list。
+
+关键验收点：
+
+- `run.json.config.retriever` 必须是 `pgvector`，不能是 fallback。
+- `run.json.session.report` 必须包含 `overall_score`、`skill_breakdown`、`transcript_analysis` 和 `drill_plan`。
+- `run.json.llm_calls` 和 `run.json.nodes` 必须非空，节点 timeline 至少覆盖 setup、RAG、选题和报告。
+
+如果只想验证 CLI 真实 Agent 链路，不启动 Web 服务：
+
+```powershell
+./scripts/real_e2e.ps1 -SkipWeb
+```
+
+如果 Docker 里的 PG/Redis 已经启动：
+
+```powershell
+./scripts/real_e2e.ps1 -SkipDocker
+```
+
+也可以通过 Makefile 调用：
+
+```bash
+make demo-real-full
 ```
 
 `make demo` 会构建并启动本地服务，然后检查 `/healthz`、`/readyz`、`/api/ping`，并用 mock 模式跑一轮 `interview/start`、`sessions/:id`、`interview/answer`、`sessions?user_id=...`。
@@ -222,11 +407,10 @@ Real LLM 模式会套进程内并发限制，配置项为 `llm.max_concurrency`�
 
 ## Roadmap（按当前 ROI）
 
-1. 可演示性闭环：README、`make demo-web`、真实浏览器流程验收、demo 产物说明。
-2. OTel tracing：贯穿 HTTP → Graph → LLM / Parser / Retriever，支持按 `trace_id` 定位慢节点。
-3. 可靠性演示：熔断器半开期渐进放行、Chaos 故障注入脚本和恢复验证。
-4. 工程化：GitHub Actions CI 矩阵、Docker 镜像、k8s Helm chart 和 probes。
-5. 产品增强：`preview_plan` 题单预览、候选人档案复用、项目背景库和简化版 RAGAS 指标。
+1. OTel tracing：贯穿 HTTP → Graph → LLM / Parser / Retriever，支持按 `trace_id` 定位慢节点。
+2. 可靠性演示：熔断器半开期渐进放行、Chaos 故障注入脚本和恢复验证。
+3. 工程化：GitHub Actions CI 矩阵、Docker 镜像、k8s Helm chart 和 probes。
+4. 产品增强：`preview_plan` 题单预览、候选人档案复用、项目背景库和简化版 RAGAS 指标。
 
 ## 测试
 

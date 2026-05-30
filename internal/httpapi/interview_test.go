@@ -95,6 +95,38 @@ func (c *fakeSessionCoordinator) ReleaseLease(ctx context.Context, sessionID, ow
 	return true, nil
 }
 
+type flakyReadSessionStore struct {
+	getErr   error
+	sessions []*domain.Session
+}
+
+func (s *flakyReadSessionStore) Save(ctx context.Context, sess *domain.Session) error {
+	s.sessions = append(s.sessions, sess)
+	return nil
+}
+
+func (s *flakyReadSessionStore) Get(ctx context.Context, id string) (*domain.Session, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
+	for _, sess := range s.sessions {
+		if sess.ID == id {
+			return sess, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: %q", ErrSessionNotFound, id)
+}
+
+func (s *flakyReadSessionStore) ListByUser(ctx context.Context, userID string, limit int) ([]*domain.Session, error) {
+	var out []*domain.Session
+	for _, sess := range s.sessions {
+		if sess.UserID == userID {
+			out = append(out, sess)
+		}
+	}
+	return out, nil
+}
+
 func TestInterviewStart_ReturnsFirstQuestion(t *testing.T) {
 	svc := NewInterviewService(fakeInterviewRunner{})
 	server := NewServerWithInterview(&config.Config{}, svc)
@@ -935,6 +967,42 @@ func TestInterviewGetSession_ReturnsSession(t *testing.T) {
 	}
 	if got.Question == nil || got.Question.ID != "q1" {
 		t.Fatalf("question = %+v, want q1", got.Question)
+	}
+}
+
+func TestInterviewGetSession_FallsBackToUserListWhenPointReadFails(t *testing.T) {
+	store := &flakyReadSessionStore{
+		getErr: errors.New("select session: transient"),
+		sessions: []*domain.Session{
+			{
+				ID:        "s-detail-fallback",
+				UserID:    "u1",
+				Status:    domain.StatusCompleted,
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+				Report: &domain.Report{
+					SessionID:    "s-detail-fallback",
+					OverallScore: 80,
+				},
+			},
+		},
+	}
+	svc := NewInterviewServiceWithStore(fakeInterviewRunner{}, store)
+	server := NewServerWithInterview(&config.Config{}, svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/interview/sessions/s-detail-fallback?user_id=u1", nil)
+	server.Router().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	var got interviewResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.SessionID != "s-detail-fallback" || got.Report == nil {
+		t.Fatalf("unexpected session response: %+v", got)
 	}
 }
 

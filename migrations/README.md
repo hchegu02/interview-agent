@@ -11,6 +11,12 @@
 |---|---|
 | `001_init.up.sql` | 创建 sessions / question_bank / idempotency_keys / events 表 + pgvector + HNSW 索引 |
 | `002_question_bank_expected_points.up.sql` | 给 question_bank 增加 expected_points，用于模拟模式要点反馈 |
+| `003_question_bank_metadata.up.sql` | 给题库增加场景、角色标签、rubric、参考答案、追问提示、locale、status 和 updated_at |
+| `004_question_bank_imports.up.sql` | 创建题库导入 staging 表：jobs / chunks / items |
+| `005_question_bank_embedding_status.up.sql` | 增加 embedding_status / embedding_model / embedded_at / embedding_error，RAG 只检索 embedded 题 |
+| `006_question_bank_import_lease.up.sql` | 给导入 job 增加 owner_id / lease_until，支持异步任务恢复 |
+| `007_question_bank_import_review_status.up.sql` | 给导入 item 增加人工 accept / reject 状态 |
+| `008_question_bank_import_field_provenance.up.sql` | 给导入 item 增加 field_provenance，追踪字段来源 |
 | `seed_question_bank.sql` | 演示种子数据（15 道题），不走版本控制，可重复执行 |
 
 ## 本地开发：用 docker-compose 跑
@@ -30,6 +36,24 @@ psql "postgres://interview:interview@localhost:5432/interview" \
 psql "postgres://interview:interview@localhost:5432/interview" \
     -v ON_ERROR_STOP=1 \
     -f migrations/002_question_bank_expected_points.up.sql
+psql "postgres://interview:interview@localhost:5432/interview" \
+    -v ON_ERROR_STOP=1 \
+    -f migrations/003_question_bank_metadata.up.sql
+psql "postgres://interview:interview@localhost:5432/interview" \
+    -v ON_ERROR_STOP=1 \
+    -f migrations/004_question_bank_imports.up.sql
+psql "postgres://interview:interview@localhost:5432/interview" \
+    -v ON_ERROR_STOP=1 \
+    -f migrations/005_question_bank_embedding_status.up.sql
+psql "postgres://interview:interview@localhost:5432/interview" \
+    -v ON_ERROR_STOP=1 \
+    -f migrations/006_question_bank_import_lease.up.sql
+psql "postgres://interview:interview@localhost:5432/interview" \
+    -v ON_ERROR_STOP=1 \
+    -f migrations/007_question_bank_import_review_status.up.sql
+psql "postgres://interview:interview@localhost:5432/interview" \
+    -v ON_ERROR_STOP=1 \
+    -f migrations/008_question_bank_import_field_provenance.up.sql
 ```
 
 ## CI / 生产

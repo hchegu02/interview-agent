@@ -241,13 +241,9 @@ func (s *Server) getInterviewSession(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "session_id is required"})
 		return
 	}
-	sess, err := s.interview.Get(c.Request.Context(), sessionID)
+	sess, err := s.interview.GetForUser(c.Request.Context(), sessionID, c.Query("user_id"))
 	if err != nil {
 		writeInterviewError(c, err)
-		return
-	}
-	if userID := c.Query("user_id"); userID != "" && sess.UserID != userID {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("session %q not found", sessionID)})
 		return
 	}
 	c.JSON(http.StatusOK, buildInterviewResponse(sess))
@@ -550,6 +546,32 @@ func (s *InterviewService) Get(ctx context.Context, sessionID string) (*domain.S
 		return nil, err
 	}
 	return sess, nil
+}
+
+func (s *InterviewService) GetForUser(ctx context.Context, sessionID, userID string) (*domain.Session, error) {
+	sess, err := s.Get(ctx, sessionID)
+	if err == nil {
+		if userID != "" && sess.UserID != userID {
+			return nil, fmt.Errorf("%w: %q", ErrSessionNotFound, sessionID)
+		}
+		return sess, nil
+	}
+	if userID == "" || s.store == nil {
+		return nil, err
+	}
+
+	// PG 点查偶发失败时，列表读路径仍可能已经能看到同一用户的最新会话。
+	// 读详情不能因为一次瞬时点查错误让已完成报告不可见。
+	sessions, listErr := s.store.ListByUser(ctx, userID, maxSessionListLimit)
+	if listErr != nil {
+		return nil, err
+	}
+	for _, candidate := range sessions {
+		if candidate != nil && candidate.ID == sessionID {
+			return candidate, nil
+		}
+	}
+	return nil, err
 }
 
 func (s *InterviewService) getSessionForMutation(ctx context.Context, sessionID string) (*domain.Session, error) {

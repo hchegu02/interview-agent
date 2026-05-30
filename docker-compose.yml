@@ -34,8 +34,10 @@ services:
     build: .
     environment:
       INTERVIEW_POSTGRES_DSN: postgres://interview:interview@postgres:5432/interview?sslmode=disable
+      INTERVIEW_REDIS_URL: redis://redis:6379/0
       INTERVIEW_REDIS_ADDR: redis:6379
       INTERVIEW_LLM_MODE: mock
+      INTERVIEW_EMBEDDING_MODE: mock
       INTERVIEW_RATELIMIT_BACKEND: redis_lua
     depends_on:
       postgres:
