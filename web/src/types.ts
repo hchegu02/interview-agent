@@ -217,6 +217,25 @@ export type QuestionBankImportJob = {
   updated_at: string;
 };
 
+export type QuestionBankImportFieldProvenanceSource =
+  | "uploaded"
+  | "merged"
+  | "llm"
+  | "default"
+  | "generated"
+  | (string & {});
+
+export type QuestionBankImportFieldProvenance = Partial<Record<
+  | "skill_category"
+  | "difficulty"
+  | "tags"
+  | "expected_points"
+  | "rubric"
+  | "sample_answer"
+  | "follow_up_hints",
+  QuestionBankImportFieldProvenanceSource
+>>;
+
 export type QuestionBankImportItem = {
   id: string;
   question_id: string;
@@ -224,5 +243,6 @@ export type QuestionBankImportItem = {
   review_status: "accepted" | "rejected";
   item: QuestionBankItem;
   original_item?: QuestionBankItem;
+  field_provenance?: QuestionBankImportFieldProvenance;
   errors?: string[];
 };

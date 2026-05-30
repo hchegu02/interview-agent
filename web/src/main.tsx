@@ -712,8 +712,9 @@ function ImportDiff({ item }: { item: QuestionBankImportItem }) {
 
 function importDiffRows(importItem: QuestionBankImportItem) {
   const original = importItem.original_item;
-  if (!original) return [];
-  const fields: Array<[keyof QuestionBankItem, string]> = [
+  const provenance = importItem.field_provenance;
+  if (!original && !provenance) return [];
+  const fields = [
     ["skill_category", "技能"],
     ["difficulty", "难度"],
     ["tags", "标签"],
@@ -721,18 +722,19 @@ function importDiffRows(importItem: QuestionBankImportItem) {
     ["rubric", "Rubric"],
     ["sample_answer", "参考答案"],
     ["follow_up_hints", "追问"],
-  ];
+  ] as const;
   return fields.map(([key, label]) => {
-    const before = formatImportField(original[key]);
+    const before = original ? formatImportField(original[key]) : "";
     const after = formatImportField(importItem.item[key]);
+    const provenanceSource = provenance?.[key];
     return {
       key,
       label,
       before,
       after,
-      source: before === after ? "上传" : before ? "合并" : "LLM",
+      source: provenanceSource ? importFieldProvenanceLabel(provenanceSource) : original ? inferImportDiffSource(before, after) : "",
     };
-  }).filter((row) => row.before || row.after);
+  }).filter((row) => (row.before || row.after) && (original || row.source));
 }
 
 function PageHeader({ eyebrow, title, copy }: { eyebrow: string; title: string; copy: string }) {
@@ -875,6 +877,21 @@ function modeLabel(mode: Mode) {
 
 function importSourceLabel(source: string) {
   return source === "document" ? "文档生成" : "本地题库";
+}
+
+function importFieldProvenanceLabel(source: string) {
+  const labels: Record<string, string> = {
+    uploaded: "上传",
+    merged: "合并",
+    llm: "LLM",
+    default: "默认",
+    generated: "生成",
+  };
+  return labels[source] || source;
+}
+
+function inferImportDiffSource(before: string, after: string) {
+  return before === after ? "上传" : before ? "合并" : "LLM";
 }
 
 function formatImportField(value: unknown): string {

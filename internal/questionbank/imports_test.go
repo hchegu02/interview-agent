@@ -96,6 +96,12 @@ func TestImportService_ImportLocalJSONStagesItemsBeforeCommit(t *testing.T) {
 	if items[0].ReviewStatus != ImportReviewStatusAccepted {
 		t.Fatalf("review_status = %q, want accepted by default", items[0].ReviewStatus)
 	}
+	assertFieldProvenance(t, items[0], map[string]string{
+		"skill_category":  "uploaded",
+		"difficulty":      "uploaded",
+		"tags":            "uploaded",
+		"expected_points": "uploaded",
+	})
 }
 
 func TestImportService_CommitSkipsRejectedItems(t *testing.T) {
@@ -191,6 +197,15 @@ func TestImportService_ImportLocalQuestionOnlyUsesLLMEnrichment(t *testing.T) {
 	if len(item.Tags) == 0 || len(item.ExpectedPoints) == 0 || len(item.Rubric) == 0 || len(item.FollowUpHints) == 0 || item.SampleAnswer == "" {
 		t.Fatalf("item was not enriched enough: %+v", item)
 	}
+	assertFieldProvenance(t, items[0], map[string]string{
+		"skill_category":  "llm",
+		"difficulty":      "llm",
+		"tags":            "llm",
+		"expected_points": "llm",
+		"rubric":          "llm",
+		"sample_answer":   "llm",
+		"follow_up_hints": "llm",
+	})
 }
 
 func TestImportService_ImportLocalQuestionOnlyWithoutLLMFallsBackToDefaults(t *testing.T) {
@@ -225,6 +240,67 @@ func TestImportService_ImportLocalQuestionOnlyWithoutLLMFallsBackToDefaults(t *t
 	}
 	if len(item.ExpectedPoints) != 0 || len(item.Rubric) != 0 || len(item.FollowUpHints) != 0 {
 		t.Fatalf("fallback should not invent rich metadata without LLM: %+v", item)
+	}
+	assertFieldProvenance(t, items[0], map[string]string{
+		"skill_category": "default",
+		"difficulty":     "default",
+	})
+}
+
+func TestImportService_StageGeneratedItemFieldProvenance(t *testing.T) {
+	ctx := context.Background()
+	imports := NewMemoryImportStore()
+	service := NewImportService(ImportServiceDeps{
+		Imports: imports,
+		Writer:  NewMemoryStore(nil),
+	})
+	job, err := imports.CreateJob(ctx, newImportJob(ImportSourceDocument, "source.md"))
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	job, err = service.stageItems(ctx, job, "chunk-001", []Item{{
+		ID:             "generated-001",
+		Content:        "如何治理 Redis 热 key？",
+		ExpectedPoints: []string{"发现热 key", "缓存隔离"},
+	}})
+	if err != nil {
+		t.Fatalf("stageItems: %v", err)
+	}
+	if job.ValidItems != 1 {
+		t.Fatalf("ValidItems = %d, want 1", job.ValidItems)
+	}
+	items, err := imports.ListItems(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %+v, want one item", items)
+	}
+	if items[0].OriginalItem != nil {
+		t.Fatalf("generated import item should not invent original item: %+v", items[0].OriginalItem)
+	}
+	assertFieldProvenance(t, items[0], map[string]string{
+		"skill_category":  "default",
+		"difficulty":      "default",
+		"expected_points": "generated",
+	})
+}
+
+func TestPGImportStoreJSONMetadataEncodingUsesObjects(t *testing.T) {
+	if got := string(marshalOriginalItemJSON(nil)); got != "{}" {
+		t.Fatalf("nil original raw json = %s, want {}", got)
+	}
+	if got := string(marshalStringMapJSON(nil)); got != "{}" {
+		t.Fatalf("nil field provenance json = %s, want {}", got)
+	}
+}
+
+func assertFieldProvenance(t *testing.T, item ImportItem, want map[string]string) {
+	t.Helper()
+	for field, source := range want {
+		if got := item.FieldProvenance[field]; got != source {
+			t.Fatalf("FieldProvenance[%q] = %q, want %q; full provenance = %+v", field, got, source, item.FieldProvenance)
+		}
 	}
 }
 

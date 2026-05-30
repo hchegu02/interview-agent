@@ -176,22 +176,21 @@ func (s *PGImportStore) AddItems(ctx context.Context, items []ImportItem) error 
 	batch := &pgx.Batch{}
 	for _, item := range items {
 		itemJSON, _ := json.Marshal(item.Item)
-		rawJSON := itemJSON
-		if item.OriginalItem != nil {
-			rawJSON, _ = json.Marshal(item.OriginalItem)
-		}
+		fieldProvenanceJSON := marshalStringMapJSON(item.FieldProvenance)
+		rawJSON := marshalOriginalItemJSON(item.OriginalItem)
 		batch.Queue(`
 INSERT INTO question_bank_import_items (
-    id, job_id, chunk_id, question_id, status, review_status, item_json, errors, raw_json, created_at, updated_at
-) VALUES ($1,$2,NULLIF($3,''),$4,$5,$6,$7::jsonb,$8,$9::jsonb,$10,$11)
+    id, job_id, chunk_id, question_id, status, review_status, item_json, field_provenance, errors, raw_json, created_at, updated_at
+) VALUES ($1,$2,NULLIF($3,''),$4,$5,$6,$7::jsonb,$8::jsonb,$9,$10::jsonb,$11,$12)
 ON CONFLICT (id) DO UPDATE SET
     status=EXCLUDED.status,
     review_status=EXCLUDED.review_status,
     item_json=EXCLUDED.item_json,
+    field_provenance=EXCLUDED.field_provenance,
     errors=EXCLUDED.errors,
     raw_json=EXCLUDED.raw_json,
     updated_at=now()
-`, item.ID, item.JobID, item.ChunkID, item.QuestionID, item.Status, normalizedImportReviewStatus(item.ReviewStatus), string(itemJSON), item.Errors, string(rawJSON), item.CreatedAt, item.UpdatedAt)
+`, item.ID, item.JobID, item.ChunkID, item.QuestionID, item.Status, normalizedImportReviewStatus(item.ReviewStatus), string(itemJSON), string(fieldProvenanceJSON), item.Errors, string(rawJSON), item.CreatedAt, item.UpdatedAt)
 	}
 	br := s.Pool.SendBatch(ctx, batch)
 	defer br.Close()
@@ -205,7 +204,7 @@ ON CONFLICT (id) DO UPDATE SET
 
 func (s *PGImportStore) ListItems(ctx context.Context, jobID string) ([]ImportItem, error) {
 	rows, err := s.Pool.Query(ctx, `
-SELECT id, job_id, COALESCE(chunk_id, ''), question_id, status, COALESCE(review_status, 'accepted'), item_json, raw_json, errors, created_at, updated_at
+SELECT id, job_id, COALESCE(chunk_id, ''), question_id, status, COALESCE(review_status, 'accepted'), item_json, raw_json, field_provenance, errors, created_at, updated_at
 FROM question_bank_import_items
 WHERE job_id=$1
 ORDER BY created_at, id
@@ -219,10 +218,12 @@ ORDER BY created_at, id
 		var item ImportItem
 		var itemJSON []byte
 		var rawJSON []byte
-		if err := rows.Scan(&item.ID, &item.JobID, &item.ChunkID, &item.QuestionID, &item.Status, &item.ReviewStatus, &itemJSON, &rawJSON, &item.Errors, &item.CreatedAt, &item.UpdatedAt); err != nil {
+		var fieldProvenanceJSON []byte
+		if err := rows.Scan(&item.ID, &item.JobID, &item.ChunkID, &item.QuestionID, &item.Status, &item.ReviewStatus, &itemJSON, &rawJSON, &fieldProvenanceJSON, &item.Errors, &item.CreatedAt, &item.UpdatedAt); err != nil {
 			return nil, err
 		}
 		_ = json.Unmarshal(itemJSON, &item.Item)
+		_ = json.Unmarshal(fieldProvenanceJSON, &item.FieldProvenance)
 		if len(rawJSON) > 0 && string(rawJSON) != "{}" {
 			var original Item
 			if err := json.Unmarshal(rawJSON, &original); err == nil {
@@ -241,11 +242,12 @@ func (s *PGImportStore) UpdateItems(ctx context.Context, items []ImportItem) err
 	batch := &pgx.Batch{}
 	for _, item := range items {
 		itemJSON, _ := json.Marshal(item.Item)
+		fieldProvenanceJSON := marshalStringMapJSON(item.FieldProvenance)
 		batch.Queue(`
 UPDATE question_bank_import_items
-SET status=$2, review_status=$3, item_json=$4::jsonb, errors=$5, updated_at=now()
+SET status=$2, review_status=$3, item_json=$4::jsonb, field_provenance=$5::jsonb, errors=$6, updated_at=now()
 WHERE id=$1
-`, item.ID, item.Status, normalizedImportReviewStatus(item.ReviewStatus), string(itemJSON), item.Errors)
+`, item.ID, item.Status, normalizedImportReviewStatus(item.ReviewStatus), string(itemJSON), string(fieldProvenanceJSON), item.Errors)
 	}
 	br := s.Pool.SendBatch(ctx, batch)
 	defer br.Close()
@@ -255,6 +257,25 @@ WHERE id=$1
 		}
 	}
 	return nil
+}
+
+func marshalOriginalItemJSON(item *Item) []byte {
+	if item == nil {
+		return []byte("{}")
+	}
+	raw, _ := json.Marshal(item)
+	return raw
+}
+
+func marshalStringMapJSON(in map[string]string) []byte {
+	if in == nil {
+		return []byte("{}")
+	}
+	raw, _ := json.Marshal(in)
+	if string(raw) == "null" {
+		return []byte("{}")
+	}
+	return raw
 }
 
 func (s *PGImportStore) UpdateItemReviews(ctx context.Context, jobID string, itemIDs []string, reviewStatus string) error {

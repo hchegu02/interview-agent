@@ -23,6 +23,7 @@ import (
 	"interview-agent/internal/parser"
 )
 
+// 定义了题库导入相关的类型和服务，包括导入作业、切片、题目，以及导入服务的实现。支持从本地文件或文档生成题目，并提供异步处理和恢复机制。
 const (
 	ImportSourceQuestionBank = "question_bank"
 	ImportSourceDocument     = "document"
@@ -68,6 +69,7 @@ type ImportJob struct {
 	UpdatedAt     time.Time         `json:"updated_at"`
 }
 
+// 题库导入切片，表示从文档中切分出的一段文本，用于生成题目。每个切片关联一个导入作业，可以包含一些元数据。
 type ImportChunk struct {
 	ID        string            `json:"id"`
 	JobID     string            `json:"job_id"`
@@ -78,17 +80,18 @@ type ImportChunk struct {
 }
 
 type ImportItem struct {
-	ID           string    `json:"id"`
-	JobID        string    `json:"job_id"`
-	ChunkID      string    `json:"chunk_id,omitempty"`
-	QuestionID   string    `json:"question_id"`
-	Status       string    `json:"status"`
-	ReviewStatus string    `json:"review_status"`
-	Item         Item      `json:"item"`
-	OriginalItem *Item     `json:"original_item,omitempty"`
-	Errors       []string  `json:"errors,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+	ID              string            `json:"id"`
+	JobID           string            `json:"job_id"`
+	ChunkID         string            `json:"chunk_id,omitempty"`
+	QuestionID      string            `json:"question_id"`
+	Status          string            `json:"status"`
+	ReviewStatus    string            `json:"review_status"`
+	Item            Item              `json:"item"`
+	OriginalItem    *Item             `json:"original_item,omitempty"`
+	FieldProvenance map[string]string `json:"field_provenance,omitempty"`
+	Errors          []string          `json:"errors,omitempty"`
+	CreatedAt       time.Time         `json:"created_at"`
+	UpdatedAt       time.Time         `json:"updated_at"`
 }
 
 type ImportFile struct {
@@ -111,6 +114,7 @@ type ImportSpool interface {
 	Delete(ctx context.Context, ref ImportFileRef) error
 }
 
+// 定义了题库导入存储接口，提供了创建、更新、获取和列出导入作业的方法，以及添加和列出切片和题目、更新题目状态、重置作业数据和尝试获取作业锁的方法。实现该接口可以使用内存、数据库或其他持久化存储。
 type ImportStore interface {
 	CreateJob(ctx context.Context, job ImportJob) (ImportJob, error)
 	UpdateJob(ctx context.Context, job ImportJob) (ImportJob, error)
@@ -199,11 +203,11 @@ func (s *ImportService) processLocalQuestionBank(ctx context.Context, job Import
 		return s.failJob(ctx, job, err)
 	}
 	originals := cloneImportItems(items)
-	items, err = s.enrichLocalItems(ctx, items)
+	items, provenances, err := s.enrichLocalItems(ctx, items)
 	if err != nil {
 		return s.failJob(ctx, job, err)
 	}
-	return s.stageItemsWithOriginals(ctx, job, "", items, originals)
+	return s.stageItemsWithOriginalsAndProvenance(ctx, job, "", items, originals, provenances)
 }
 
 func (s *ImportService) ImportDocument(ctx context.Context, file ImportFile) (ImportJob, error) {
@@ -639,6 +643,10 @@ func (s *ImportService) stageItems(ctx context.Context, job ImportJob, chunkID s
 }
 
 func (s *ImportService) stageItemsWithOriginals(ctx context.Context, job ImportJob, chunkID string, items []Item, originals []Item) (ImportJob, error) {
+	return s.stageItemsWithOriginalsAndProvenance(ctx, job, chunkID, items, originals, nil)
+}
+
+func (s *ImportService) stageItemsWithOriginalsAndProvenance(ctx context.Context, job ImportJob, chunkID string, items []Item, originals []Item, provenances []map[string]string) (ImportJob, error) {
 	job.Status = ImportStatusValidating
 	job, _ = s.imports.UpdateJob(ctx, job)
 	staged := make([]ImportItem, 0, len(items))
@@ -648,24 +656,32 @@ func (s *ImportService) stageItemsWithOriginals(ctx context.Context, job ImportJ
 			originalItem := cloneItem(originals[i])
 			original = &originalItem
 		}
+		parsedItem := item
 		item = normalizeImportedItem(item)
+		fieldProvenance := importFieldProvenance(parsedItem, item, original)
+		if i < len(provenances) {
+			for field, source := range provenances[i] {
+				fieldProvenance[field] = source
+			}
+		}
 		errs := validateImportedItem(item)
 		status := ImportItemStatusValid
 		if len(errs) > 0 {
 			status = ImportItemStatusInvalid
 		}
 		staged = append(staged, ImportItem{
-			ID:           job.ID + ":" + item.ID,
-			JobID:        job.ID,
-			ChunkID:      chunkID,
-			QuestionID:   item.ID,
-			Status:       status,
-			ReviewStatus: ImportReviewStatusAccepted,
-			Item:         item,
-			OriginalItem: original,
-			Errors:       errs,
-			CreatedAt:    time.Now().UTC(),
-			UpdatedAt:    time.Now().UTC(),
+			ID:              job.ID + ":" + item.ID,
+			JobID:           job.ID,
+			ChunkID:         chunkID,
+			QuestionID:      item.ID,
+			Status:          status,
+			ReviewStatus:    ImportReviewStatusAccepted,
+			Item:            item,
+			OriginalItem:    original,
+			FieldProvenance: fieldProvenance,
+			Errors:          errs,
+			CreatedAt:       time.Now().UTC(),
+			UpdatedAt:       time.Now().UTC(),
 		})
 		if status == ImportItemStatusValid {
 			job.ValidItems++
@@ -702,9 +718,10 @@ func (s *ImportService) generateItems(ctx context.Context, chunk string) ([]Item
 	return parseQuestionBankItems("generated.json", []byte(resp.Content))
 }
 
-func (s *ImportService) enrichLocalItems(ctx context.Context, items []Item) ([]Item, error) {
+func (s *ImportService) enrichLocalItems(ctx context.Context, items []Item) ([]Item, []map[string]string, error) {
+	provenances := make([]map[string]string, len(items))
 	if s == nil || s.model == nil || len(items) == 0 {
-		return items, nil
+		return items, provenances, nil
 	}
 
 	need := make([]Item, 0, len(items))
@@ -714,7 +731,7 @@ func (s *ImportService) enrichLocalItems(ctx context.Context, items []Item) ([]I
 		}
 	}
 	if len(need) == 0 {
-		return items, nil
+		return items, provenances, nil
 	}
 
 	enriched := make([]Item, 0, len(need))
@@ -725,7 +742,7 @@ func (s *ImportService) enrichLocalItems(ctx context.Context, items []Item) ([]I
 		}
 		batch, err := s.enrichLocalBatch(ctx, need[start:end])
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		enriched = append(enriched, batch...)
 	}
@@ -751,12 +768,14 @@ func (s *ImportService) enrichLocalItems(ctx context.Context, items []Item) ([]I
 			enrichedItem, ok = byContent[strings.TrimSpace(item.Content)]
 		}
 		if !ok {
-			return nil, fmt.Errorf("llm enrichment missing item %q", itemIdentity(item))
+			return nil, nil, fmt.Errorf("llm enrichment missing item %q", itemIdentity(item))
 		}
-		item = mergeEnrichedItem(item, enrichedItem)
+		var fieldProvenance map[string]string
+		item, fieldProvenance = mergeEnrichedItemWithProvenance(item, enrichedItem)
+		provenances[len(out)] = fieldProvenance
 		out = append(out, item)
 	}
-	return out, nil
+	return out, provenances, nil
 }
 
 func (s *ImportService) enrichLocalBatch(ctx context.Context, items []Item) ([]Item, error) {
@@ -935,28 +954,94 @@ func needsEnrichment(item Item) bool {
 }
 
 func mergeEnrichedItem(base, enriched Item) Item {
+	merged, _ := mergeEnrichedItemWithProvenance(base, enriched)
+	return merged
+}
+
+func mergeEnrichedItemWithProvenance(base, enriched Item) (Item, map[string]string) {
+	provenance := map[string]string{}
 	if strings.TrimSpace(base.SkillCategory) == "" || strings.TrimSpace(base.SkillCategory) == "general" {
+		if strings.TrimSpace(enriched.SkillCategory) != "" {
+			if strings.TrimSpace(base.SkillCategory) == "general" {
+				provenance["skill_category"] = "merged"
+			} else {
+				provenance["skill_category"] = "llm"
+			}
+		}
 		base.SkillCategory = enriched.SkillCategory
 	}
 	if base.Difficulty == 0 {
+		if enriched.Difficulty != 0 {
+			provenance["difficulty"] = "llm"
+		}
 		base.Difficulty = enriched.Difficulty
 	}
 	if len(base.Tags) == 0 {
+		if len(enriched.Tags) > 0 {
+			provenance["tags"] = "llm"
+		}
 		base.Tags = enriched.Tags
 	}
 	if len(base.ExpectedPoints) == 0 {
+		if len(enriched.ExpectedPoints) > 0 {
+			provenance["expected_points"] = "llm"
+		}
 		base.ExpectedPoints = enriched.ExpectedPoints
 	}
 	if len(base.Rubric) == 0 {
+		if len(enriched.Rubric) > 0 {
+			provenance["rubric"] = "llm"
+		}
 		base.Rubric = enriched.Rubric
 	}
 	if strings.TrimSpace(base.SampleAnswer) == "" {
+		if strings.TrimSpace(enriched.SampleAnswer) != "" {
+			provenance["sample_answer"] = "llm"
+		}
 		base.SampleAnswer = enriched.SampleAnswer
 	}
 	if len(base.FollowUpHints) == 0 {
+		if len(enriched.FollowUpHints) > 0 {
+			provenance["follow_up_hints"] = "llm"
+		}
 		base.FollowUpHints = enriched.FollowUpHints
 	}
-	return base
+	return base, provenance
+}
+
+func importFieldProvenance(parsed Item, normalized Item, original *Item) map[string]string {
+	provenance := map[string]string{}
+	mark := func(field string, uploaded bool, defaulted bool) {
+		switch {
+		case uploaded:
+			provenance[field] = "uploaded"
+		case defaulted:
+			provenance[field] = "default"
+		}
+	}
+	if original == nil {
+		mark("skill_category", strings.TrimSpace(parsed.SkillCategory) != "", strings.TrimSpace(normalized.SkillCategory) == "general")
+		mark("difficulty", parsed.Difficulty != 0, normalized.Difficulty == 3)
+		mark("tags", len(parsed.Tags) > 0, false)
+		mark("expected_points", len(parsed.ExpectedPoints) > 0, false)
+		mark("rubric", len(parsed.Rubric) > 0, false)
+		mark("sample_answer", strings.TrimSpace(parsed.SampleAnswer) != "", false)
+		mark("follow_up_hints", len(parsed.FollowUpHints) > 0, false)
+		for field, source := range provenance {
+			if source == "uploaded" {
+				provenance[field] = "generated"
+			}
+		}
+		return provenance
+	}
+	mark("skill_category", strings.TrimSpace(original.SkillCategory) != "", strings.TrimSpace(normalized.SkillCategory) == "general")
+	mark("difficulty", original.Difficulty != 0, normalized.Difficulty == 3)
+	mark("tags", len(original.Tags) > 0, false)
+	mark("expected_points", len(original.ExpectedPoints) > 0, false)
+	mark("rubric", len(original.Rubric) > 0, false)
+	mark("sample_answer", strings.TrimSpace(original.SampleAnswer) != "", false)
+	mark("follow_up_hints", len(original.FollowUpHints) > 0, false)
+	return provenance
 }
 
 func validateEnrichmentCoverage(inputs, enriched []Item) error {
@@ -1360,6 +1445,7 @@ func (s *MemoryImportStore) UpdateItemReviews(_ context.Context, jobID string, i
 	return nil
 }
 
+// 重置作业数据，删除所有与作业相关的切片和题目，但保留作业本身。这在重新处理同一文件时很有用，可以避免重复创建作业并保留作业的元数据和状态。
 func (s *MemoryImportStore) ResetJobData(_ context.Context, jobID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1368,6 +1454,7 @@ func (s *MemoryImportStore) ResetJobData(_ context.Context, jobID string) error 
 	return nil
 }
 
+// 检查作业是否存在，是否被其他人锁定，如果未锁定或已被当前用户锁定，则锁定作业并返回 true；如果被其他人锁定，则返回 false。
 func (s *MemoryImportStore) TryAcquireJob(_ context.Context, jobID, ownerID string, leaseFor time.Duration) (ImportJob, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1405,6 +1492,7 @@ func cloneImportItem(item ImportItem) ImportItem {
 		original := cloneItem(*item.OriginalItem)
 		item.OriginalItem = &original
 	}
+	item.FieldProvenance = cloneStringMap(item.FieldProvenance)
 	item.Errors = append([]string(nil), item.Errors...)
 	return item
 }

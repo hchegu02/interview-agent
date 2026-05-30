@@ -209,6 +209,19 @@ func TestQuestionBankImportReviewStatusMigration(t *testing.T) {
 	}
 }
 
+func TestQuestionBankImportFieldProvenanceMigration(t *testing.T) {
+	up := read(t, "008_question_bank_import_field_provenance.up.sql")
+	down := read(t, "008_question_bank_import_field_provenance.down.sql")
+	for _, token := range []string{"question_bank_import_items", "field_provenance", "jsonb"} {
+		if !strings.Contains(up, token) {
+			t.Fatalf("import field provenance migration missing %q", token)
+		}
+	}
+	if !strings.Contains(down, "DROP COLUMN IF EXISTS field_provenance") {
+		t.Fatal("import field provenance down migration should drop field_provenance column")
+	}
+}
+
 func TestQuestionBankImportLeaseMigration(t *testing.T) {
 	up := read(t, "006_question_bank_import_lease.up.sql")
 	down := read(t, "006_question_bank_import_lease.down.sql")
