@@ -59,6 +59,9 @@ logs/
 tmp/
 temp/
 
+# Local documentation handoff and notes
+/docs/
+
 # Demo CLI artifacts
 tmp/demos/
 
