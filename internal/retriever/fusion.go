@@ -23,9 +23,10 @@ type Fusion interface {
 // 三路特征都归一化到 [0,1]，加权求和。
 //
 // 默认权重（针对面试题库场景）：
-//   vector_score      0.60   语义相似度
-//   topic_score       0.30   tag overlap ratio
-//   difficulty_score  0.10   难度匹配度
+//
+//	vector_score      0.60   语义相似度
+//	topic_score       0.30   tag overlap ratio
+//	difficulty_score  0.10   难度匹配度
 //
 // 为什么 vector 权重最高但不绝对优势：
 //   - 实测下来 vector 召回最稳，主导排序合理
@@ -72,9 +73,10 @@ func (f *LinearFusion) Fuse(candidates []Candidate) []Result {
 		results = append(results, Result{
 			ID:              c.ID,
 			Content:         c.Content,
-			Tags:            c.Tags,
+			Tags:            append([]string(nil), c.Tags...),
 			Difficulty:      c.Difficulty,
 			Category:        c.Category,
+			ExpectedPoints:  append([]string(nil), c.ExpectedPoints...),
 			Score:           score,
 			VectorScore:     vs,
 			TagScore:        ts,

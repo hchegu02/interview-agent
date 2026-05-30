@@ -44,8 +44,9 @@ function Read-SseEvent {
 
     while ([DateTime]::UtcNow -lt $deadline) {
         $task = $Reader.ReadLineAsync()
-        if (-not $task.Wait(500)) {
-            continue
+        $remainingMs = [int][Math]::Max(1, ($deadline - [DateTime]::UtcNow).TotalMilliseconds)
+        if (-not $task.Wait($remainingMs)) {
+            throw "timed out waiting for SSE event"
         }
         $line = $task.Result
         if ($null -eq $line) {
@@ -165,7 +166,7 @@ try {
         $seenEvent = $false
         for ($i = 0; $i -lt 20; $i++) {
             $event = Read-SseEvent -Reader $reader -TimeoutSeconds 10
-            if ($event.event -in @("session.updated", "session.completed", "graph.node.start", "graph.node.end", "graph.node.error")) {
+            if ($event.event -in @("interview.progress", "interview.completed", "interview.failed", "session.updated", "session.completed", "graph.node.start", "graph.node.end", "graph.node.error")) {
                 $seenEvent = $true
                 break
             }

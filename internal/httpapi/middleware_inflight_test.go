@@ -84,6 +84,59 @@ func TestMaxInFlightMiddleware_RejectsOverLimitWith503(t *testing.T) {
 	}
 }
 
+func TestMaxInFlightMiddleware_RecordsMetrics(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := newMetricsRecorder()
+	r := gin.New()
+	r.Use(MaxInFlightMiddlewareWithMetrics(1, recorder, "interview_mutating"))
+
+	hold := make(chan struct{})
+	entered := make(chan struct{}, 1)
+	r.GET("/hold", func(c *gin.Context) {
+		entered <- struct{}{}
+		<-hold
+		c.JSON(http.StatusOK, gin.H{"ok": true})
+	})
+
+	firstDone := make(chan int, 1)
+	go func() {
+		req := httptest.NewRequest(http.MethodGet, "/hold", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		firstDone <- w.Code
+	}()
+	select {
+	case <-entered:
+	case <-time.After(time.Second):
+		t.Fatal("first request did not enter handler")
+	}
+
+	got := recorder.renderPrometheus()
+	if !strings.Contains(got, `interview_inflight_requests{scope="interview_mutating"} 1`) {
+		t.Fatalf("metrics missing active request\n--- metrics ---\n%s", got)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/hold", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("code = %d, want 503", w.Code)
+	}
+	got = recorder.renderPrometheus()
+	if !strings.Contains(got, `interview_backpressure_rejections_total{scope="interview_mutating"} 1`) {
+		t.Fatalf("metrics missing rejection\n--- metrics ---\n%s", got)
+	}
+
+	close(hold)
+	if code := <-firstDone; code != http.StatusOK {
+		t.Fatalf("first request code = %d, want 200", code)
+	}
+	got = recorder.renderPrometheus()
+	if !strings.Contains(got, `interview_inflight_requests{scope="interview_mutating"} 0`) {
+		t.Fatalf("metrics did not release active request\n--- metrics ---\n%s", got)
+	}
+}
+
 func TestMaxInFlightMiddleware_LimitZeroIsNoOp(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()

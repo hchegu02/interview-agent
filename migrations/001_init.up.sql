@@ -79,6 +79,7 @@ CREATE TABLE IF NOT EXISTS question_bank (
     tags            text[]      NOT NULL DEFAULT '{}',
     skill_category  text        NOT NULL DEFAULT '',     -- 'go' | 'redis' | 'system-design' ...
     difficulty      smallint    NOT NULL DEFAULT 3 CHECK (difficulty BETWEEN 1 AND 5),
+    expected_points text[]      NOT NULL DEFAULT '{}',
     source          text        NOT NULL DEFAULT 'manual',
     embedding       vector(1024),
     created_at      timestamptz NOT NULL DEFAULT now()

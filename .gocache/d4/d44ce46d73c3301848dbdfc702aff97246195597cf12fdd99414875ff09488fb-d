@@ -1,6 +1,0 @@
-./dispatcher.go
-./docx.go
-./mock.go
-./parser.go
-./pdf.go
-./parser_test.go

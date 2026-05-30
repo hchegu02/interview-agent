@@ -15,6 +15,7 @@ const (
 	nodeParseJD         = "parse_jd"
 	nodeParseResume     = "parse_resume"
 	nodeGapAnalyze      = "gap_analyze"
+	nodeAnalyzeProfile  = "analyze_profile"
 	nodeRetrieveRAG     = "retrieve_rag"
 	nodeCritic          = "critic"
 	nodeProbeEval       = "probe_eval"
@@ -45,6 +46,7 @@ func BuildInterviewGraph(deps Deps) (*graph.Runnable, error) {
 		AddNode(nodeParseJD, nodes.NewParseJDNode(deps.Model)).
 		AddNode(nodeParseResume, nodes.NewParseResumeNode(deps.Model)).
 		AddNode(nodeGapAnalyze, nodes.NewGapAnalyzeNode(deps.Model)).
+		AddNode(nodeAnalyzeProfile, nodes.NewAnalyzeProfileNode()).
 		AddNode(nodeRetrieveRAG, nodes.NewRetrieveRAGNode(deps.Embedder, deps.Retriever, nodes.RetrieveRAGOptions{})).
 		AddNode(nodes.NodePickNext, nodes.NewPickNextNode(deps.Model, nodes.PickNextOptions{})).
 		AddNode(nodes.NodeEvaluate, nodes.NewEvaluateNode(deps.Model, nodes.EvaluateOptions{})).
@@ -58,7 +60,8 @@ func BuildInterviewGraph(deps Deps) (*graph.Runnable, error) {
 		Entry(nodeParseJD).
 		AddEdge(nodeParseJD, nodeParseResume).
 		AddEdge(nodeParseResume, nodeGapAnalyze).
-		AddEdge(nodeGapAnalyze, nodeRetrieveRAG).
+		AddEdge(nodeGapAnalyze, nodeAnalyzeProfile).
+		AddEdge(nodeAnalyzeProfile, nodeRetrieveRAG).
 		AddEdge(nodeRetrieveRAG, nodes.NodePickNext).
 		AddBranch(nodes.NodePickNext, nodes.RouteAfterPickNext).
 		AddEdge(nodes.NodeEvaluate, nodeCritic).

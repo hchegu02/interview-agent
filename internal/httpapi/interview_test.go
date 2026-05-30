@@ -34,6 +34,16 @@ func (fakeInterviewRunner) Invoke(ctx context.Context, sess *domain.Session) err
 }
 
 func (fakeInterviewRunner) Resume(ctx context.Context, sess *domain.Session) error {
+	if round := sess.CurrentRound(); round != nil {
+		round.Evaluation = &domain.Evaluation{
+			QuestionID: round.Question.ID,
+			Score:      80,
+			Strengths:  []string{"覆盖了 Go 基础"},
+			Weaknesses: []string{"调度细节不足"},
+			Suggestion: "补充 GMP 协作过程",
+		}
+		round.CompletedAt = time.Now()
+	}
 	sess.Status = domain.StatusCompleted
 	sess.Report = &domain.Report{
 		SessionID:      sess.ID,
@@ -85,6 +95,38 @@ func (c *fakeSessionCoordinator) ReleaseLease(ctx context.Context, sessionID, ow
 	return true, nil
 }
 
+type flakyReadSessionStore struct {
+	getErr   error
+	sessions []*domain.Session
+}
+
+func (s *flakyReadSessionStore) Save(ctx context.Context, sess *domain.Session) error {
+	s.sessions = append(s.sessions, sess)
+	return nil
+}
+
+func (s *flakyReadSessionStore) Get(ctx context.Context, id string) (*domain.Session, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
+	for _, sess := range s.sessions {
+		if sess.ID == id {
+			return sess, nil
+		}
+	}
+	return nil, fmt.Errorf("%w: %q", ErrSessionNotFound, id)
+}
+
+func (s *flakyReadSessionStore) ListByUser(ctx context.Context, userID string, limit int) ([]*domain.Session, error) {
+	var out []*domain.Session
+	for _, sess := range s.sessions {
+		if sess.UserID == userID {
+			out = append(out, sess)
+		}
+	}
+	return out, nil
+}
+
 func TestInterviewStart_ReturnsFirstQuestion(t *testing.T) {
 	svc := NewInterviewService(fakeInterviewRunner{})
 	server := NewServerWithInterview(&config.Config{}, svc)
@@ -114,11 +156,77 @@ func TestInterviewStart_ReturnsFirstQuestion(t *testing.T) {
 	if got.Question == nil || got.Question.ID != "q1" {
 		t.Fatalf("question = %+v, want q1", got.Question)
 	}
+	if got.Mode != "exam" {
+		t.Fatalf("mode = %q, want default exam", got.Mode)
+	}
+	if got.Phase != "answering" {
+		t.Fatalf("phase = %q, want answering", got.Phase)
+	}
 	if got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() {
 		t.Fatalf("timestamps should be returned: %+v", got)
 	}
 	if got.Report != nil {
 		t.Fatalf("report should be empty before answer, got %+v", got.Report)
+	}
+}
+
+func TestInterviewService_StartStoresQuestionBankFilter(t *testing.T) {
+	svc := NewInterviewService(fakeInterviewRunner{})
+
+	sess, err := svc.Start(context.Background(), startInterviewRequest{
+		SessionID:  "scope-start",
+		UserID:     "u1",
+		JDText:     "jd",
+		ResumeText: "resume",
+		QuestionBankFilter: &domain.QuestionBankFilter{
+			SkillCategories: []string{"redis", "go"},
+			Scenarios:       []string{"troubleshooting"},
+			DifficultyMin:   2,
+			DifficultyMax:   4,
+			Tags:            []string{"cache", "performance"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if sess.QuestionBankFilter == nil {
+		t.Fatal("question bank filter should be stored on session")
+	}
+	if got := sess.QuestionBankFilter.SkillCategories; len(got) != 2 || got[0] != "redis" || got[1] != "go" {
+		t.Fatalf("skill categories = %+v, want [redis go]", got)
+	}
+	if got := sess.QuestionBankFilter.Scenarios; len(got) != 1 || got[0] != "troubleshooting" {
+		t.Fatalf("scenarios = %+v, want [troubleshooting]", got)
+	}
+	if sess.QuestionBankFilter.DifficultyMin != 2 || sess.QuestionBankFilter.DifficultyMax != 4 {
+		t.Fatalf("difficulty range = %d..%d, want 2..4", sess.QuestionBankFilter.DifficultyMin, sess.QuestionBankFilter.DifficultyMax)
+	}
+	if got := sess.QuestionBankFilter.Tags; len(got) != 2 || got[0] != "cache" || got[1] != "performance" {
+		t.Fatalf("tags = %+v, want [cache performance]", got)
+	}
+}
+
+func TestInterviewResponse_DoesNotExposeInternalRuntimeNames(t *testing.T) {
+	svc := NewInterviewService(fakeInterviewRunner{})
+	server := NewServerWithInterview(&config.Config{}, svc)
+
+	body := bytes.NewBufferString(`{
+		"session_id":"safe-dto",
+		"user_id":"u1",
+		"jd_text":"需要 Go 后端",
+		"resume_text":"两年 Go 经验"
+	}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/interview/start", body)
+	req.Header.Set("Content-Type", "application/json")
+
+	server.Router().ServeHTTP(rec, req)
+
+	raw := rec.Body.String()
+	for _, forbidden := range []string{"current_node", "pick_next", "probe_ask", "graph.node"} {
+		if strings.Contains(raw, forbidden) {
+			t.Fatalf("response leaked %q: %s", forbidden, raw)
+		}
 	}
 }
 
@@ -621,8 +729,85 @@ func TestInterviewAnswer_ReturnsReport(t *testing.T) {
 	if got.Report == nil || got.Report.OverallScore != 80 {
 		t.Fatalf("report = %+v, want score 80", got.Report)
 	}
+	if len(got.Rounds) != 1 || got.Rounds[0].Feedback == nil {
+		t.Fatalf("completed exam should include round feedback: %+v", got.Rounds)
+	}
 	if got.Question != nil {
 		t.Fatalf("question should be empty after completed report, got %+v", got.Question)
+	}
+}
+
+func TestInterviewResponse_PracticeShowsFeedbackBeforeCompletion(t *testing.T) {
+	now := time.Now()
+	sess := &domain.Session{
+		ID:          "practice-feedback",
+		Mode:        "practice",
+		Status:      domain.StatusRunning,
+		CurrentNode: "pick_next",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		Rounds: []domain.AnswerRound{{
+			RoundID: "r1",
+			Question: domain.Question{
+				ID:             "q1",
+				Content:        "讲一下 channel",
+				ExpectedPoints: []string{"hchan", "sendq"},
+			},
+			Answer: "channel 有缓冲和阻塞语义",
+			Evaluation: &domain.Evaluation{
+				QuestionID: "q1",
+				Score:      75,
+				Strengths:  []string{"说到阻塞语义"},
+				Weaknesses: []string{"没讲 hchan"},
+				Suggestion: "补充底层队列结构",
+			},
+		}},
+	}
+
+	got := buildInterviewResponse(sess)
+	if len(got.Rounds) != 1 || got.Rounds[0].Feedback == nil {
+		t.Fatalf("practice should expose feedback: %+v", got.Rounds)
+	}
+	if got.Rounds[0].Feedback.ExpectedPoints[0] != "hchan" {
+		t.Fatalf("expected points missing: %+v", got.Rounds[0].Feedback)
+	}
+}
+
+func TestInterviewResponse_ExamHidesFeedbackBeforeCompletion(t *testing.T) {
+	now := time.Now()
+	sess := &domain.Session{
+		ID:          "exam-feedback",
+		Mode:        "exam",
+		Status:      domain.StatusRunning,
+		CurrentNode: "pick_next",
+		CreatedAt:   now,
+		UpdatedAt:   now,
+		Rounds: []domain.AnswerRound{{
+			RoundID: "r1",
+			Question: domain.Question{
+				ID:             "q1",
+				Content:        "讲一下 channel",
+				ExpectedPoints: []string{"hchan"},
+			},
+			Answer: "channel 有阻塞语义",
+			Evaluation: &domain.Evaluation{
+				QuestionID: "q1",
+				Score:      60,
+				Strengths:  []string{"基础语义"},
+				Weaknesses: []string{"缺底层结构"},
+			},
+		}},
+	}
+
+	got := buildInterviewResponse(sess)
+	if len(got.Rounds) != 1 {
+		t.Fatalf("rounds missing: %+v", got.Rounds)
+	}
+	if got.Rounds[0].Feedback != nil {
+		t.Fatalf("exam should hide feedback before completion: %+v", got.Rounds[0].Feedback)
+	}
+	if len(got.Rounds[0].Question.ExpectedPoints) != 0 {
+		t.Fatalf("exam should hide expected points before completion: %+v", got.Rounds[0].Question.ExpectedPoints)
 	}
 }
 
@@ -782,6 +967,42 @@ func TestInterviewGetSession_ReturnsSession(t *testing.T) {
 	}
 	if got.Question == nil || got.Question.ID != "q1" {
 		t.Fatalf("question = %+v, want q1", got.Question)
+	}
+}
+
+func TestInterviewGetSession_FallsBackToUserListWhenPointReadFails(t *testing.T) {
+	store := &flakyReadSessionStore{
+		getErr: errors.New("select session: transient"),
+		sessions: []*domain.Session{
+			{
+				ID:        "s-detail-fallback",
+				UserID:    "u1",
+				Status:    domain.StatusCompleted,
+				CreatedAt: time.Now(),
+				UpdatedAt: time.Now(),
+				Report: &domain.Report{
+					SessionID:    "s-detail-fallback",
+					OverallScore: 80,
+				},
+			},
+		},
+	}
+	svc := NewInterviewServiceWithStore(fakeInterviewRunner{}, store)
+	server := NewServerWithInterview(&config.Config{}, svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/interview/sessions/s-detail-fallback?user_id=u1", nil)
+	server.Router().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+	var got interviewResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.SessionID != "s-detail-fallback" || got.Report == nil {
+		t.Fatalf("unexpected session response: %+v", got)
 	}
 }
 
@@ -1048,8 +1269,35 @@ func TestInterviewStream_ReturnsSnapshotAndLiveEvent(t *testing.T) {
 
 	hub.Publish(context.Background(), buildInterviewEvent(interviewEventSessionUpdated, sess, "", ""))
 	second := readSSEBlock(t, reader)
-	if !strings.Contains(second, "event: session.updated") {
-		t.Fatalf("second event = %q, want session.updated", second)
+	if !strings.Contains(second, "event: interview.progress") {
+		t.Fatalf("second event = %q, want interview.progress", second)
+	}
+}
+
+func TestWriteInterviewSSE_UsesBusinessEventShape(t *testing.T) {
+	rec := httptest.NewRecorder()
+	event := InterviewEvent{
+		ID:          "evt-safe",
+		Type:        interviewEventNodeStart,
+		SessionID:   "s-safe",
+		Status:      string(domain.StatusRunning),
+		CurrentNode: "pick_next",
+		Node:        "pick_next",
+		Phase:       "answering",
+		At:          time.Now(),
+	}
+
+	if err := writeInterviewSSE(rec, event); err != nil {
+		t.Fatalf("write sse: %v", err)
+	}
+	raw := rec.Body.String()
+	if !strings.Contains(raw, "event: interview.progress") {
+		t.Fatalf("sse should use business event name: %s", raw)
+	}
+	for _, forbidden := range []string{"current_node", "pick_next", "graph.node"} {
+		if strings.Contains(raw, forbidden) {
+			t.Fatalf("sse leaked %q: %s", forbidden, raw)
+		}
 	}
 }
 
@@ -1147,8 +1395,8 @@ func TestInterviewStream_ReplaysAfterLastEventID(t *testing.T) {
 		t.Fatalf("first block = %q, want snapshot", firstBlock)
 	}
 	secondBlock := readSSEBlock(t, reader)
-	if !strings.Contains(secondBlock, "event: session.completed") {
-		t.Fatalf("second block = %q, want session.completed replay", secondBlock)
+	if !strings.Contains(secondBlock, "event: interview.completed") {
+		t.Fatalf("second block = %q, want interview.completed replay", secondBlock)
 	}
 	if !strings.Contains(secondBlock, second.ID) {
 		t.Fatalf("second block = %q, want replay id %q", secondBlock, second.ID)

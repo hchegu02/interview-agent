@@ -1,0 +1,16 @@
+workflow: full
+phase: verify
+build_mode: executing-plans
+isolation: branch
+verify_mode: null
+base_ref: 6e3ec2efa2668b54948702a9377f43dd194437eb
+design_doc: docs/superpowers/specs/2026-05-28-question-bank-import-enrichment-design.md
+plan: docs/superpowers/plans/2026-05-28-question-bank-import-enrichment.md
+handoff_context: openspec/changes/question-bank-import-enrichment/.comet/handoff/design-context.json
+handoff_hash: 77076e1d312fbbc818f0f92ce8cb9dbe9a384881ee0adaaa209313f557e6405f
+verify_result: pending
+verification_report: null
+branch_status: pending
+created_at: 2026-05-28
+verified_at: null
+archived: false

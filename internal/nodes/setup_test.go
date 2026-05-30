@@ -301,6 +301,62 @@ func TestGapAnalyze_NilLLM_MidMatchExplore(t *testing.T) {
 }
 
 // -----------------------------------------------------------------------------
+// analyze_profile
+// -----------------------------------------------------------------------------
+
+func TestAnalyzeProfile_BuildsExplainableMatchReport(t *testing.T) {
+	node := NewAnalyzeProfileNode()
+	sess := buildGapSession(
+		[]string{"go", "redis", "kafka"},
+		[]string{"go", "redis"},
+	)
+	sess.JobProfile.MustHave = []string{"go", "kafka"}
+	sess.JobProfile.YearsRequired = 3
+	sess.CandProfile.Years = 2
+	sess.CandProfile.Projects = []domain.ResumeProject{
+		{
+			Name:       "秒杀系统",
+			Role:       "后端主力",
+			Highlights: []string{"用 Redis lua 实现库存预扣支撑 1w QPS"},
+			Stack:      []string{"go", "redis"},
+		},
+	}
+	sess.CandProfile.Highlights = []string{"用 Redis lua 实现库存预扣支撑 1w QPS"}
+	_ = NewGapAnalyzeNode(nil)(context.Background(), sess)
+
+	if err := node(context.Background(), sess); err != nil {
+		t.Fatalf("node failed: %v", err)
+	}
+	a := sess.ProfileAnalysis
+	if a == nil {
+		t.Fatal("profile analysis was not written")
+	}
+	if a.MatchScore <= 0 || a.MatchScore > 100 {
+		t.Fatalf("bad score: %+v", a)
+	}
+	if !contains(a.MatchedRequirements, "go") || !contains(a.MissingRequirements, "kafka") {
+		t.Fatalf("matched/missing wrong: %+v", a)
+	}
+	if len(a.RiskPoints) == 0 || !strings.Contains(strings.Join(a.RiskPoints, " "), "kafka") {
+		t.Fatalf("risk points should mention kafka: %+v", a.RiskPoints)
+	}
+	if len(a.ResumeSuggestions) == 0 {
+		t.Fatalf("resume suggestions empty: %+v", a)
+	}
+	if len(a.ProjectProbePlan) != 1 || !strings.Contains(a.ProjectProbePlan[0].SuggestedQuestion, "秒杀系统") {
+		t.Fatalf("project probe plan wrong: %+v", a.ProjectProbePlan)
+	}
+}
+
+func TestAnalyzeProfile_MissingInputsPermanent(t *testing.T) {
+	node := NewAnalyzeProfileNode()
+	err := node(context.Background(), &domain.Session{})
+	if !errors.Is(err, graph.ErrPermanent) {
+		t.Fatalf("expected permanent error, got %v", err)
+	}
+}
+
+// -----------------------------------------------------------------------------
 // retrieve_rag
 // -----------------------------------------------------------------------------
 
@@ -310,7 +366,7 @@ type stubEmbedder struct {
 	err error
 }
 
-func (e *stubEmbedder) Name() string  { return "stub" }
+func (e *stubEmbedder) Name() string   { return "stub" }
 func (e *stubEmbedder) Dimension() int { return e.dim }
 func (e *stubEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
 	if e.err != nil {
@@ -344,12 +400,13 @@ func newFakeRetriever(ids []string, err error) *fakeRetriever {
 	out := make([]retriever.Result, len(ids))
 	for i, id := range ids {
 		out[i] = retriever.Result{
-			ID:         id,
-			Content:    "测试题 " + id,
-			Tags:       []string{"go_concurrency"},
-			Difficulty: 3,
-			Category:   "go",
-			Score:      0.9 - 0.05*float64(i),
+			ID:             id,
+			Content:        "测试题 " + id,
+			Tags:           []string{"go_concurrency"},
+			Difficulty:     3,
+			Category:       "go",
+			ExpectedPoints: []string{"要点 " + id},
+			Score:          0.9 - 0.05*float64(i),
 		}
 	}
 	return &fakeRetriever{results: out, err: err}
@@ -371,6 +428,40 @@ func TestRetrieveRAG_Success(t *testing.T) {
 			t.Errorf("expected rag- prefix, got source=%s", q.Source)
 		}
 	}
+	if got := sess.CandidatePool[0].ExpectedPoints; len(got) != 1 || got[0] != "要点 go-001" {
+		t.Fatalf("expected points should be copied from retriever result, got %+v", got)
+	}
+}
+
+func TestRetrieveRAG_PassesQuestionBankFilterToRetriever(t *testing.T) {
+	embedder := &stubEmbedder{dim: 1024}
+	r := newFakeRetriever([]string{"redis-001"}, nil)
+	node := NewRetrieveRAGNode(embedder, r, RetrieveRAGOptions{TopK: 10})
+
+	sess := buildRAGSession([]string{"go", "redis"}, []string{"redis"})
+	sess.QuestionBankFilter = &domain.QuestionBankFilter{
+		SkillCategories: []string{"redis"},
+		Scenarios:       []string{"troubleshooting"},
+		DifficultyMin:   2,
+		DifficultyMax:   4,
+		Tags:            []string{"cache"},
+	}
+
+	if err := node(context.Background(), sess); err != nil {
+		t.Fatalf("node failed: %v", err)
+	}
+	if got := r.lastQ.SkillCategories; len(got) != 1 || got[0] != "redis" {
+		t.Fatalf("skill categories = %+v, want [redis]", got)
+	}
+	if got := r.lastQ.Scenarios; len(got) != 1 || got[0] != "troubleshooting" {
+		t.Fatalf("scenarios = %+v, want [troubleshooting]", got)
+	}
+	if r.lastQ.DifficultyMin != 2 || r.lastQ.DifficultyMax != 4 {
+		t.Fatalf("difficulty range = %d..%d, want 2..4", r.lastQ.DifficultyMin, r.lastQ.DifficultyMax)
+	}
+	if got := r.lastQ.FilterTags; len(got) != 1 || got[0] != "cache" {
+		t.Fatalf("filter tags = %+v, want [cache]", got)
+	}
 }
 
 func TestRetrieveRAG_EmbedderFails_Fallback(t *testing.T) {
@@ -388,6 +479,9 @@ func TestRetrieveRAG_EmbedderFails_Fallback(t *testing.T) {
 	if sess.CandidatePool[0].Source != "fallback" {
 		t.Errorf("expected fallback source, got %s", sess.CandidatePool[0].Source)
 	}
+	if len(sess.CandidatePool[0].ExpectedPoints) == 0 {
+		t.Fatal("fallback questions should include expected points")
+	}
 	if sess.WorkingMemory == nil || sess.WorkingMemory.DegradedReasons["rag"] == "" {
 		t.Errorf("expected rag degraded reason, got memory=%v", sess.WorkingMemory)
 	}
@@ -404,6 +498,27 @@ func TestRetrieveRAG_RetrieverEmpty_Fallback(t *testing.T) {
 	}
 	if sess.CandidatePool[0].Source != "fallback" {
 		t.Errorf("expected fallback source, got %s", sess.CandidatePool[0].Source)
+	}
+}
+
+func TestRetrieveRAG_FallbackHonorsQuestionBankFilter(t *testing.T) {
+	embedder := &stubEmbedder{dim: 1024}
+	r := newFakeRetriever(nil, errors.New("pg down"))
+	node := NewRetrieveRAGNode(embedder, r, RetrieveRAGOptions{TopK: 5})
+
+	sess := buildRAGSession([]string{"go", "redis"}, []string{"redis"})
+	sess.QuestionBankFilter = &domain.QuestionBankFilter{SkillCategories: []string{"redis"}}
+
+	if err := node(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	if len(sess.CandidatePool) == 0 {
+		t.Fatal("expected filtered fallback pool")
+	}
+	for _, q := range sess.CandidatePool {
+		if q.SkillCategory != "redis" {
+			t.Fatalf("fallback should honor redis scope, got %+v", sess.CandidatePool)
+		}
 	}
 }
 

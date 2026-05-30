@@ -426,12 +426,8 @@ func TestCompose_OrderRetryThenTimeout(t *testing.T) {
 	var attempts int32
 	slow := func(ctx context.Context, s *domain.Session) error {
 		atomic.AddInt32(&attempts, 1)
-		select {
-		case <-time.After(50 * time.Millisecond):
-			return nil
-		case <-ctx.Done():
-			return ctx.Err()
-		}
+		<-ctx.Done()
+		return ctx.Err()
 	}
 
 	dec := Compose(

@@ -23,19 +23,23 @@ const (
 )
 
 type InterviewEvent struct {
-	ID          string           `json:"id,omitempty"`
-	Type        string           `json:"type"`
-	SessionID   string           `json:"session_id"`
-	UserID      string           `json:"user_id,omitempty"`
-	Node        string           `json:"node,omitempty"`
-	Status      string           `json:"status,omitempty"`
-	CurrentNode string           `json:"current_node,omitempty"`
-	Question    *domain.Question `json:"question,omitempty"`
-	Report      *domain.Report   `json:"report,omitempty"`
-	Error       string           `json:"error,omitempty"`
-	CreatedAt   time.Time        `json:"created_at,omitempty"`
-	UpdatedAt   time.Time        `json:"updated_at,omitempty"`
-	At          time.Time        `json:"at"`
+	ID          string                  `json:"id,omitempty"`
+	Type        string                  `json:"type"`
+	SessionID   string                  `json:"session_id"`
+	UserID      string                  `json:"user_id,omitempty"`
+	Mode        string                  `json:"mode,omitempty"`
+	Node        string                  `json:"node,omitempty"`
+	Status      string                  `json:"status,omitempty"`
+	CurrentNode string                  `json:"current_node,omitempty"`
+	Phase       string                  `json:"phase,omitempty"`
+	Progress    []interviewProgressStep `json:"progress,omitempty"`
+	Question    *domain.Question        `json:"question,omitempty"`
+	Rounds      []interviewRound        `json:"rounds,omitempty"`
+	Report      *domain.Report          `json:"report,omitempty"`
+	Error       string                  `json:"error,omitempty"`
+	CreatedAt   time.Time               `json:"created_at,omitempty"`
+	UpdatedAt   time.Time               `json:"updated_at,omitempty"`
+	At          time.Time               `json:"at"`
 }
 
 type InterviewEventPublisher interface {
@@ -260,9 +264,13 @@ func buildInterviewEvent(eventType string, sess *domain.Session, node, errMsg st
 	}
 	ev.SessionID = sess.ID
 	ev.UserID = sess.UserID
+	ev.Mode = sessionMode(sess)
 	ev.Status = string(sess.Status)
 	ev.CurrentNode = sess.CurrentNode
+	ev.Phase = interviewPhase(sess)
+	ev.Progress = interviewProgress(sess)
 	ev.Question = cloneQuestion(currentQuestion(sess))
+	ev.Rounds = buildInterviewRounds(sess, ev.Mode)
 	ev.Report = cloneReport(sess.Report)
 	ev.CreatedAt = sess.CreatedAt
 	ev.UpdatedAt = sess.UpdatedAt
@@ -279,6 +287,49 @@ func cloneQuestion(q *domain.Question) *domain.Question {
 	return &out
 }
 
+func cloneJobProfile(p *domain.JobProfile) *domain.JobProfile {
+	if p == nil {
+		return nil
+	}
+	out := *p
+	out.KeySkills = append([]string(nil), p.KeySkills...)
+	out.MustHave = append([]string(nil), p.MustHave...)
+	out.NiceToHave = append([]string(nil), p.NiceToHave...)
+	return &out
+}
+
+func cloneCandidateProfile(p *domain.CandidateProfile) *domain.CandidateProfile {
+	if p == nil {
+		return nil
+	}
+	out := *p
+	out.Skills = append([]string(nil), p.Skills...)
+	out.WeakSkills = append([]string(nil), p.WeakSkills...)
+	out.Highlights = append([]string(nil), p.Highlights...)
+	out.Projects = make([]domain.ResumeProject, len(p.Projects))
+	for i := range p.Projects {
+		out.Projects[i] = p.Projects[i]
+		out.Projects[i].Highlights = append([]string(nil), p.Projects[i].Highlights...)
+		out.Projects[i].Stack = append([]string(nil), p.Projects[i].Stack...)
+	}
+	return &out
+}
+
+func cloneProfileAnalysis(a *domain.ProfileAnalysis) *domain.ProfileAnalysis {
+	if a == nil {
+		return nil
+	}
+	out := *a
+	out.MatchedRequirements = append([]string(nil), a.MatchedRequirements...)
+	out.MissingRequirements = append([]string(nil), a.MissingRequirements...)
+	out.Strengths = append([]string(nil), a.Strengths...)
+	out.RiskPoints = append([]string(nil), a.RiskPoints...)
+	out.ResumeSuggestions = append([]string(nil), a.ResumeSuggestions...)
+	out.QuestionFocus = append([]string(nil), a.QuestionFocus...)
+	out.ProjectProbePlan = append([]domain.ProjectProbePlan(nil), a.ProjectProbePlan...)
+	return &out
+}
+
 func cloneReport(r *domain.Report) *domain.Report {
 	if r == nil {
 		return nil
@@ -291,5 +342,31 @@ func cloneReport(r *domain.Report) *domain.Report {
 	out.Highlights = append([]string(nil), r.Highlights...)
 	out.Improvements = append([]string(nil), r.Improvements...)
 	out.NextSteps = append([]string(nil), r.NextSteps...)
+	out.TranscriptAnalysis = cloneTranscriptAnalysis(r.TranscriptAnalysis)
+	out.DrillPlan = cloneDrillPlan(r.DrillPlan)
 	return &out
+}
+
+func cloneTranscriptAnalysis(a *domain.TranscriptAnalysis) *domain.TranscriptAnalysis {
+	if a == nil {
+		return nil
+	}
+	out := *a
+	out.Patterns = append([]string(nil), a.Patterns...)
+	out.Dimensions = make([]domain.TranscriptDimension, len(a.Dimensions))
+	for i := range a.Dimensions {
+		out.Dimensions[i] = a.Dimensions[i]
+		out.Dimensions[i].Evidence = append([]string(nil), a.Dimensions[i].Evidence...)
+	}
+	return &out
+}
+
+func cloneDrillPlan(items []domain.DrillPlanItem) []domain.DrillPlanItem {
+	out := make([]domain.DrillPlanItem, len(items))
+	for i := range items {
+		out[i] = items[i]
+		out[i].RecommendedQuestionIDs = append([]string(nil), items[i].RecommendedQuestionIDs...)
+		out[i].RecommendedQuestions = append([]string(nil), items[i].RecommendedQuestions...)
+	}
+	return out
 }

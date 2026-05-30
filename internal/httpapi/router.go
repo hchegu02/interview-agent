@@ -1,17 +1,26 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 
 	"interview-agent/internal/config"
+	"interview-agent/internal/domain"
+	"interview-agent/internal/parser"
+	"interview-agent/internal/questionbank"
 )
 
 // Server 持有所有依赖。阶段 0 只放骨架，后续阶段往里加 service。
 type Server struct {
-	cfg       *config.Config
-	interview *InterviewService
+	cfg             *config.Config
+	interview       *InterviewService
+	documentParser  parser.DocumentParser
+	questionBank    questionbank.Store
+	questionImports *questionbank.ImportService
+	profileAnalyzer ProfileAnalyzer
+	metricsRecorder *metricsRecorder
 
 	// breakerState 可选注入：real 模式下接 BreakingChatModel.State，返回
 	// "closed" / "open" / "half_open"。/readyz 在 open 时回报 degraded（仍 200）。
@@ -20,17 +29,29 @@ type Server struct {
 }
 
 func NewServer(cfg *config.Config) *Server {
-	return &Server{cfg: cfg}
+	return &Server{cfg: cfg, documentParser: parser.NewDispatcher(), metricsRecorder: newMetricsRecorder()}
 }
 
 func NewServerWithInterview(cfg *config.Config, interview *InterviewService) *Server {
-	return &Server{cfg: cfg, interview: interview}
+	return &Server{cfg: cfg, interview: interview, documentParser: parser.NewDispatcher(), metricsRecorder: newMetricsRecorder()}
 }
 
 // SetBreakerState 让入口装配阶段在构造完 Server 后注入熔断器状态查询函数。
 // 不要求 thread-safe：只在 main() 启动期单次调用，Router() 之前完成。
 func (s *Server) SetBreakerState(fn func() string) {
 	s.breakerState = fn
+}
+
+type ProfileAnalyzer interface {
+	AnalyzeProfile(ctx context.Context, req profileAnalyzeRequest) (*domain.Session, error)
+}
+
+func (s *Server) SetProfileAnalyzer(analyzer ProfileAnalyzer) {
+	s.profileAnalyzer = analyzer
+}
+
+func (s *Server) SetQuestionBankImportService(service *questionbank.ImportService) {
+	s.questionImports = service
 }
 
 // Router 构造 Gin 引擎。
@@ -40,20 +61,33 @@ func (s *Server) SetBreakerState(fn func() string) {
 func (s *Server) Router() *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
-	r.Use(TraceIDMiddleware(), gin.Recovery())
+	r.Use(TraceIDMiddleware(), gin.Recovery(), s.metricsRecorder.middleware())
+
+	s.registerWebRoutes(r)
 
 	r.GET("/healthz", s.healthz)
 	r.GET("/readyz", s.readyz)
+	r.GET("/metrics", s.metrics)
 
 	api := r.Group("/api")
 	{
 		api.GET("/ping", s.ping)
+		api.POST("/documents/parse-resume", s.parseResumeDocument)
+		api.POST("/profile/analyze", s.analyzeProfile)
+		api.POST("/question-bank/imports", s.createQuestionBankImport)
+		api.GET("/question-bank/imports", s.listQuestionBankImports)
+		api.GET("/question-bank/imports/:id", s.getQuestionBankImport)
+		api.POST("/question-bank/imports/:id/items/review", s.reviewQuestionBankImportItems)
+		api.POST("/question-bank/imports/:id/commit", s.commitQuestionBankImport)
+		api.GET("/question-bank", s.listQuestionBank)
+		api.GET("/question-bank/facets", s.questionBankFacets)
+		api.GET("/question-bank/:id", s.getQuestionBankItem)
 		api.GET("/interview/sessions", s.listInterviewSessions)
 		api.GET("/interview/sessions/:session_id", s.getInterviewSession)
 	}
 
 	streaming := r.Group("/api/interview")
-	streaming.Use(MaxInFlightMiddleware(s.cfg.Server.MaxStreams))
+	streaming.Use(MaxInFlightMiddlewareWithMetrics(s.cfg.Server.MaxStreams, s.metricsRecorder, "interview_stream"))
 	{
 		streaming.GET("/stream", s.streamInterview)
 	}
@@ -61,7 +95,7 @@ func (s *Server) Router() *gin.Engine {
 	// LLM 入口子组：start / answer 会走 Graph + LLM，必须挂背压。
 	// limit <= 0 时 middleware 退化成 no-op，对单实例 dev / 测试零侵入。
 	mutating := r.Group("/api/interview")
-	mutating.Use(MaxInFlightMiddleware(s.cfg.Server.MaxInFlight))
+	mutating.Use(MaxInFlightMiddlewareWithMetrics(s.cfg.Server.MaxInFlight, s.metricsRecorder, "interview_mutating"))
 	{
 		mutating.POST("/start", s.startInterview)
 		mutating.POST("/answer", s.answerInterview)

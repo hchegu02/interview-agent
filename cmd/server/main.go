@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"reflect"
 	"syscall"
 	"time"
 
@@ -29,7 +30,10 @@ import (
 	"interview-agent/internal/graphs"
 	"interview-agent/internal/httpapi"
 	"interview-agent/internal/llm"
+	"interview-agent/internal/nodes"
 	"interview-agent/internal/observability"
+	"interview-agent/internal/parser"
+	"interview-agent/internal/questionbank"
 	"interview-agent/internal/retriever"
 )
 
@@ -73,7 +77,37 @@ func main() {
 		os.Exit(1)
 	}
 
-	graphRunner, cleanup, err := buildInterviewRunner(ctx, cfg, deps, events)
+	server := httpapi.NewServer(cfg)
+	profileAnalyzer, err := buildProfileAnalyzer(cfg)
+	if err != nil {
+		logger.Error("profile analyzer setup failed", "err", err)
+		os.Exit(1)
+	}
+	server.SetProfileAnalyzer(profileAnalyzer)
+	questionBankStore, err := buildQuestionBankStore(deps)
+	if err != nil {
+		logger.Error("question bank setup failed", "err", err)
+		os.Exit(1)
+	}
+	server.SetQuestionBankStore(questionBankStore)
+	questionImportService, err := buildQuestionBankImportService(cfg, deps, questionBankStore)
+	if err != nil {
+		logger.Error("question bank import setup failed", "err", err)
+		os.Exit(1)
+	}
+	server.SetQuestionBankImportService(questionImportService)
+	go func() {
+		n, err := questionImportService.RecoverPendingJobs(context.Background())
+		if err != nil {
+			logger.Error("question bank import recovery failed", "err", err)
+			return
+		}
+		if n > 0 {
+			logger.Info("question bank import recovery scheduled", "jobs", n)
+		}
+	}()
+
+	graphRunner, cleanup, err := buildInterviewRunner(ctx, cfg, deps, events, server.GraphMetricsCallback(), server.ObserveLLMCall)
 	if err != nil {
 		logger.Error("interview graph setup failed", "err", err)
 		os.Exit(1)
@@ -87,7 +121,7 @@ func main() {
 	}
 	defer serviceCleanup()
 
-	server := httpapi.NewServerWithInterview(cfg, interviewService)
+	server.SetInterviewService(interviewService)
 	if graphRunner.breakerState != nil {
 		server.SetBreakerState(graphRunner.breakerState)
 	}
@@ -151,16 +185,68 @@ func buildAppDeps(ctx context.Context, cfg *config.Config) (appDeps, func(), err
 }
 
 func buildInterviewService(ctx context.Context, cfg *config.Config, deps appDeps, runner *graph.Runnable, events httpapi.InterviewEventHub, coordinators ...httpapi.SessionCoordinator) (*httpapi.InterviewService, func(), error) {
-	var coordinator httpapi.SessionCoordinator
-	if len(coordinators) > 0 {
-		coordinator = coordinators[0]
-	}
+	coordinator := firstNonNilCoordinator(coordinators)
 	ownerID := hostnameOwnerID()
 	if deps.PGPool == nil {
 		return httpapi.NewInterviewServiceWithStoreEventsAndCoordinator(runner, httpapi.NewMemorySessionStore(), events, coordinator, ownerID), func() {}, nil
 	}
 	store := httpapi.NewPGSessionStore(deps.PGPool, 24*time.Hour)
 	return httpapi.NewInterviewServiceWithStoreEventsAndCoordinator(runner, store, events, coordinator, ownerID), func() {}, nil
+}
+
+func firstNonNilCoordinator(coordinators []httpapi.SessionCoordinator) httpapi.SessionCoordinator {
+	for _, coordinator := range coordinators {
+		if coordinator == nil {
+			continue
+		}
+		v := reflect.ValueOf(coordinator)
+		if v.Kind() == reflect.Pointer && v.IsNil() {
+			continue
+		}
+		return coordinator
+	}
+	return nil
+}
+
+func buildQuestionBankStore(deps appDeps) (questionbank.Store, error) {
+	if deps.PGPool != nil {
+		return questionbank.NewPGStore(deps.PGPool), nil
+	}
+	items, err := questionbank.LoadSeedFile("seeds/question_bank.json")
+	if err != nil {
+		return nil, err
+	}
+	return questionbank.NewMemoryStore(items), nil
+}
+
+func buildQuestionBankImportService(cfg *config.Config, deps appDeps, store questionbank.Store) (*questionbank.ImportService, error) {
+	writer, ok := store.(questionbank.Writer)
+	if !ok {
+		return nil, fmt.Errorf("question bank store does not support writes")
+	}
+	var importStore questionbank.ImportStore
+	if deps.PGPool != nil {
+		importStore = questionbank.NewPGImportStore(deps.PGPool)
+	} else {
+		importStore = questionbank.NewMemoryImportStore()
+	}
+	model, _, err := buildChatModel(cfg)
+	if err != nil {
+		return nil, err
+	}
+	embedder, err := buildEmbedder(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return questionbank.NewImportService(questionbank.ImportServiceDeps{
+		Imports:  importStore,
+		Writer:   writer,
+		Parser:   parser.NewDispatcher(),
+		Model:    model,
+		Embedder: embedder,
+		Spool:    questionbank.NewLocalImportSpool(cfg.Server.ImportSpoolDir),
+		OwnerID:  hostnameOwnerID(),
+	}), nil
 }
 
 func buildInterviewEventHub(ctx context.Context, cfg *config.Config) (httpapi.InterviewEventHub, func(), error) {
@@ -203,10 +289,15 @@ func hostnameOwnerID() string {
 	return name
 }
 
-func buildInterviewRunner(ctx context.Context, cfg *config.Config, deps appDeps, events httpapi.InterviewEventPublisher) (interviewRunnerBundle, func(), error) {
+func buildInterviewRunner(ctx context.Context, cfg *config.Config, deps appDeps, events httpapi.InterviewEventPublisher, metricsCallback graph.Callback, llmObserver func(llm.CallRecord)) (interviewRunnerBundle, func(), error) {
 	model, breakerState, err := buildChatModel(cfg)
 	if err != nil {
 		return interviewRunnerBundle{}, nil, err
+	}
+	if llmObserver != nil {
+		recordModel := llm.NewRecordingChatModel(model)
+		recordModel.SetObserver(llmObserver)
+		model = recordModel
 	}
 	embedder, err := buildEmbedder(cfg)
 	if err != nil {
@@ -216,11 +307,15 @@ func buildInterviewRunner(ctx context.Context, cfg *config.Config, deps appDeps,
 	if err != nil {
 		return interviewRunnerBundle{}, nil, err
 	}
+	callbacks := []graph.Callback{httpapi.NewInterviewGraphCallback(events)}
+	if metricsCallback != nil {
+		callbacks = append(callbacks, metricsCallback)
+	}
 	runner, err := graphs.BuildInterviewGraph(graphs.Deps{
 		Model:     model,
 		Embedder:  embedder,
 		Retriever: r,
-		Callbacks: []graph.Callback{httpapi.NewInterviewGraphCallback(events)},
+		Callbacks: callbacks,
 	})
 	if err != nil {
 		cleanup()
@@ -244,6 +339,19 @@ type interviewRunnerBundle struct {
 // 第二个返回值 breakerState 是熔断器状态查询函数，给 /readyz 用；mock 模式为 nil。
 func buildChatModel(cfg *config.Config) (llm.ChatModel, func() string, error) {
 	return llm.BuildChatModel(cfg)
+}
+
+func buildProfileAnalyzer(cfg *config.Config) (*httpapi.NodeProfileAnalyzer, error) {
+	model, _, err := buildChatModel(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return httpapi.NewNodeProfileAnalyzer(
+		nodes.NewParseJDNode(model),
+		nodes.NewParseResumeNode(model),
+		nodes.NewGapAnalyzeNode(model),
+		nodes.NewAnalyzeProfileNode(),
+	), nil
 }
 
 func buildEmbedder(cfg *config.Config) (embedding.Embedder, error) {

@@ -2,11 +2,15 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"interview-agent/internal/config"
+	"interview-agent/internal/embedding"
 )
 
 // TestRun_MockMode 把 demo 的 main 流程跑一遍。
@@ -45,6 +49,12 @@ func TestRun_MockMode(t *testing.T) {
 	if art.Config.LLMMode != "mock" {
 		t.Errorf("Config.LLMMode = %q, want mock", art.Config.LLMMode)
 	}
+	if art.Config.Retriever != "fallback" {
+		t.Errorf("Config.Retriever = %q, want fallback", art.Config.Retriever)
+	}
+	if art.Config.PostgresConfigured {
+		t.Errorf("Config.PostgresConfigured = true, want false")
+	}
 	if len(art.LLMCalls) == 0 {
 		t.Errorf("LLMCalls is empty, want >0")
 	}
@@ -70,6 +80,65 @@ func TestRun_MockMode(t *testing.T) {
 	}
 	if !strings.Contains(rstr, "## LLM call stats") {
 		t.Errorf("report.md missing LLM call stats section")
+	}
+}
+
+func TestBuildDemoRetriever_NoPostgresUsesFallback(t *testing.T) {
+	cfg := &config.Config{}
+
+	r, cleanup, kind, err := buildDemoRetriever(context.Background(), cfg)
+	if err != nil {
+		t.Fatalf("buildDemoRetriever: %v", err)
+	}
+	defer cleanup()
+	if kind != "fallback" {
+		t.Fatalf("kind = %q, want fallback", kind)
+	}
+	if _, ok := r.(fallbackRetriever); !ok {
+		t.Fatalf("retriever = %T, want fallbackRetriever", r)
+	}
+}
+
+func TestBuildDemoEmbedder_RealUsesConfig(t *testing.T) {
+	cfg := &config.Config{
+		EmbeddingAPIKey: "dummy",
+		Embedding: config.EmbeddingConfig{
+			Mode:      "real",
+			BaseURL:   "http://127.0.0.1:8000/v1",
+			Model:     "BAAI/bge-m3",
+			Dimension: 1024,
+		},
+	}
+
+	got, err := buildDemoEmbedder(cfg)
+	if err != nil {
+		t.Fatalf("buildDemoEmbedder: %v", err)
+	}
+	real, ok := got.(*embedding.RealEmbedder)
+	if !ok {
+		t.Fatalf("embedder = %T, want *embedding.RealEmbedder", got)
+	}
+	if real.BaseURL != "http://127.0.0.1:8000/v1" || real.Model != "BAAI/bge-m3" || real.Dimension() != 1024 {
+		t.Fatalf("unexpected real embedder config: base=%q model=%q dim=%d", real.BaseURL, real.Model, real.Dimension())
+	}
+}
+
+func TestBuildRunConfig_RecordsRetriever(t *testing.T) {
+	cfg := &config.Config{
+		PostgresDSN: "postgres://example",
+		LLM:         config.LLMConfig{Mode: "real", Model: "qwen-plus"},
+		Embedding:   config.EmbeddingConfig{Mode: "real", Model: "BAAI/bge-m3"},
+	}
+
+	got := buildRunConfig(cfg, "cfg.yaml", "script.yaml", "out", "pgvector")
+	if got.Retriever != "pgvector" {
+		t.Fatalf("Retriever = %q, want pgvector", got.Retriever)
+	}
+	if !got.PostgresConfigured {
+		t.Fatalf("PostgresConfigured = false, want true")
+	}
+	if got.EmbeddingModel != "BAAI/bge-m3" {
+		t.Fatalf("EmbeddingModel = %q", got.EmbeddingModel)
 	}
 }
 

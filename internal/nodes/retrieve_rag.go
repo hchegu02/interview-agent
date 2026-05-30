@@ -41,15 +41,20 @@ import (
 // 这是临时降级方案,不应频繁触发,触发了运维要查 Embedder/PG 状态。
 var fallbackQuestions = []domain.Question{
 	{ID: "fallback-go-001", Content: "讲一下 Go 的 GMP 调度模型，G/M/P 各自的职责。",
-		Tags: []string{"go_concurrency"}, Difficulty: 3, Source: "fallback", SkillCategory: "go"},
+		Tags: []string{"go_concurrency"}, Difficulty: 3, Source: "fallback", SkillCategory: "go",
+		ExpectedPoints: []string{"G/M/P 三者定义", "P 的作用", "本地队列与全局队列", "work stealing"}},
 	{ID: "fallback-go-002", Content: "Go channel 的底层数据结构是怎样的？",
-		Tags: []string{"channel", "go_concurrency"}, Difficulty: 3, Source: "fallback", SkillCategory: "go"},
+		Tags: []string{"channel", "go_concurrency"}, Difficulty: 3, Source: "fallback", SkillCategory: "go",
+		ExpectedPoints: []string{"hchan 结构", "sendq/recvq", "有缓冲与无缓冲路径", "goroutine 唤醒时机"}},
 	{ID: "fallback-redis-001", Content: "Redis 的 AOF 和 RDB 持久化方式各自的取舍？",
-		Tags: []string{"aof", "rdb", "redis_persistence"}, Difficulty: 3, Source: "fallback", SkillCategory: "redis"},
+		Tags: []string{"aof", "rdb", "redis_persistence"}, Difficulty: 3, Source: "fallback", SkillCategory: "redis",
+		ExpectedPoints: []string{"AOF 追加命令", "RDB 快照", "恢复速度与数据丢失窗口", "aof rewrite"}},
 	{ID: "fallback-sd-001", Content: "设计一个秒杀系统，谈一下库存扣减和防超卖。",
-		Tags: []string{"system_design", "distributed_lock"}, Difficulty: 4, Source: "fallback", SkillCategory: "system-design"},
+		Tags: []string{"system_design", "distributed_lock"}, Difficulty: 4, Source: "fallback", SkillCategory: "system-design",
+		ExpectedPoints: []string{"Redis lua 原子扣减", "MQ 异步落库", "限流", "防超卖一致性"}},
 	{ID: "fallback-sd-002", Content: "线上 P99 延迟抖动，给一个排查思路。",
-		Tags: []string{"system_design", "performance"}, Difficulty: 4, Source: "fallback", SkillCategory: "system-design"},
+		Tags: []string{"system_design", "performance"}, Difficulty: 4, Source: "fallback", SkillCategory: "system-design",
+		ExpectedPoints: []string{"GC/调度", "下游慢调用", "锁竞争", "网络重传", "热点资源"}},
 }
 
 // RetrieveRAGOptions 暴露给图组装阶段的可调参数。
@@ -64,8 +69,9 @@ type RetrieveRAGOptions struct {
 // NewRetrieveRAGNode 构造 retrieve_rag 节点。
 //
 // 节点契约：
-//   输入：sess.JobProfile / sess.GapReport（必须）
-//   输出：sess.CandidatePool（[]domain.Question，长度 ≤ TopK）
+//
+//	输入：sess.JobProfile / sess.GapReport（必须）
+//	输出：sess.CandidatePool（[]domain.Question，长度 ≤ TopK）
 //
 // 失败语义：
 //   - JobProfile / GapReport 缺失 → ErrPermanent
@@ -102,7 +108,7 @@ func NewRetrieveRAGNode(
 		vectors, err := embedder.Embed(ctx, []string{queryText})
 		if err != nil || len(vectors) != 1 || len(vectors[0]) == 0 {
 			markDegraded(sess, fmt.Sprintf("embed failed: %v", err))
-			sess.CandidatePool = cloneFallback(targetDiff)
+			sess.CandidatePool = cloneFallback(targetDiff, sess.QuestionBankFilter)
 			return nil
 		}
 
@@ -112,17 +118,22 @@ func NewRetrieveRAGNode(
 			Tags:             queryTags,
 			Difficulty:       targetDiff,
 			K:                opts.TopK,
+			SkillCategories:  filterSkillCategories(sess.QuestionBankFilter),
+			Scenarios:        filterScenarios(sess.QuestionBankFilter),
+			DifficultyMin:    filterDifficultyMin(sess.QuestionBankFilter),
+			DifficultyMax:    filterDifficultyMax(sess.QuestionBankFilter),
+			FilterTags:       filterTags(sess.QuestionBankFilter),
 			VectorCandidates: opts.VectorCandidates,
 			TagCandidates:    opts.TagCandidates,
 		})
 		if err != nil {
 			markDegraded(sess, fmt.Sprintf("retrieve failed: %v", err))
-			sess.CandidatePool = cloneFallback(targetDiff)
+			sess.CandidatePool = cloneFallback(targetDiff, sess.QuestionBankFilter)
 			return nil
 		}
 		if len(results) == 0 {
 			markDegraded(sess, "retrieve returned 0 results")
-			sess.CandidatePool = cloneFallback(targetDiff)
+			sess.CandidatePool = cloneFallback(targetDiff, sess.QuestionBankFilter)
 			return nil
 		}
 
@@ -130,17 +141,53 @@ func NewRetrieveRAGNode(
 		pool := make([]domain.Question, 0, len(results))
 		for _, res := range results {
 			pool = append(pool, domain.Question{
-				ID:            res.ID,
-				Content:       res.Content,
-				Tags:          res.Tags,
-				Difficulty:    res.Difficulty,
-				Source:        "rag-" + res.ID,
-				SkillCategory: res.Category,
+				ID:             res.ID,
+				Content:        res.Content,
+				Tags:           res.Tags,
+				Difficulty:     res.Difficulty,
+				Source:         "rag-" + res.ID,
+				SkillCategory:  res.Category,
+				ExpectedPoints: append([]string(nil), res.ExpectedPoints...),
 			})
 		}
 		sess.CandidatePool = pool
 		return nil
 	}
+}
+
+func filterSkillCategories(filter *domain.QuestionBankFilter) []string {
+	if filter == nil {
+		return nil
+	}
+	return append([]string(nil), filter.SkillCategories...)
+}
+
+func filterScenarios(filter *domain.QuestionBankFilter) []string {
+	if filter == nil {
+		return nil
+	}
+	return append([]string(nil), filter.Scenarios...)
+}
+
+func filterDifficultyMin(filter *domain.QuestionBankFilter) int {
+	if filter == nil {
+		return 0
+	}
+	return filter.DifficultyMin
+}
+
+func filterDifficultyMax(filter *domain.QuestionBankFilter) int {
+	if filter == nil {
+		return 0
+	}
+	return filter.DifficultyMax
+}
+
+func filterTags(filter *domain.QuestionBankFilter) []string {
+	if filter == nil {
+		return nil
+	}
+	return append([]string(nil), filter.Tags...)
 }
 
 // buildQueryTags 决定本次 RAG 的目标标签集。
@@ -210,17 +257,54 @@ func markDegraded(sess *domain.Session, reason string) {
 
 // cloneFallback 按目标难度筛选 fallback 题，避免难度爆炸式偏离。
 // 难度差 ≤ 2 的题入选；都不满足时直接返回全集。
-func cloneFallback(targetDiff int) []domain.Question {
+func cloneFallback(targetDiff int, filter *domain.QuestionBankFilter) []domain.Question {
 	out := make([]domain.Question, 0, len(fallbackQuestions))
 	for _, q := range fallbackQuestions {
-		if abs(q.Difficulty-targetDiff) <= 2 {
+		if abs(q.Difficulty-targetDiff) <= 2 && matchesFallbackFilter(q, filter) {
 			out = append(out, q)
+		}
+	}
+	if len(out) == 0 {
+		for _, q := range fallbackQuestions {
+			if abs(q.Difficulty-targetDiff) <= 2 {
+				out = append(out, q)
+			}
 		}
 	}
 	if len(out) == 0 {
 		out = append(out, fallbackQuestions...)
 	}
 	return out
+}
+
+func matchesFallbackFilter(q domain.Question, filter *domain.QuestionBankFilter) bool {
+	if filter == nil {
+		return true
+	}
+	if len(filter.SkillCategories) > 0 && !containsAnyString([]string{q.SkillCategory}, filter.SkillCategories) {
+		return false
+	}
+	if filter.DifficultyMin > 0 && q.Difficulty < filter.DifficultyMin {
+		return false
+	}
+	if filter.DifficultyMax > 0 && q.Difficulty > filter.DifficultyMax {
+		return false
+	}
+	if len(filter.Tags) > 0 && !containsAnyString(q.Tags, filter.Tags) {
+		return false
+	}
+	return true
+}
+
+func containsAnyString(items, targets []string) bool {
+	for _, item := range items {
+		for _, target := range targets {
+			if strings.EqualFold(strings.TrimSpace(item), strings.TrimSpace(target)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func abs(x int) int {

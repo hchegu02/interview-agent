@@ -46,6 +46,25 @@ func TestSession_JSONRoundTrip(t *testing.T) {
 			Years:  3,
 			Skills: []string{"go", "mysql"},
 		},
+		ProfileAnalysis: &ProfileAnalysis{
+			MatchScore:          72,
+			Summary:             "岗位匹配度中等，建议探索项目细节。",
+			YearsGap:            0,
+			MatchedRequirements: []string{"go"},
+			MissingRequirements: []string{"redis"},
+			Strengths:           []string{"技能命中：go"},
+			RiskPoints:          []string{"JD 技能未覆盖：redis。"},
+			ResumeSuggestions:   []string{"补充 redis 的项目证据。"},
+			QuestionFocus:       []string{"redis"},
+			ProjectProbePlan: []ProjectProbePlan{
+				{
+					ProjectName:       "缓存服务",
+					Focus:             "redis",
+					Evidence:          "做过缓存优化",
+					SuggestedQuestion: "你在缓存服务中如何落地 redis？",
+				},
+			},
+		},
 		CandidatePool: []Question{
 			{ID: "q1", Content: "what is GMP", Tags: []string{"go"}, Difficulty: 3, Source: "rag-1"},
 		},
@@ -72,6 +91,32 @@ func TestSession_JSONRoundTrip(t *testing.T) {
 			Reasoning: "Go 已确认，下一题切到 Redis",
 			DecidedAt: now,
 		},
+		Report: &Report{
+			SessionID:      "sess-001",
+			OverallScore:   80,
+			SkillBreakdown: map[string]int{"go": 80},
+			TranscriptAnalysis: &TranscriptAnalysis{
+				RoundsAnalyzed:     1,
+				AverageAnswerChars: 42,
+				Dimensions: []TranscriptDimension{
+					{Name: "技术相关性", Score: 80, Evidence: []string{"平均分 80"}, Advice: "继续保持"},
+				},
+				Patterns: []string{"回答有结构"},
+			},
+			DrillPlan: []DrillPlanItem{
+				{
+					PracticeOrder:          1,
+					Skill:                  "redis",
+					Reason:                 "薄弱技能",
+					TargetScore:            75,
+					RecommendedQuestionIDs: []string{"redis-001"},
+					RecommendedQuestions:   []string{"缓存击穿怎么处理？"},
+				},
+			},
+			Highlights:   []string{"亮点"},
+			Improvements: []string{"改进"},
+			NextSteps:    []string{"下一步"},
+		},
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
@@ -92,11 +137,17 @@ func TestSession_JSONRoundTrip(t *testing.T) {
 	if got.JobProfile == nil || got.JobProfile.Title != "Go Backend" {
 		t.Errorf("job profile lost: %+v", got.JobProfile)
 	}
+	if got.ProfileAnalysis == nil || got.ProfileAnalysis.MatchScore != 72 {
+		t.Errorf("profile analysis lost: %+v", got.ProfileAnalysis)
+	}
 	if len(got.Rounds) != 1 || got.Rounds[0].Question.ID != "q1" {
 		t.Errorf("rounds lost: %+v", got.Rounds)
 	}
 	if got.PendingDecision == nil || got.PendingDecision.Action != ActionAskNew {
 		t.Errorf("pending decision lost: %+v", got.PendingDecision)
+	}
+	if got.Report == nil || got.Report.TranscriptAnalysis == nil || len(got.Report.DrillPlan) != 1 {
+		t.Errorf("report analysis lost: %+v", got.Report)
 	}
 	if got.WorkingMemory == nil || got.WorkingMemory.MaxRounds != 8 {
 		t.Errorf("working memory lost: %+v", got.WorkingMemory)
@@ -120,7 +171,7 @@ func TestSession_OmitEmpty(t *testing.T) {
 	out := string(raw)
 	for _, banned := range []string{
 		"job_profile", "candidate_profile", "candidate_pool",
-		"rounds", "working_memory", "pending_decision", "report",
+		"profile_analysis", "rounds", "working_memory", "pending_decision", "report",
 	} {
 		if strings.Contains(out, banned) {
 			t.Errorf("expected %q to be omitted, got: %s", banned, out)
@@ -222,14 +273,14 @@ func TestSession_MigrateLegacyState_MovesNotesProtocols(t *testing.T) {
 	s := &Session{
 		WorkingMemory: &WorkingMemory{
 			Notes: map[string]string{
-				"reflect_topic":               "redis",
-				"scored_rounds":               "3",
-				"degraded_rounds":             "2",
-				"eval_degraded":               "true",
-				"eval_degraded_reason":        "llm timeout",
-				"rag_degraded":                "true",
-				"probe_eval_degraded_reason":  "schema retry exhausted",
-				"keep_me":                     "still metadata",
+				"reflect_topic":              "redis",
+				"scored_rounds":              "3",
+				"degraded_rounds":            "2",
+				"eval_degraded":              "true",
+				"eval_degraded_reason":       "llm timeout",
+				"rag_degraded":               "true",
+				"probe_eval_degraded_reason": "schema retry exhausted",
+				"keep_me":                    "still metadata",
 			},
 		},
 	}

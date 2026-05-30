@@ -1,0 +1,12 @@
+{
+  "change": "question-bank-import-enrichment",
+  "phase": "design",
+  "canonical_spec": "openspec",
+  "mode": "compact",
+  "sha256": "77076e1d312fbbc818f0f92ce8cb9dbe9a384881ee0adaaa209313f557e6405f",
+  "sources": [
+    "openspec/changes/question-bank-import-enrichment/proposal.md",
+    "openspec/changes/question-bank-import-enrichment/design.md",
+    "openspec/changes/question-bank-import-enrichment/tasks.md"
+  ]
+}

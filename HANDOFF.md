@@ -19,10 +19,10 @@
 - 阶段 0：仓库初始化、Go module、配置加载、LLM/Embedding 抽象、HTTP 骨架、observability 基础。
 - 阶段 1：领域模型、PDF/DOCX 解析、PG migration。
 - 阶段 2.1：`AnswerRound` / `WorkingMemory` / `Critic` / `Decision` / `FollowUp`。
-- 阶段 2.2： Graph 框架，含 `ErrSuspended` / `Resume`。
+- 阶段 2.2：Graph 框架，含 `ErrSuspended` / `Resume`。
 - 阶段 2.3：`RealChatModel`，OpenAI-compatible HTTP，重试与 JSON schema 自校正。
 - 阶段 2.4：pgvector Retriever、LinearFusion、`cmd/reindex`、seeds。
-- 阶段 2.5：Setup 节点：`parse_jd`、`parse_resume`、`gap_analyze`、`retrieve_rag`。
+- 阶段 2.5：Setup 节点：`parse_jd`、`parse_resume`、`gap_analyze`、`analyze_profile`、`retrieve_rag`。
 - 阶段 2.6：Agent loop 节点：`pick_next`、`evaluate`、`critic`、`refine`、`probe_ask`、`probe_eval`、`update_memory`、`reflection_check`。
 - 阶段 2.7：真实 `report` 节点、`internal/graphs.BuildInterviewGraph`、agent loop 集成测试改用真实 report。
 - 阶段 2.8：最小 HTTP 接入：`POST /api/interview/start`、`POST /api/interview/answer`，内存 session store。
@@ -86,31 +86,42 @@
 - Real LLM 模式已接进程内并发 limiter：`llm.max_concurrency` 默认 4；等待 limiter 时尊重 request context，超时不会进入真实 LLM 调用。
 - Real LLM 模式已加熔断器 `BreakingChatModel`，链路 `real → limited → breaker`（breaker 在最外层避免抢 limiter 槽位）。`llm.breaker_failure_threshold` 默认 5，`llm.breaker_open_duration` 默认 30s；只统计 `ErrTransient` 和 `context.DeadlineExceeded`，`ErrPermanent` / `ErrSchemaInvalid` / `context.Canceled` 不计入。open 时直接返回新哨兵 `ErrBreakerOpen`，不 wrap `ErrTransient`，避免上游误重试；半开期只允许 1 个 probe。
 - `/readyz` 在 breaker 处于 `open` 时返回 200 + `{"status":"degraded","llm_breaker":"open"}`（不返 503）；节点降级路径仍可答题，k8s 不应把 pod 拉出 service。
-- HTTP 入口背压：`MaxInFlightMiddleware` 用 buffered chan 做非阻塞 try-acquire；短请求背压只挂在 `/api/interview/start` 和 `/api/interview/answer` 上，`/healthz`、`/readyz`、`/api/interview/sessions` 不受影响。超限返回 503 + `Retry-After: 1` + JSON `retry_after_seconds: 1`，与 lease 冲突的 409 协议保持一致。`server.max_in_flight` 默认 200，<= 0 时 middleware 退化为 no-op。
-- SSE 长连接已有独立背压：`server.max_streams` 默认 100，单独挂在 `/api/interview/stream`，复用 503 + `Retry-After: 1` 协议；不占用 `start/answer` 的 `server.max_in_flight` 短请求容量。
+- HTTP 入口背压：`MaxInFlightMiddleware` 用 buffered chan 做非阻塞 try-acquire；只挂在 `/api/interview/start` 和 `/api/interview/answer` 上，`/healthz`、`/readyz`、`/api/interview/stream`、`/api/interview/sessions` 不受影响。超限返回 503 + `Retry-After: 1` + JSON `retry_after_seconds: 1`，与 lease 冲突的 409 协议保持一致。`server.max_in_flight` 默认 200，<= 0 时 middleware 退化为 no-op。
 - `InterviewService` 现在带内存事件总线，`graph.Callback` 会把节点 start/end/error 事件发到同一条流里。
 - `internal/llm/recording.go`：新增 `RecordingChatModel` 装饰器（必须放在 BreakingChatModel 外层，记录 `ErrBreakerOpen` / `context.Canceled` 也算分类），导出 `CallRecord` 与 `ClassifyChatErr` 给 demo / observability 共用。
 - `internal/observability/recording_callback.go`：新增 `RecordingCallback` 实现 `graph.Callback`，跟踪节点 start/end/error 落 `NodeRecord`；同名节点 loop 多次访问安全。
 - `internal/llm/schema.go`：`CallWithSchema` 每次 attempt 发 `event=llm_schema_attempt`（debug），每次 validation 失败发 `event=llm_schema_validation_failed`（info），便于 demo 报告统计 schema-retry 次数。
 - `internal/llm/factory.go`：把 `cmd/server` 的 `buildChatModel` 抽成导出 `llm.BuildChatModel`，`cmd/server` / `cmd/demo` 共用同一份装配逻辑。
-- `cmd/demo/`：新增独立 CLI（不启 HTTP，不依赖 PG / Redis），按 YAML 脚本驱动整图跑完一次面试，把 LLM 调用 / 节点 timeline / 最终报告落到 `{out}/run.json` + `{out}/report.md`。包括 `script.go`（YAML schema）、`answer.go`（fillPendingAnswer 镜像）、`output.go`（机器/人读双产物）、`main.go`（编排 + 用 slog handler 计数 schema retry）、`main_test.go`（mock 模式回归）。
+- `cmd/demo/`：新增独立 CLI（不启 HTTP，不依赖 Redis；设置 `INTERVIEW_POSTGRES_DSN` 时使用 PGVectorRetriever，否则 fallback），按 YAML 脚本驱动整图跑完一次面试，把 LLM 调用 / 节点 timeline / retriever 类型 / 最终报告落到 `{out}/run.json` + `{out}/report.md`。包括 `script.go`（YAML schema）、`answer.go`（fillPendingAnswer 镜像）、`output.go`（机器/人读双产物）、`main.go`（编排 + 用 slog handler 计数 schema retry）、`main_test.go`（mock 模式回归）。
 - `testdata/demo/example.yaml`：示例脚本，Go 后端 JD + 简历 + 3 条候选人回答。
 - `Makefile`：新增 `demo-mock`（mock LLM 跑完整 demo）和 `demo-real`（前置校验 `INTERVIEW_LLM_API_KEY`，操作者手动跑）。
 - `.gitignore`：新增 `tmp/demos/`，每次 demo 落盘的 timestamp 子目录默认不入仓。
-- Mock demo 本地已验证通过：`go run ./cmd/demo -config config/config.yaml.example -script testdata/demo/example.yaml`，产物在 `tmp/demos/20260526-201218`；结果为 1 轮、6 次 LLM 调用、0 schema retry、无错误。
-- 操作者真实 LLM demo 已跑通：约 54 秒完成完整面试，25 次 LLM 调用，0 schema retry，0 errors，breaker 最终 `closed`，token 约 prompt 10.8k + completion 2k；最终分数 28 是固定答案与动态题目不匹配导致的合理低分，不是流程 bug。
-- Embedding 默认配置已统一到 `question_bank.embedding vector(1024)`：默认模型改为 `text-embedding-v4`，`MockEmbedder(0)` 默认 1024；新增 `INTERVIEW_EMBEDDING_BASE_URL` / `INTERVIEW_EMBEDDING_MODEL` / `INTERVIEW_EMBEDDING_DIMENSION`，可接本地 OpenAI-compatible BGE-M3 服务。
+- `internal/httpapi/web/`：新增内嵌 Web 前端，覆盖 JD / 简历输入、练习 / 考试模式、历史会话、SSE 事件时间线、回答栏和报告展示。
+- `internal/httpapi/documents.go` / `internal/parser/text.go`：新增简历上传解析接口，Dispatcher 支持 PDF / DOCX / TXT / Markdown，Web 端可上传后填充简历文本。
+- `internal/httpapi/metrics.go`：`/metrics` 覆盖 HTTP request、parser document、SSE active/total、Graph node total / duration summary、LLM calls / duration summary / tokens、breaker state、in-flight 和 backpressure rejection。
+- `internal/httpapi/metrics_graph_callback.go`：新增 Graph metrics callback，按 node + status 记录节点执行次数和耗时。
+- `internal/llm/recording.go`：`RecordingChatModel` 支持可选 observer，server 用它把每次 LLM 调用同步写入 metrics，demo 原有 Snapshot 行为不变。
+- `cmd/server/main.go`：server 启动时先创建 metrics recorder，再把 Graph callback 和 LLM observer 注入 runner；`/metrics` 现在能反映真实 start/answer 链路。
+- `migrations/003_question_bank_metadata.*.sql`：给 `question_bank` 增加 `scenario`、`role_tags`、`rubric`、`sample_answer`、`follow_up_hints`、`locale`、`status`、`updated_at`，为题库产品化打底。
+- `internal/questionbank/`：新增题库只读 Store，包含 memory seed store 和 PG store；默认只暴露 active 题。
+- `internal/httpapi/question_bank.go`：新增题库预览 API：`GET /api/question-bank`、`GET /api/question-bank/:id`、`GET /api/question-bank/facets`。候选人视图隐藏答案/评分字段，`view=admin` 返回完整元数据。
+- `cmd/reindex/main.go`：seed/reindex 已能写入题库元数据并在冲突更新时刷新 `updated_at`。
+- `seeds/question_bank.json`：先给 Go 基础题补了少量 rubric / sample_answer / follow_up_hints，证明新字段链路。
+- `Makefile`：新增 `demo-web` / `demo-web-real` / `test-core`，用于本地 Web 演示和核心回归。
+- `internal/nodes/analyze_profile.go` / `domain.ProfileAnalysis`：新增确定性 JD-简历匹配分析，不额外调用 LLM；输出匹配分、命中/缺失要求、风险点、简历优化建议和项目追问计划，Web 面试页与报告页会展示。
+- `domain.Report` / `internal/nodes/report.go`：新增 `TranscriptAnalysis` 和 `DrillPlan`，参考 interview-coach 的 transcript analysis / drill plan 思路，但用本地 `Rounds + WorkingMemory` 确定性生成，不额外调用 LLM。`DrillPlan` 会优先从本轮 `CandidatePool` 关联题库题 ID，Web 报告页和 demo `report.md` 已展示。
 
 ## 4. 当前已知风险 / TODO
 
 - Mock LLM 已有内置 demo 响应，可以无 fixture 跑通最小 start/answer；未知 prompt 仍会返回 fixture missing。
+- 题库 API 已是只读预览；还没有新增/编辑/禁用题目的管理接口，也没有前端题库页。
 - HTTP session store 已抽象；无 DSN 仍是内存 map，有 DSN 时可落 PG `sessions.state_json`。Redis snapshot / lease 已接入 start/get/answer 主流程，基础多实例 takeover 已完成。
 - `WorkingMemory.ScoredRounds` / `DegradedRounds` 已提成强类型字段；`ReflectTopic` 已作为 reflection_check → pick_next 的强类型补漏信号；降级原因已集中到 `DegradedReasons`；`Notes` 不再承载主流程协议，只兼容旧 `reflect_topic`。
 - `Score = -1` 仍是评估失败哨兵；所有统计逻辑必须先判 `<0`。
-- `cmd/server` 已接 PG session store、session list/get API 和 Redis coordinator；PG 侧仍只是 `sessions.state_json` 快照存储，不是完整 repository 层。
-- SSE 长连接独立计数器已完成；`server.max_streams <= 0` 时同样退化为 no-op，便于测试和单机开发。
-- 真实 LLM demo 流程已搭好并已由操作者本地验证：prompt schema 稳定，provider 调用无错误，报告能识别答非所问并给出合理低分；尚无跨多次运行的 prompt regression diff。
-- 还没有 Prometheus metrics。
+- `cmd/server` 已接最小 PG session store；还没有 repository 层的 lease / takeover / list sessions 等能力。
+- SSE 流已有 `server.max_streams` 背压和 `/metrics` active/total / rejection 计数；还缺 dropped event 与连接 duration 细分指标。
+- 真实 LLM demo 流程已搭好并已由操作者本地验证：prompt schema 稳定，provider 调用无错误，报告能识别答非所问并给出合理低分；`cmd/demo` 现在会在 `INTERVIEW_POSTGRES_DSN` 存在时走真实 PG/pgvector 题库，`run.json.config.retriever` 会明确记录 `pgvector` / `fallback`；尚无跨多次运行的 prompt regression diff。
+- `/metrics` 已有 HTTP / parser / SSE / Graph / LLM / breaker / backpressure；当前 duration 用 summary count/sum，没有接 Prometheus SDK histogram bucket。
 - README 已修正为自研 Graph，但设计文档里可能仍有 Eino/阶段旧描述。
 - 当前环境多次出现 Windows sandbox `CreateProcessAsUserW failed: 1920`，导致 `gofmt`、`git status`、`go build`、`sh -n` 偶发无法执行；`go test ./... -count=1` 已通过。
 
@@ -162,9 +173,11 @@ pgvector / PG session store 集成测试受 `INTEGRATION=1` + `INTERVIEW_POSTGRE
 
 推荐顺序：
 
-1. 跨多次 demo 运行的 prompt regression diff 工具（基于 `run.json` 做 token / schema_retries / report 评分趋势比较）。
-2. 改进 demo 脚本答案策略：让脚本能按实际问题匹配回答，避免固定答案被动态题目错位消费，便于更稳定地评估报告质量。
-3. 服务端 Prometheus / OTel metrics：熔断器状态、in-flight gauge、503 / 409 计数。
+1. 真实浏览器流程验收：`make demo-web` 或 `go run ./cmd/server -config config/config.yaml.example`，跑上传简历、开始面试、SSE 更新、回答、报告、历史会话切换。
+2. 前端题库预览页：搜索、技能/场景/难度/标签过滤、候选人视图隐藏答案、admin 视图展示 rubric。
+3. 扩充 seed：优先 Go / Redis / PG / troubleshooting，每类补足 rubric、sample_answer、follow_up_hints。
+4. 面试前题库范围选择：把 skill/scenario/difficulty/tag 选择传入 session，影响 retrieve_rag 查询。
+5. OTel tracing：贯穿 HTTP → Graph → LLM / Parser / Retriever，能按 trace_id 定位慢节点。
 
 ## 8. 不要做哪些事
 - 不要在 router 里做副作用。

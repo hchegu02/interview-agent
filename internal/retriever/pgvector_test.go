@@ -63,11 +63,12 @@ type seedRow struct {
 // 每条题目向量都"指向"一个特定 query，让我们能验证检索排序符合预期。
 //
 // 设计逻辑：
-//   query = q1（vector 偏向 "go_concurrency"）
-//   - go1：vector 完全相同 + tag 命中（应该排第一）
-//   - go2：vector 接近 + tag 命中（次之）
-//   - redis1：vector 远 + tag 不命中（不应进 top）
-//   - mixed：vector 接近 + tag 部分命中
+//
+//	query = q1（vector 偏向 "go_concurrency"）
+//	- go1：vector 完全相同 + tag 命中（应该排第一）
+//	- go2：vector 接近 + tag 命中（次之）
+//	- redis1：vector 远 + tag 不命中（不应进 top）
+//	- mixed：vector 接近 + tag 部分命中
 func seedTestData(t *testing.T, pool *pgxpool.Pool) []seedRow {
 	t.Helper()
 	ctx := context.Background()
@@ -176,7 +177,7 @@ func TestIntegration_Retrieve_HybridScoring(t *testing.T) {
 	// 用 mixed1 的 embedding + 只给 redis_ha tag
 	// → mixed1 自己应该第一（vector 完美 + tag 命中）
 	results, err := r.Retrieve(ctx, Query{
-		QueryEmbedding: rows[6].embedding, // mixed1
+		QueryEmbedding: rows[6].embedding,    // mixed1
 		Tags:           []string{"sentinel"}, // 别名 → redis_ha
 		Difficulty:     4,
 		K:              5,
@@ -297,6 +298,65 @@ func TestIntegration_VectorLiteralFormat(t *testing.T) {
 	}
 	if got == "" {
 		t.Fatal("empty literal")
+	}
+}
+
+func TestRetrieveSQLIncludesQuestionBankHardFilters(t *testing.T) {
+	for _, want := range []string{
+		"skill_category = ANY($6::text[])",
+		"scenario = ANY($7::text[])",
+		"difficulty >= $8",
+		"difficulty <= $9",
+		"tags && $10::text[]",
+		"embedding IS NOT NULL",
+		"status = 'active'",
+		"embedding_status = 'embedded'",
+	} {
+		if !strings.Contains(retrieveSQL, want) {
+			t.Fatalf("retrieveSQL missing hard filter %q", want)
+		}
+	}
+}
+
+func TestRetrieveSQLRequiresEmbeddedActiveItemsInBothCandidatePaths(t *testing.T) {
+	for _, cte := range []string{"vector_candidates", "tag_candidates"} {
+		start := strings.Index(retrieveSQL, cte+" AS MATERIALIZED")
+		if start < 0 {
+			t.Fatalf("retrieveSQL missing %s CTE", cte)
+		}
+		end := strings.Index(retrieveSQL[start:], "),")
+		if end < 0 {
+			t.Fatalf("retrieveSQL malformed %s CTE", cte)
+		}
+		body := retrieveSQL[start : start+end]
+		for _, want := range []string{"status = 'active'", "embedding_status = 'embedded'", "embedding IS NOT NULL"} {
+			if !strings.Contains(body, want) {
+				t.Fatalf("%s CTE missing %q", cte, want)
+			}
+		}
+	}
+}
+
+func TestLinearFusionPreservesExpectedPoints(t *testing.T) {
+	fusion := NewLinearFusion(0, 0, 0)
+	results := fusion.Fuse([]Candidate{{
+		ID:             "go-expected",
+		Content:        "GMP",
+		Tags:           []string{"go"},
+		Difficulty:     3,
+		Category:       "go",
+		VecDist:        0,
+		QueryTagCount:  1,
+		TagOverlap:     1,
+		TargetDiff:     3,
+		ExpectedPoints: []string{"G/M/P 三者定义", "work stealing"},
+	}})
+
+	if len(results) != 1 {
+		t.Fatalf("results = %d, want 1", len(results))
+	}
+	if got := results[0].ExpectedPoints; len(got) != 2 || got[0] != "G/M/P 三者定义" {
+		t.Fatalf("expected points not preserved: %+v", got)
 	}
 }
 

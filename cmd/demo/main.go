@@ -5,9 +5,10 @@
 //
 //	go run ./cmd/demo -config config/config.yaml.example -script testdata/demo/example.yaml
 //
-// 不启 HTTP，不依赖 PG / Redis：
-//   - retriever 走 fallback（永远返回错误，retrieve_rag 节点会自动用静态题库）
-//   - embedding 永远 mock（节省真实 quota）
+// 不启 HTTP，不依赖 Redis：
+//   - 设置 INTERVIEW_POSTGRES_DSN 时 retriever 走 PGVectorRetriever
+//   - 未设置 INTERVIEW_POSTGRES_DSN 时 retriever 走 fallback
+//   - embedding 按 config 构造；真实 pgvector demo 要和 reindex 使用同一 embedding 模型
 //   - session 状态保存在内存里，跑完即丢
 //
 // 操作者跑真实 LLM：用 `make demo-real`，前置校验 INTERVIEW_LLM_API_KEY。
@@ -33,6 +34,8 @@ import (
 	"interview-agent/internal/llm"
 	"interview-agent/internal/observability"
 	"interview-agent/internal/retriever"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func main() {
@@ -79,14 +82,14 @@ func run(cfgPath, scriptPath, outDir string, stdout, stderr io.Writer) int {
 
 	cfg, err := config.Load(cfgPath)
 	if err != nil {
-		writeFatal(outDir, startedAt, nil, nil, nil, "", schemaRetries.Load(), fmt.Sprintf("config load: %v", err), cfgPath, scriptPath)
+		writeFatal(outDir, startedAt, nil, nil, nil, "", "", schemaRetries.Load(), fmt.Sprintf("config load: %v", err), cfgPath, scriptPath)
 		fmt.Fprintf(stderr, "ERROR: config load: %v\n", err)
 		return 1
 	}
 
 	script, err := LoadScript(scriptPath)
 	if err != nil {
-		writeFatal(outDir, startedAt, cfg, nil, nil, "", schemaRetries.Load(), fmt.Sprintf("script load: %v", err), cfgPath, scriptPath)
+		writeFatal(outDir, startedAt, cfg, nil, nil, "", "", schemaRetries.Load(), fmt.Sprintf("script load: %v", err), cfgPath, scriptPath)
 		fmt.Fprintf(stderr, "ERROR: script load: %v\n", err)
 		return 1
 	}
@@ -95,15 +98,27 @@ func run(cfgPath, scriptPath, outDir string, stdout, stderr io.Writer) int {
 	//    breakerState 仅 real 模式非 nil。
 	innerModel, breakerState, err := llm.BuildChatModel(cfg)
 	if err != nil {
-		writeFatal(outDir, startedAt, cfg, nil, nil, "", schemaRetries.Load(), fmt.Sprintf("build chat model: %v", err), cfgPath, scriptPath)
+		writeFatal(outDir, startedAt, cfg, nil, nil, "", "", schemaRetries.Load(), fmt.Sprintf("build chat model: %v", err), cfgPath, scriptPath)
 		fmt.Fprintf(stderr, "ERROR: build chat model: %v\n", err)
 		return 1
 	}
 	recordModel := llm.NewRecordingChatModel(innerModel)
 
-	// 3. Embedder 永远 mock（demo 节省 quota）；retriever 用 fallback。
-	embedder := embedding.NewMockEmbedder(cfg.Embedding.Dimension)
-	r := fallbackRetriever{}
+	// 3. 构造 embedder + retriever。
+	//    真实 pgvector demo 必须让查询 embedding 和 reindex embedding 来自同一模型。
+	embedder, err := buildDemoEmbedder(cfg)
+	if err != nil {
+		writeFatal(outDir, startedAt, cfg, nil, nil, "", "", schemaRetries.Load(), fmt.Sprintf("build embedder: %v", err), cfgPath, scriptPath)
+		fmt.Fprintf(stderr, "ERROR: build embedder: %v\n", err)
+		return 1
+	}
+	r, cleanupRetriever, retrieverKind, err := buildDemoRetriever(context.Background(), cfg)
+	if err != nil {
+		writeFatal(outDir, startedAt, cfg, nil, nil, "", retrieverKind, schemaRetries.Load(), fmt.Sprintf("build retriever: %v", err), cfgPath, scriptPath)
+		fmt.Fprintf(stderr, "ERROR: build retriever: %v\n", err)
+		return 1
+	}
+	defer cleanupRetriever()
 
 	// 4. 装 RecordingCallback；不用 InterviewGraphCallback（demo 不需要 SSE）。
 	cb := observability.NewRecordingCallback()
@@ -115,7 +130,7 @@ func run(cfgPath, scriptPath, outDir string, stdout, stderr io.Writer) int {
 		Callbacks: []graph.Callback{cb},
 	})
 	if err != nil {
-		writeFatal(outDir, startedAt, cfg, nil, nil, "", schemaRetries.Load(), fmt.Sprintf("build interview graph: %v", err), cfgPath, scriptPath)
+		writeFatal(outDir, startedAt, cfg, nil, nil, "", retrieverKind, schemaRetries.Load(), fmt.Sprintf("build interview graph: %v", err), cfgPath, scriptPath)
 		fmt.Fprintf(stderr, "ERROR: build interview graph: %v\n", err)
 		return 1
 	}
@@ -140,7 +155,7 @@ func run(cfgPath, scriptPath, outDir string, stdout, stderr io.Writer) int {
 
 	fmt.Fprintf(stdout, "demo: starting session %s\n", sess.ID)
 	if err := runner.Invoke(ctx, sess); err != nil {
-		writeFatal(outDir, startedAt, cfg, recordModel.Snapshot(), cb.Snapshot(), breakerStateValue(breakerState), schemaRetries.Load(), fmt.Sprintf("invoke: %v", err), cfgPath, scriptPath)
+		writeFatal(outDir, startedAt, cfg, recordModel.Snapshot(), cb.Snapshot(), breakerStateValue(breakerState), retrieverKind, schemaRetries.Load(), fmt.Sprintf("invoke: %v", err), cfgPath, scriptPath)
 		fmt.Fprintf(stderr, "ERROR: invoke: %v\n", err)
 		return 1
 	}
@@ -156,26 +171,26 @@ func run(cfgPath, scriptPath, outDir string, stdout, stderr io.Writer) int {
 		if answerIdx >= len(script.Answers) {
 			fmt.Fprintf(stderr, "ERROR: script answers exhausted at node %q (rounds=%d)\n", sess.CurrentNode, len(sess.Rounds))
 			endedAt := time.Now()
-			writeArtifacts(outDir, startedAt, endedAt, cfg, sess, recordModel.Snapshot(), cb.Snapshot(), breakerStateValue(breakerState), schemaRetries.Load(), "answers exhausted", cfgPath, scriptPath)
+			writeArtifacts(outDir, startedAt, endedAt, cfg, sess, recordModel.Snapshot(), cb.Snapshot(), breakerStateValue(breakerState), retrieverKind, schemaRetries.Load(), "answers exhausted", cfgPath, scriptPath)
 			return 1
 		}
 		ans := script.Answers[answerIdx]
 		answerIdx++
 		if err := fillPendingAnswer(sess, ans); err != nil {
-			writeFatal(outDir, startedAt, cfg, recordModel.Snapshot(), cb.Snapshot(), breakerStateValue(breakerState), schemaRetries.Load(), fmt.Sprintf("fill answer #%d: %v", answerIdx, err), cfgPath, scriptPath)
+			writeFatal(outDir, startedAt, cfg, recordModel.Snapshot(), cb.Snapshot(), breakerStateValue(breakerState), retrieverKind, schemaRetries.Load(), fmt.Sprintf("fill answer #%d: %v", answerIdx, err), cfgPath, scriptPath)
 			fmt.Fprintf(stderr, "ERROR: fill answer: %v\n", err)
 			return 1
 		}
 		fmt.Fprintf(stdout, "demo: filled answer #%d at node=%s (round=%d)\n", answerIdx, sess.CurrentNode, len(sess.Rounds))
 		if err := runner.Resume(ctx, sess); err != nil {
-			writeFatal(outDir, startedAt, cfg, recordModel.Snapshot(), cb.Snapshot(), breakerStateValue(breakerState), schemaRetries.Load(), fmt.Sprintf("resume #%d: %v", answerIdx, err), cfgPath, scriptPath)
+			writeFatal(outDir, startedAt, cfg, recordModel.Snapshot(), cb.Snapshot(), breakerStateValue(breakerState), retrieverKind, schemaRetries.Load(), fmt.Sprintf("resume #%d: %v", answerIdx, err), cfgPath, scriptPath)
 			fmt.Fprintf(stderr, "ERROR: resume: %v\n", err)
 			return 1
 		}
 	}
 
 	endedAt := time.Now()
-	writeArtifacts(outDir, startedAt, endedAt, cfg, sess, recordModel.Snapshot(), cb.Snapshot(), breakerStateValue(breakerState), schemaRetries.Load(), "", cfgPath, scriptPath)
+	writeArtifacts(outDir, startedAt, endedAt, cfg, sess, recordModel.Snapshot(), cb.Snapshot(), breakerStateValue(breakerState), retrieverKind, schemaRetries.Load(), "", cfgPath, scriptPath)
 
 	if sess.Report != nil {
 		fmt.Fprintf(stdout, "demo: completed, report overall_score=%d, rounds=%d, llm_calls=%d, schema_retries=%d\n",
@@ -187,11 +202,11 @@ func run(cfgPath, scriptPath, outDir string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func writeArtifacts(outDir string, startedAt, endedAt time.Time, cfg *config.Config, sess *domain.Session, llmCalls []llm.CallRecord, nodes []observability.NodeRecord, breakerStateFinal string, schemaRetries int64, fatalErr string, cfgPath, scriptPath string) {
+func writeArtifacts(outDir string, startedAt, endedAt time.Time, cfg *config.Config, sess *domain.Session, llmCalls []llm.CallRecord, nodes []observability.NodeRecord, breakerStateFinal, retrieverKind string, schemaRetries int64, fatalErr string, cfgPath, scriptPath string) {
 	art := &RunArtifact{
 		StartedAt:         startedAt,
 		EndedAt:           endedAt,
-		Config:            buildRunConfig(cfg, cfgPath, scriptPath, outDir),
+		Config:            buildRunConfig(cfg, cfgPath, scriptPath, outDir, retrieverKind),
 		Session:           sess,
 		LLMCalls:          llmCalls,
 		Nodes:             nodes,
@@ -209,21 +224,56 @@ func writeArtifacts(outDir string, startedAt, endedAt time.Time, cfg *config.Con
 
 // writeFatal 是 writeArtifacts 的早返版本：cfg / sess 等可能为 nil，
 // 仍尽量把已采集的数据落盘，方便操作者排查。
-func writeFatal(outDir string, startedAt time.Time, cfg *config.Config, llmCalls []llm.CallRecord, nodes []observability.NodeRecord, breakerStateFinal string, schemaRetries int64, fatalErr string, cfgPath, scriptPath string) {
-	writeArtifacts(outDir, startedAt, time.Now(), cfg, nil, llmCalls, nodes, breakerStateFinal, schemaRetries, fatalErr, cfgPath, scriptPath)
+func writeFatal(outDir string, startedAt time.Time, cfg *config.Config, llmCalls []llm.CallRecord, nodes []observability.NodeRecord, breakerStateFinal, retrieverKind string, schemaRetries int64, fatalErr string, cfgPath, scriptPath string) {
+	writeArtifacts(outDir, startedAt, time.Now(), cfg, nil, llmCalls, nodes, breakerStateFinal, retrieverKind, schemaRetries, fatalErr, cfgPath, scriptPath)
 }
 
-func buildRunConfig(cfg *config.Config, cfgPath, scriptPath, outDir string) RunConfig {
+func buildRunConfig(cfg *config.Config, cfgPath, scriptPath, outDir, retrieverKind string) RunConfig {
 	rc := RunConfig{
 		ScriptPath: scriptPath,
 		OutputDir:  outDir,
+		Retriever:  retrieverKind,
 	}
 	if cfg != nil {
 		rc.LLMMode = cfg.LLM.Mode
 		rc.LLMModel = cfg.LLM.Model
 		rc.EmbeddingMode = cfg.Embedding.Mode
+		rc.EmbeddingModel = cfg.Embedding.Model
+		rc.PostgresConfigured = cfg.PostgresDSN != ""
 	}
 	return rc
+}
+
+func buildDemoEmbedder(cfg *config.Config) (embedding.Embedder, error) {
+	switch cfg.Embedding.Mode {
+	case "mock":
+		return embedding.NewMockEmbedder(cfg.Embedding.Dimension), nil
+	case "real":
+		return embedding.NewRealEmbedder(
+			cfg.Embedding.BaseURL,
+			cfg.EmbeddingAPIKey,
+			cfg.Embedding.Model,
+			cfg.Embedding.Dimension,
+			cfg.Embedding.Timeout,
+		), nil
+	default:
+		return nil, fmt.Errorf("unsupported embedding mode %q", cfg.Embedding.Mode)
+	}
+}
+
+func buildDemoRetriever(ctx context.Context, cfg *config.Config) (retriever.Retriever, func(), string, error) {
+	if cfg.PostgresDSN == "" {
+		return fallbackRetriever{}, func() {}, "fallback", nil
+	}
+	pool, err := pgxpool.New(ctx, cfg.PostgresDSN)
+	if err != nil {
+		return nil, func() {}, "pgvector", fmt.Errorf("connect postgres: %w", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, func() {}, "pgvector", fmt.Errorf("ping postgres: %w", err)
+	}
+	return retriever.NewPGVectorRetriever(pool, nil), pool.Close, "pgvector", nil
 }
 
 func breakerStateValue(fn func() string) string {

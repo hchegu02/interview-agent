@@ -5,6 +5,7 @@
 //   - up 和 down 配对
 //   - up 里 CREATE 的表，down 里都有 DROP
 //   - 关键扩展 / 索引声明存在
+//
 // 真正的"能跑通"验证靠 Stage 1.4 的 docker integration 测试。
 package migrations
 
@@ -103,5 +104,136 @@ func TestSeedFile(t *testing.T) {
 	}
 	if !strings.Contains(seed, "ON CONFLICT (id) DO NOTHING") {
 		t.Error("seed should be idempotent via ON CONFLICT")
+	}
+}
+
+func TestQuestionBankExpectedPointsColumn(t *testing.T) {
+	up := read(t, "001_init.up.sql")
+	if !strings.Contains(up, "expected_points") {
+		t.Fatal("question_bank should store expected_points from seed data")
+	}
+	if !strings.Contains(up, "expected_points  text[]") && !strings.Contains(up, "expected_points text[]") {
+		t.Fatal("expected_points should be a text[] column")
+	}
+}
+
+func TestQuestionBankMetadataMigration(t *testing.T) {
+	up := read(t, "003_question_bank_metadata.up.sql")
+	down := read(t, "003_question_bank_metadata.down.sql")
+	for _, col := range []string{
+		"scenario",
+		"role_tags",
+		"rubric",
+		"sample_answer",
+		"follow_up_hints",
+		"locale",
+		"status",
+		"updated_at",
+	} {
+		if !strings.Contains(up, col) {
+			t.Fatalf("metadata migration missing column %q", col)
+		}
+		if !strings.Contains(down, "DROP COLUMN IF EXISTS "+col) {
+			t.Fatalf("metadata down migration should drop column %q", col)
+		}
+	}
+	if !strings.Contains(up, "idx_question_bank_status") {
+		t.Fatal("metadata migration should add status index")
+	}
+	if !strings.Contains(up, "idx_question_bank_scenario") {
+		t.Fatal("metadata migration should add scenario index")
+	}
+}
+
+func TestQuestionBankImportMigration(t *testing.T) {
+	up := read(t, "004_question_bank_imports.up.sql")
+	down := read(t, "004_question_bank_imports.down.sql")
+	for _, tbl := range []string{
+		"question_bank_import_jobs",
+		"question_bank_import_chunks",
+		"question_bank_import_items",
+	} {
+		if !strings.Contains(up, "CREATE TABLE IF NOT EXISTS "+tbl) {
+			t.Fatalf("import migration missing table %q", tbl)
+		}
+		if !strings.Contains(down, "DROP TABLE IF EXISTS "+tbl) {
+			t.Fatalf("import migration down should drop table %q", tbl)
+		}
+	}
+	for _, idx := range []string{
+		"idx_qb_import_jobs_status",
+		"idx_qb_import_chunks_job",
+		"idx_qb_import_items_job_status",
+	} {
+		if !strings.Contains(up, idx) {
+			t.Fatalf("import migration missing index %q", idx)
+		}
+	}
+}
+
+func TestQuestionBankEmbeddingStatusMigration(t *testing.T) {
+	up := read(t, "005_question_bank_embedding_status.up.sql")
+	down := read(t, "005_question_bank_embedding_status.down.sql")
+	for _, col := range []string{
+		"embedding_status",
+		"embedding_model",
+		"embedded_at",
+		"embedding_error",
+	} {
+		if !strings.Contains(up, col) {
+			t.Fatalf("embedding status migration missing column %q", col)
+		}
+		if !strings.Contains(down, "DROP COLUMN IF EXISTS "+col) {
+			t.Fatalf("embedding status down migration should drop column %q", col)
+		}
+	}
+	if !strings.Contains(up, "idx_question_bank_embedding_status") {
+		t.Fatal("embedding status migration should add status index")
+	}
+	if !strings.Contains(up, "embedding IS NOT NULL") {
+		t.Fatal("embedding status migration should mark existing vectors as embedded")
+	}
+}
+
+func TestQuestionBankImportReviewStatusMigration(t *testing.T) {
+	up := read(t, "007_question_bank_import_review_status.up.sql")
+	down := read(t, "007_question_bank_import_review_status.down.sql")
+	if !strings.Contains(up, "review_status") {
+		t.Fatal("import review migration missing review_status column")
+	}
+	if !strings.Contains(up, "idx_qb_import_items_job_review") {
+		t.Fatal("import review migration should add review index")
+	}
+	if !strings.Contains(down, "DROP COLUMN IF EXISTS review_status") {
+		t.Fatal("import review down migration should drop review_status column")
+	}
+}
+
+func TestQuestionBankImportFieldProvenanceMigration(t *testing.T) {
+	up := read(t, "008_question_bank_import_field_provenance.up.sql")
+	down := read(t, "008_question_bank_import_field_provenance.down.sql")
+	for _, token := range []string{"question_bank_import_items", "field_provenance", "jsonb"} {
+		if !strings.Contains(up, token) {
+			t.Fatalf("import field provenance migration missing %q", token)
+		}
+	}
+	if !strings.Contains(down, "DROP COLUMN IF EXISTS field_provenance") {
+		t.Fatal("import field provenance down migration should drop field_provenance column")
+	}
+}
+
+func TestQuestionBankImportLeaseMigration(t *testing.T) {
+	up := read(t, "006_question_bank_import_lease.up.sql")
+	down := read(t, "006_question_bank_import_lease.down.sql")
+	for _, col := range []string{"owner_id", "lease_until"} {
+		if !strings.Contains(up, col) {
+			t.Fatalf("import lease migration missing column %q", col)
+		}
+		if !strings.Contains(down, "DROP COLUMN IF EXISTS "+col) {
+			t.Fatalf("import lease down migration should drop column %q", col)
+		}
+	}
+	if !strings.Contains(up, "idx_qb_import_jobs_lease") {
+		t.Fatal("import lease migration should add lease index")
 	}
 }

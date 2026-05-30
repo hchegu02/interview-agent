@@ -30,6 +30,10 @@ const inflightRetryAfter = time.Second
 // /healthz、/readyz、sessions 读路径不参与，保证健康检查/读路径即使在 LLM
 // 路径压满时仍可用。
 func MaxInFlightMiddleware(limit int) gin.HandlerFunc {
+	return MaxInFlightMiddlewareWithMetrics(limit, nil, "")
+}
+
+func MaxInFlightMiddlewareWithMetrics(limit int, recorder *metricsRecorder, scope string) gin.HandlerFunc {
 	if limit <= 0 {
 		// 关闭背压：直接透传。
 		return func(c *gin.Context) { c.Next() }
@@ -38,9 +42,14 @@ func MaxInFlightMiddleware(limit int) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		select {
 		case sem <- struct{}{}:
-			defer func() { <-sem }()
+			endMetrics := recorder.beginInFlight(scope)
+			defer func() {
+				endMetrics()
+				<-sem
+			}()
 			c.Next()
 		default:
+			recorder.recordBackpressureRejection(scope)
 			retryAfterSeconds := int(inflightRetryAfter.Seconds())
 			c.Header("Retry-After", strconv.Itoa(retryAfterSeconds))
 			c.AbortWithStatusJSON(http.StatusServiceUnavailable, gin.H{

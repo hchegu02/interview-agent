@@ -32,8 +32,8 @@ func (s *stubChatModel) Stream(ctx context.Context, messages []llm.Message, opts
 
 type stubEmbedder struct{}
 
-func (s stubEmbedder) Name() string     { return "stub" }
-func (s stubEmbedder) Dimension() int    { return 1024 }
+func (s stubEmbedder) Name() string   { return "stub" }
+func (s stubEmbedder) Dimension() int { return 1024 }
 func (s stubEmbedder) Embed(ctx context.Context, texts []string) ([][]float32, error) {
 	out := make([][]float32, len(texts))
 	for i := range texts {
@@ -100,6 +100,9 @@ func TestBuildInterviewGraph_InvokeRunsSetupAndSuspendsAtPickNext(t *testing.T) 
 	}
 	if sess.GapReport == nil {
 		t.Fatal("gap report was not written")
+	}
+	if sess.ProfileAnalysis == nil {
+		t.Fatal("profile analysis was not written")
 	}
 	if len(sess.CandidatePool) != 1 || sess.CandidatePool[0].ID != "q1" {
 		t.Fatalf("candidate pool not loaded: %+v", sess.CandidatePool)

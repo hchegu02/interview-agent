@@ -55,6 +55,37 @@ func TestLoad_RealModeWithKey(t *testing.T) {
 	}
 }
 
+func TestLoad_YAMLAPIKeysWhenEnvUnset(t *testing.T) {
+	t.Setenv("INTERVIEW_LLM_MODE", "")
+	t.Setenv("INTERVIEW_LLM_API_KEY", "")
+	t.Setenv("INTERVIEW_EMBEDDING_MODE", "")
+	t.Setenv("INTERVIEW_EMBEDDING_API_KEY", "")
+
+	path := t.TempDir() + "/config.yaml"
+	raw := []byte(`
+llm:
+  mode: real
+  api_key: "sk-yaml"
+embedding:
+  mode: real
+  api_key: "embedding-yaml"
+`)
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.LLMAPIKey != "sk-yaml" {
+		t.Fatalf("llm api key = %q, want yaml key", cfg.LLMAPIKey)
+	}
+	if cfg.EmbeddingAPIKey != "embedding-yaml" {
+		t.Fatalf("embedding api key = %q, want yaml key", cfg.EmbeddingAPIKey)
+	}
+}
+
 func TestValidate_InvalidLLMMaxConcurrencyFails(t *testing.T) {
 	cfg := defaults()
 	cfg.LLM.MaxConcurrency = 0

@@ -23,6 +23,7 @@ type RecordingChatModel struct {
 	inner     ChatModel
 	now       func() time.Time
 	maxErrMsg int
+	observer  func(CallRecord)
 
 	mu      sync.Mutex
 	records []CallRecord
@@ -59,6 +60,15 @@ func NewRecordingChatModel(inner ChatModel) *RecordingChatModel {
 // Name 透传。Metrics 维度仍使用底层模型名。
 func (m *RecordingChatModel) Name() string {
 	return m.inner.Name()
+}
+
+// SetObserver 注册每条 CallRecord 写入后的同步回调。
+// 供 server 把 RecordingChatModel 同时作为 metrics 装饰器使用；demo 不设置时
+// 仍只走 Snapshot。
+func (m *RecordingChatModel) SetObserver(observer func(CallRecord)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.observer = observer
 }
 
 // Generate 调底层模型并记录单次 CallRecord。
@@ -119,7 +129,11 @@ func (m *RecordingChatModel) record(start time.Time, resp *Response, err error) 
 	}
 	m.mu.Lock()
 	m.records = append(m.records, rec)
+	observer := m.observer
 	m.mu.Unlock()
+	if observer != nil {
+		observer(rec)
+	}
 }
 
 // classifyChatErr 把 error 映射到 7 个桶之一。

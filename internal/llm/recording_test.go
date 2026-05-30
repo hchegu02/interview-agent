@@ -85,6 +85,31 @@ func TestRecordingChatModel_GenerateClosedPathRecordsOK(t *testing.T) {
 	}
 }
 
+func TestRecordingChatModel_ObserverReceivesCallRecord(t *testing.T) {
+	inner := &stubRecChatModel{
+		resp: &Response{
+			Model:            "test-model",
+			PromptTokens:     10,
+			CompletionTokens: 2,
+		},
+	}
+	rec := NewRecordingChatModel(inner)
+	var observed []CallRecord
+	rec.SetObserver(func(record CallRecord) {
+		observed = append(observed, record)
+	})
+
+	if _, err := rec.Generate(context.Background(), nil, Options{}); err != nil {
+		t.Fatalf("Generate err = %v", err)
+	}
+	if len(observed) != 1 {
+		t.Fatalf("observed len = %d, want 1", len(observed))
+	}
+	if observed[0].Model != "test-model" || observed[0].PromptTokens != 10 || observed[0].CompletionTokens != 2 {
+		t.Fatalf("observed = %+v", observed[0])
+	}
+}
+
 func TestRecordingChatModel_ClassifyErr(t *testing.T) {
 	tests := []struct {
 		name    string

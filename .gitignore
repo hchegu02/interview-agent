@@ -18,6 +18,8 @@ config/config.yaml
 # =========================
 bin/
 dist/
+!internal/httpapi/web/dist/
+!internal/httpapi/web/dist/**
 build/
 *.exe
 *.test
@@ -56,6 +58,9 @@ tools/bge_server/.venv/
 logs/
 tmp/
 temp/
+
+# Local documentation handoff and notes
+/docs/
 
 # Demo CLI artifacts
 tmp/demos/
@@ -99,8 +104,10 @@ postgres-data/
 # Node, if any
 # =========================
 node_modules/
+web/node_modules/
 npm-debug.log*
 pnpm-lock.yaml.tmp
+*.tsbuildinfo
 
 # =========================
 # AI coding tools / temp artifacts
@@ -109,6 +116,42 @@ pnpm-lock.yaml.tmp
 .continue/
 .aider*
 .vibecoding/
+.claude/
+.superpowers/
+.agent/
+.agents/
+.amazonq/
+.augment/
+.bob/
+.cline/
+.clinerules/
+.codebuddy/
+.codex/
+.cospec/
+.crush/
+.factory/
+.forge/
+.gemini/
+.iflow/
+.junie/
+.kilocode/
+.kiro/
+.lingma/
+.opencode/
+.pi/
+.qoder/
+.qwen/
+.roo/
+.trae/
+.windsurf/
+.github/prompts/
+.github/skills/
+CK/
+skills-lock.json
+
+# Root-level accidental Node manifests; the real frontend project lives in web/.
+/package.json
+/package-lock.json
 
 # =========================
 # OS

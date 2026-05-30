@@ -14,14 +14,14 @@ import (
 //
 // 两阶段检索（route D，docs/design.md 第 4.3 节）：
 //
-//   stage 1（PG 端）：召回候选集
-//     - vector_candidates：HNSW 索引 + 距离算子 ORDER BY，难度软过滤 ±2
-//     - tag_candidates：GIN 索引扫 tags && query_tags
-//     - UNION 去重，返回原始特征（vec_dist / tag_overlap）
+//	stage 1（PG 端）：召回候选集
+//	  - vector_candidates：HNSW 索引 + 距离算子 ORDER BY，难度软过滤 ±2
+//	  - tag_candidates：GIN 索引扫 tags && query_tags
+//	  - UNION 去重，返回原始特征（vec_dist / tag_overlap）
 //
-//   stage 2（Go 端）：Fusion 打分
-//     - LinearFusion 加权三路特征
-//     - 排序取 top-K
+//	stage 2（Go 端）：Fusion 打分
+//	  - LinearFusion 加权三路特征
+//	  - 排序取 top-K
 //
 // 这种切法 PG 只走两条索引扫描（HNSW + GIN），不做表达式排序——避免破坏 HNSW
 // 索引利用率。打分逻辑在 Go 里，权重可热调，A-B 实验时无需改 SQL。
@@ -50,11 +50,17 @@ func NewPGVectorRetriever(pool *pgxpool.Pool, fusion Fusion) *PGVectorRetriever 
 // retrieveSQL 是两阶段召回的 SQL 模板。
 //
 // 参数：
-//   $1 = query embedding (vector)
-//   $2 = canonical query tags (text[])
-//   $3 = target difficulty (smallint)
-//   $4 = vector candidate limit (int)
-//   $5 = tag candidate limit (int)
+//
+//	$1 = query embedding (vector)
+//	$2 = canonical query tags (text[])
+//	$3 = target difficulty (smallint)
+//	$4 = vector candidate limit (int)
+//	$5 = tag candidate limit (int)
+//	$6 = hard skill_category filter (text[])
+//	$7 = hard scenario filter (text[])
+//	$8 = hard min difficulty (int, 0 means unset)
+//	$9 = hard max difficulty (int, 0 means unset)
+//	$10 = hard tags-overlap filter (text[])
 //
 // 关键 design notes：
 //   - vector_candidates 用 MATERIALIZED 强制物化，避免 PG 把 CTE 内联导致
@@ -69,6 +75,14 @@ WITH vector_candidates AS MATERIALIZED (
     SELECT id, embedding <=> $1::vector AS vec_dist
     FROM question_bank
     WHERE difficulty BETWEEN GREATEST($3 - 2, 1) AND LEAST($3 + 2, 5)
+      AND status = 'active'
+      AND embedding_status = 'embedded'
+      AND embedding IS NOT NULL
+      AND (cardinality($6::text[]) = 0 OR skill_category = ANY($6::text[]))
+      AND (cardinality($7::text[]) = 0 OR scenario = ANY($7::text[]))
+      AND ($8::int = 0 OR difficulty >= $8)
+      AND ($9::int = 0 OR difficulty <= $9)
+      AND (cardinality($10::text[]) = 0 OR tags && $10::text[])
     ORDER BY embedding <=> $1::vector
     LIMIT $4
 ),
@@ -76,7 +90,15 @@ tag_candidates AS MATERIALIZED (
     SELECT id
     FROM question_bank
     WHERE tags && $2::text[]
+      AND status = 'active'
+      AND embedding_status = 'embedded'
+      AND embedding IS NOT NULL
       AND difficulty BETWEEN GREATEST($3 - 2, 1) AND LEAST($3 + 2, 5)
+      AND (cardinality($6::text[]) = 0 OR skill_category = ANY($6::text[]))
+      AND (cardinality($7::text[]) = 0 OR scenario = ANY($7::text[]))
+      AND ($8::int = 0 OR difficulty >= $8)
+      AND ($9::int = 0 OR difficulty <= $9)
+      AND (cardinality($10::text[]) = 0 OR tags && $10::text[])
     LIMIT $5
 ),
 candidates AS (
@@ -85,7 +107,7 @@ candidates AS (
     SELECT id FROM tag_candidates
 )
 SELECT
-    q.id, q.content, q.tags, q.difficulty, q.skill_category,
+    q.id, q.content, q.tags, q.difficulty, q.skill_category, q.expected_points,
     COALESCE(vc.vec_dist, q.embedding <=> $1::vector) AS vec_dist,
     (SELECT count(*)::int FROM unnest(q.tags) t WHERE t = ANY($2::text[])) AS tag_overlap
 FROM candidates c
@@ -124,6 +146,13 @@ func (r *PGVectorRetriever) Retrieve(ctx context.Context, q Query) ([]Result, er
 		// 我们要的是空数组，避免 tags && NULL 永远 false
 		canonical = []string{}
 	}
+	skillCategories := compactQueryStrings(q.SkillCategories)
+	scenarios := compactQueryStrings(q.Scenarios)
+	filterTags := CanonicalizeTags(q.FilterTags)
+	if filterTags == nil {
+		filterTags = []string{}
+	}
+	diffMin, diffMax := normalizeHardDifficultyRange(q.DifficultyMin, q.DifficultyMax)
 
 	// pgvector 接受 '[0.1,0.2,...]' 文本格式作为 vector 类型字面量
 	vecLit := vectorLiteral(q.QueryEmbedding)
@@ -148,7 +177,7 @@ func (r *PGVectorRetriever) Retrieve(ctx context.Context, q Query) ([]Result, er
 		_ = err
 	}
 
-	rows, err := tx.Query(ctx, retrieveSQL, vecLit, canonical, diff, vecN, tagN)
+	rows, err := tx.Query(ctx, retrieveSQL, vecLit, canonical, diff, vecN, tagN, skillCategories, scenarios, diffMin, diffMax, filterTags)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}
@@ -158,7 +187,7 @@ func (r *PGVectorRetriever) Retrieve(ctx context.Context, q Query) ([]Result, er
 	for rows.Next() {
 		var c Candidate
 		if err := rows.Scan(&c.ID, &c.Content, &c.Tags, &c.Difficulty,
-			&c.Category, &c.VecDist, &c.TagOverlap); err != nil {
+			&c.Category, &c.ExpectedPoints, &c.VecDist, &c.TagOverlap); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		c.QueryTagCount = len(canonical)
@@ -174,6 +203,33 @@ func (r *PGVectorRetriever) Retrieve(ctx context.Context, q Query) ([]Result, er
 		results = results[:K]
 	}
 	return results, nil
+}
+
+func compactQueryStrings(items []string) []string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func normalizeHardDifficultyRange(min, max int) (int, int) {
+	min = normalizeHardDifficulty(min)
+	max = normalizeHardDifficulty(max)
+	if min > 0 && max > 0 && min > max {
+		return max, min
+	}
+	return min, max
+}
+
+func normalizeHardDifficulty(n int) int {
+	if n < 1 || n > 5 {
+		return 0
+	}
+	return n
 }
 
 // vectorLiteral 把 float32 切片格式化成 pgvector 字面量 '[0.1,0.2,...]'。

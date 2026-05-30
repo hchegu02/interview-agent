@@ -7,6 +7,7 @@ import (
 	"math/rand"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -90,10 +91,12 @@ func NewInterviewServiceWithStoreEventsAndCoordinator(runner interviewRunner, st
 }
 
 type startInterviewRequest struct {
-	SessionID  string `json:"session_id"`
-	UserID     string `json:"user_id"`
-	JDText     string `json:"jd_text" binding:"required"`
-	ResumeText string `json:"resume_text" binding:"required"`
+	SessionID          string                     `json:"session_id"`
+	UserID             string                     `json:"user_id"`
+	Mode               string                     `json:"mode"`
+	JDText             string                     `json:"jd_text" binding:"required"`
+	ResumeText         string                     `json:"resume_text" binding:"required"`
+	QuestionBankFilter *domain.QuestionBankFilter `json:"question_bank_filter,omitempty"`
 }
 
 type answerInterviewRequest struct {
@@ -103,13 +106,59 @@ type answerInterviewRequest struct {
 }
 
 type interviewResponse struct {
-	SessionID   string           `json:"session_id"`
-	Status      string           `json:"status"`
-	CurrentNode string           `json:"current_node"`
-	Question    *domain.Question `json:"question,omitempty"`
-	Report      *domain.Report   `json:"report,omitempty"`
-	CreatedAt   time.Time        `json:"created_at"`
-	UpdatedAt   time.Time        `json:"updated_at"`
+	SessionID        string                   `json:"session_id"`
+	UserID           string                   `json:"user_id,omitempty"`
+	Mode             string                   `json:"mode"`
+	Status           string                   `json:"status"`
+	Phase            string                   `json:"phase"`
+	Progress         []interviewProgressStep  `json:"progress"`
+	JobProfile       *domain.JobProfile       `json:"job_profile,omitempty"`
+	CandidateProfile *domain.CandidateProfile `json:"candidate_profile,omitempty"`
+	ProfileAnalysis  *domain.ProfileAnalysis  `json:"profile_analysis,omitempty"`
+	Question         *interviewQuestion       `json:"question,omitempty"`
+	Rounds           []interviewRound         `json:"rounds,omitempty"`
+	Report           *domain.Report           `json:"report,omitempty"`
+	CreatedAt        time.Time                `json:"created_at"`
+	UpdatedAt        time.Time                `json:"updated_at"`
+}
+
+type interviewProgressStep struct {
+	Key    string `json:"key"`
+	Label  string `json:"label"`
+	Status string `json:"status"`
+}
+
+type interviewQuestion struct {
+	ID             string   `json:"id"`
+	Content        string   `json:"content"`
+	Tags           []string `json:"tags,omitempty"`
+	Difficulty     int      `json:"difficulty,omitempty"`
+	SkillCategory  string   `json:"skill_category,omitempty"`
+	ExpectedPoints []string `json:"expected_points,omitempty"`
+}
+
+type interviewRound struct {
+	RoundID   string              `json:"round_id"`
+	Number    int                 `json:"number"`
+	Question  interviewQuestion   `json:"question"`
+	Answer    string              `json:"answer,omitempty"`
+	FollowUps []interviewFollowUp `json:"follow_ups,omitempty"`
+	Feedback  *interviewFeedback  `json:"feedback,omitempty"`
+	Completed bool                `json:"completed"`
+}
+
+type interviewFollowUp struct {
+	Question string             `json:"question"`
+	Answer   string             `json:"answer,omitempty"`
+	Feedback *interviewFeedback `json:"feedback,omitempty"`
+}
+
+type interviewFeedback struct {
+	Score          int      `json:"score"`
+	HitPoints      []string `json:"hit_points,omitempty"`
+	MissedPoints   []string `json:"missed_points,omitempty"`
+	Suggestion     string   `json:"suggestion,omitempty"`
+	ExpectedPoints []string `json:"expected_points,omitempty"`
 }
 
 func (s *Server) startInterview(c *gin.Context) {
@@ -192,13 +241,9 @@ func (s *Server) getInterviewSession(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "session_id is required"})
 		return
 	}
-	sess, err := s.interview.Get(c.Request.Context(), sessionID)
+	sess, err := s.interview.GetForUser(c.Request.Context(), sessionID, c.Query("user_id"))
 	if err != nil {
 		writeInterviewError(c, err)
-		return
-	}
-	if userID := c.Query("user_id"); userID != "" && sess.UserID != userID {
-		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("session %q not found", sessionID)})
 		return
 	}
 	c.JSON(http.StatusOK, buildInterviewResponse(sess))
@@ -219,6 +264,7 @@ func (s *InterviewService) Start(ctx context.Context, req startInterviewRequest)
 	sess := &domain.Session{
 		ID:        id,
 		UserID:    req.UserID,
+		Mode:      normalizeInterviewMode(req.Mode),
 		Status:    domain.StatusRunning,
 		CreatedAt: now,
 		UpdatedAt: now,
@@ -228,7 +274,8 @@ func (s *InterviewService) Start(ctx context.Context, req startInterviewRequest)
 		CandProfile: &domain.CandidateProfile{
 			ResumeRawText: req.ResumeText,
 		},
-		WorkingMemory: domain.NewWorkingMemory(),
+		QuestionBankFilter: cloneQuestionBankFilter(req.QuestionBankFilter),
+		WorkingMemory:      domain.NewWorkingMemory(),
 	}
 	leaseAcquired := false
 	if err := s.acquireSessionLease(ctx, sess.ID); err != nil {
@@ -263,6 +310,44 @@ func (s *InterviewService) Start(ctx context.Context, req startInterviewRequest)
 	}
 	s.publishEvent(ctx, interviewEventSessionCreated, sess, "", "")
 	return sess, nil
+}
+
+func cloneQuestionBankFilter(filter *domain.QuestionBankFilter) *domain.QuestionBankFilter {
+	if filter == nil {
+		return nil
+	}
+	out := &domain.QuestionBankFilter{
+		SkillCategories: compactInterviewStrings(filter.SkillCategories),
+		Scenarios:       compactInterviewStrings(filter.Scenarios),
+		DifficultyMin:   normalizeScopeDifficulty(filter.DifficultyMin),
+		DifficultyMax:   normalizeScopeDifficulty(filter.DifficultyMax),
+		Tags:            compactInterviewStrings(filter.Tags),
+	}
+	if out.DifficultyMin > 0 && out.DifficultyMax > 0 && out.DifficultyMin > out.DifficultyMax {
+		out.DifficultyMin, out.DifficultyMax = out.DifficultyMax, out.DifficultyMin
+	}
+	if len(out.SkillCategories) == 0 && len(out.Scenarios) == 0 && out.DifficultyMin == 0 && out.DifficultyMax == 0 && len(out.Tags) == 0 {
+		return nil
+	}
+	return out
+}
+
+func compactInterviewStrings(items []string) []string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		item = strings.TrimSpace(item)
+		if item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
+func normalizeScopeDifficulty(n int) int {
+	if n < 1 || n > 5 {
+		return 0
+	}
+	return n
 }
 
 func (s *InterviewService) Answer(ctx context.Context, req answerInterviewRequest) (*domain.Session, error) {
@@ -463,6 +548,32 @@ func (s *InterviewService) Get(ctx context.Context, sessionID string) (*domain.S
 	return sess, nil
 }
 
+func (s *InterviewService) GetForUser(ctx context.Context, sessionID, userID string) (*domain.Session, error) {
+	sess, err := s.Get(ctx, sessionID)
+	if err == nil {
+		if userID != "" && sess.UserID != userID {
+			return nil, fmt.Errorf("%w: %q", ErrSessionNotFound, sessionID)
+		}
+		return sess, nil
+	}
+	if userID == "" || s.store == nil {
+		return nil, err
+	}
+
+	// PG 点查偶发失败时，列表读路径仍可能已经能看到同一用户的最新会话。
+	// 读详情不能因为一次瞬时点查错误让已完成报告不可见。
+	sessions, listErr := s.store.ListByUser(ctx, userID, maxSessionListLimit)
+	if listErr != nil {
+		return nil, err
+	}
+	for _, candidate := range sessions {
+		if candidate != nil && candidate.ID == sessionID {
+			return candidate, nil
+		}
+	}
+	return nil, err
+}
+
 func (s *InterviewService) getSessionForMutation(ctx context.Context, sessionID string) (*domain.Session, error) {
 	if s.store == nil {
 		return nil, fmt.Errorf("%w: session store not configured", graph.ErrInvalidConfig)
@@ -507,14 +618,22 @@ func fillPendingAnswer(sess *domain.Session, answer string) error {
 }
 
 func buildInterviewResponse(sess *domain.Session) interviewResponse {
+	mode := sessionMode(sess)
 	return interviewResponse{
-		SessionID:   sess.ID,
-		Status:      string(sess.Status),
-		CurrentNode: sess.CurrentNode,
-		Question:    currentQuestion(sess),
-		Report:      sess.Report,
-		CreatedAt:   sess.CreatedAt,
-		UpdatedAt:   sess.UpdatedAt,
+		SessionID:        sess.ID,
+		UserID:           sess.UserID,
+		Mode:             mode,
+		Status:           string(sess.Status),
+		Phase:            interviewPhase(sess),
+		Progress:         interviewProgress(sess),
+		JobProfile:       cloneJobProfile(sess.JobProfile),
+		CandidateProfile: cloneCandidateProfile(sess.CandProfile),
+		ProfileAnalysis:  cloneProfileAnalysis(sess.ProfileAnalysis),
+		Question:         buildInterviewQuestion(currentQuestion(sess), false),
+		Rounds:           buildInterviewRounds(sess, mode),
+		Report:           cloneReport(sess.Report),
+		CreatedAt:        sess.CreatedAt,
+		UpdatedAt:        sess.UpdatedAt,
 	}
 }
 
@@ -538,6 +657,164 @@ func currentQuestion(sess *domain.Session) *domain.Question {
 	return &round.Question
 }
 
+func normalizeInterviewMode(mode string) string {
+	if mode == "practice" {
+		return "practice"
+	}
+	return "exam"
+}
+
+func sessionMode(sess *domain.Session) string {
+	if sess == nil {
+		return "exam"
+	}
+	return normalizeInterviewMode(sess.Mode)
+}
+
+func shouldExposeFeedback(sess *domain.Session, mode string) bool {
+	return mode == "practice" || (sess != nil && sess.Status == domain.StatusCompleted)
+}
+
+func buildInterviewQuestion(q *domain.Question, includeExpected bool) *interviewQuestion {
+	if q == nil {
+		return nil
+	}
+	out := &interviewQuestion{
+		ID:            q.ID,
+		Content:       q.Content,
+		Tags:          append([]string(nil), q.Tags...),
+		Difficulty:    q.Difficulty,
+		SkillCategory: q.SkillCategory,
+	}
+	if includeExpected {
+		out.ExpectedPoints = append([]string(nil), q.ExpectedPoints...)
+	}
+	return out
+}
+
+func buildInterviewRounds(sess *domain.Session, mode string) []interviewRound {
+	if sess == nil || len(sess.Rounds) == 0 {
+		return nil
+	}
+	exposeFeedback := shouldExposeFeedback(sess, mode)
+	out := make([]interviewRound, 0, len(sess.Rounds))
+	for i := range sess.Rounds {
+		round := sess.Rounds[i]
+		q := buildInterviewQuestion(&round.Question, exposeFeedback)
+		if q == nil {
+			continue
+		}
+		item := interviewRound{
+			RoundID:   round.RoundID,
+			Number:    i + 1,
+			Question:  *q,
+			Answer:    round.Answer,
+			Completed: !round.CompletedAt.IsZero() || round.FinalEvaluation() != nil,
+		}
+		if exposeFeedback {
+			item.Feedback = buildInterviewFeedback(round.FinalEvaluation(), round.Question.ExpectedPoints)
+		}
+		if len(round.FollowUps) > 0 {
+			item.FollowUps = make([]interviewFollowUp, 0, len(round.FollowUps))
+			for _, follow := range round.FollowUps {
+				fu := interviewFollowUp{
+					Question: follow.Question,
+					Answer:   follow.Answer,
+				}
+				if exposeFeedback {
+					fu.Feedback = buildInterviewFeedback(follow.Evaluation, nil)
+				}
+				item.FollowUps = append(item.FollowUps, fu)
+			}
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
+func buildInterviewFeedback(eval *domain.Evaluation, expected []string) *interviewFeedback {
+	if eval == nil {
+		return nil
+	}
+	return &interviewFeedback{
+		Score:          eval.Score,
+		HitPoints:      append([]string(nil), eval.Strengths...),
+		MissedPoints:   append([]string(nil), eval.Weaknesses...),
+		Suggestion:     eval.Suggestion,
+		ExpectedPoints: append([]string(nil), expected...),
+	}
+}
+
+func interviewPhase(sess *domain.Session) string {
+	if sess == nil {
+		return "preparing"
+	}
+	switch sess.Status {
+	case domain.StatusCompleted:
+		return "completed"
+	case domain.StatusFailed:
+		return "failed"
+	}
+	if currentQuestion(sess) != nil {
+		return "answering"
+	}
+	switch sess.CurrentNode {
+	case "parse_jd", "parse_resume", "gap_analyze", "analyze_profile", "retrieve_rag", "":
+		return "preparing"
+	case "report":
+		return "reporting"
+	default:
+		return "evaluating"
+	}
+}
+
+func interviewProgress(sess *domain.Session) []interviewProgressStep {
+	steps := []interviewProgressStep{
+		{Key: "jd", Label: "JD 分析"},
+		{Key: "resume", Label: "简历匹配"},
+		{Key: "rag", Label: "题库检索"},
+		{Key: "question", Label: "出题规划"},
+		{Key: "interview", Label: "面试进行"},
+		{Key: "report", Label: "评估报告"},
+	}
+	phase := interviewPhase(sess)
+	current := 0
+	switch phase {
+	case "preparing":
+		current = 1
+		if sess != nil && sess.GapReport != nil {
+			current = 2
+		}
+		if sess != nil && sess.ProfileAnalysis != nil {
+			current = 2
+		}
+		if sess != nil && len(sess.CandidatePool) > 0 {
+			current = 3
+		}
+	case "answering", "evaluating":
+		current = 4
+	case "reporting":
+		current = 5
+	case "completed":
+		current = len(steps)
+	case "failed":
+		current = 4
+	}
+	for i := range steps {
+		switch {
+		case phase == "failed" && i == current:
+			steps[i].Status = "error"
+		case i < current:
+			steps[i].Status = "done"
+		case i == current:
+			steps[i].Status = "current"
+		default:
+			steps[i].Status = "pending"
+		}
+	}
+	return steps
+}
+
 func (s *InterviewService) publishEvent(ctx context.Context, eventType string, sess *domain.Session, node, errMsg string) {
 	if s == nil || s.events == nil {
 		return
@@ -550,15 +827,15 @@ func writeInterviewError(c *gin.Context, err error) {
 	case err == nil:
 		c.Status(http.StatusOK)
 	case errors.Is(err, graph.ErrInvalidConfig):
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "面试服务暂不可用，请稍后重试"})
 	case errors.Is(err, ErrSessionLeaseConflict):
 		retryAfterSeconds := int(sessionLeaseRetryAfter.Seconds())
 		c.Header("Retry-After", strconv.Itoa(retryAfterSeconds))
 		c.JSON(http.StatusConflict, gin.H{
-			"error":               err.Error(),
+			"error":               "当前会话正在处理中，请稍后重试",
 			"retry_after_seconds": retryAfterSeconds,
 		})
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请求无法处理，请检查会话状态后重试"})
 	}
 }

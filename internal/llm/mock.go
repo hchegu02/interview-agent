@@ -103,6 +103,10 @@ func builtinDemoResponse(messages []Message) (string, bool) {
 	}
 	prompt := messages[len(messages)-1].Content
 	switch {
+	case strings.Contains(prompt, "题库元数据补全助手") || strings.Contains(prompt, "补齐题库元数据"):
+		return `{"items":[{"id":"question-only-001","content":"Go map 并发读写为什么会 panic？","tags":["go","map","concurrency"],"skill_category":"go","difficulty":3,"expected_points":["map 不是并发安全容器","并发读写会触发运行时检测","需要 mutex、sync.Map 或单 owner goroutine"],"rubric":{"good":"能说明 map 并发访问风险，并给出工程上的保护方案","bad":"只说会 panic，不解释触发条件和替代方案"},"sample_answer":"Go 原生 map 不保证并发安全。多个 goroutine 同时读写可能触发 runtime 的 concurrent map read and map write panic。工程上通常用 sync.RWMutex 保护、使用 sync.Map，或通过单独 goroutine 串行拥有这份状态。","follow_up_hints":["如果读多写少你会怎么选？","sync.Map 适合哪些场景？"]}]}`, true
+	case strings.Contains(prompt, "题库生成助手") || strings.Contains(prompt, "从下面的工程实践文档切片中生成"):
+		return `{"items":[{"id":"generated-go-001","content":"Go 服务如何设计超时、重试和熔断，避免级联故障？","tags":["go","resilience"],"skill_category":"go","difficulty":4,"expected_points":["context 超时","幂等重试","熔断降级"],"rubric":{"good":"能把超时、重试、熔断和观测串成闭环"},"sample_answer":"入口设置请求超时，下游调用使用 context 传递 deadline；只对幂等操作重试并加退避；连续失败打开熔断并走降级；用指标和日志观察错误率。","follow_up_hints":["如何避免重试风暴？","熔断半开状态怎么设计？"]}]}`, true
 	case strings.Contains(prompt, "岗位 JD 分析助手"):
 		return `{"title":"Go 后端工程师","level":"junior","key_skills":["go","redis"],"must_have":["go"],"nice_to_have":[],"years_required":1}`, true
 	case strings.Contains(prompt, "简历分析助手"):

@@ -24,6 +24,24 @@ func buildReportSession() *domain.Session {
 		ID:            "sess-001",
 		Status:        domain.StatusRunning,
 		WorkingMemory: mem,
+		CandidatePool: []domain.Question{
+			{
+				ID:            "redis-001",
+				Content:       "Redis 缓存击穿怎么处理？",
+				Tags:          []string{"redis", "cache"},
+				Difficulty:    3,
+				Source:        "rag-redis-001",
+				SkillCategory: "redis",
+			},
+			{
+				ID:            "go-001",
+				Content:       "讲一下 Go GMP 调度模型。",
+				Tags:          []string{"go"},
+				Difficulty:    3,
+				Source:        "rag-go-001",
+				SkillCategory: "go",
+			},
+		},
 		Rounds: []domain.AnswerRound{
 			{
 				RoundID: "r1",
@@ -31,6 +49,7 @@ func buildReportSession() *domain.Session {
 					ID:            "q1",
 					SkillCategory: "go",
 				},
+				Answer: "首先 GMP 包含 G/M/P；然后 P 负责本地队列，线上 1w QPS 场景下要关注调度延迟。",
 				Evaluation: &domain.Evaluation{
 					QuestionID: "q1",
 					Score:      78,
@@ -45,12 +64,19 @@ func buildReportSession() *domain.Session {
 					ID:            "q2",
 					SkillCategory: "redis",
 				},
+				Answer: "用 set nx ex 做互斥，但没有补充 lua 释放锁的校验。",
 				Evaluation: &domain.Evaluation{
 					QuestionID: "q2",
 					Score:      72,
 					Strengths:  []string{"知道 set nx ex"},
 					Weaknesses: []string{"lua 原子性不完整"},
 					Suggestion: "补 lua 锁释放脚本",
+				},
+				CriticResult: &domain.Critic{
+					GroundedScore: 55,
+					NeedRefine:    true,
+					Issues:        []string{"原评估偏高"},
+					Summary:       "需要重评",
 				},
 				RefinedEval: &domain.Evaluation{
 					QuestionID: "q2",
@@ -117,6 +143,24 @@ func TestReportNode_AggregatesSessionReport(t *testing.T) {
 	if !contains(sess.Report.NextSteps, "评估过程中部分环节降级：eval、rag；建议复测这些环节以提高报告可信度") {
 		t.Errorf("next_steps should mention degraded components, got %v", sess.Report.NextSteps)
 	}
+	if sess.Report.TranscriptAnalysis == nil {
+		t.Fatal("transcript analysis should be written")
+	}
+	if sess.Report.TranscriptAnalysis.RoundsAnalyzed != 2 {
+		t.Errorf("rounds_analyzed = %d, want 2", sess.Report.TranscriptAnalysis.RoundsAnalyzed)
+	}
+	if len(sess.Report.TranscriptAnalysis.Dimensions) < 5 {
+		t.Errorf("expected transcript dimensions, got %+v", sess.Report.TranscriptAnalysis)
+	}
+	if len(sess.Report.DrillPlan) == 0 || sess.Report.DrillPlan[0].Skill != "redis" {
+		t.Errorf("drill_plan = %+v, want redis first", sess.Report.DrillPlan)
+	}
+	if got := sess.Report.DrillPlan[0].RecommendedQuestionIDs; len(got) != 1 || got[0] != "redis-001" {
+		t.Errorf("recommended question ids = %v, want [redis-001]", got)
+	}
+	if got := sess.Report.DrillPlan[0].RecommendedQuestions; len(got) == 0 || got[0] == "缓存击穿怎么处理？" {
+		t.Errorf("recommended questions should include pool question with id, got %v", got)
+	}
 }
 
 func TestReportNode_NoRounds_StillBuildsEmptyReport(t *testing.T) {
@@ -138,6 +182,12 @@ func TestReportNode_NoRounds_StillBuildsEmptyReport(t *testing.T) {
 	}
 	if len(sess.Report.NextSteps) == 0 {
 		t.Error("expected a generic next step for empty report")
+	}
+	if sess.Report.TranscriptAnalysis == nil || len(sess.Report.TranscriptAnalysis.Patterns) == 0 {
+		t.Errorf("expected empty transcript analysis, got %+v", sess.Report.TranscriptAnalysis)
+	}
+	if len(sess.Report.DrillPlan) == 0 {
+		t.Errorf("expected generic drill plan, got %+v", sess.Report.DrillPlan)
 	}
 }
 
