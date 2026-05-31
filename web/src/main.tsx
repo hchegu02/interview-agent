@@ -5,7 +5,7 @@ import { buildDraft, clearDraft, DRAFT_KEY, drillJDText, loadDraft, normalizeQue
 import { formatTime, modeLabel } from "./interviewView";
 import { InterviewPage, JDPage, ProgressBar, ReportPage, ResumePage } from "./candidatePages";
 import { QuestionBankPage } from "./questionBankPage";
-import { defaultRouteForWorkspace, navItemsForWorkspace, normalizeRoute, routes, workspaceForRoute, type Route, type Workspace } from "./routes";
+import { defaultRouteForWorkspace, navItemsForWorkspace, resolveNavigationState, routes, workspaceForRoute, type Route, type Workspace } from "./routes";
 import { useInterviewStream, type StreamEvent } from "./useInterviewStream";
 import type {
   Draft,
@@ -20,8 +20,9 @@ const defaultResume = "两年 Go 后端经验，参与过秒杀活动、Redis �
 const defaultJD = "需要 Go 后端工程师，熟悉高并发服务、Redis、PostgreSQL、消息队列和线上问题排查。";
 
 function App() {
-  const [route, setRoute] = useState<Route>(() => normalizeRoute(window.location.pathname));
-  const [workspace, setWorkspace] = useState<Workspace>(() => workspaceForRoute(normalizeRoute(window.location.pathname)));
+  const initialNavigation = resolveNavigationState(window.location.pathname, window.location.search);
+  const [route, setRoute] = useState<Route>(() => initialNavigation.route);
+  const [workspace, setWorkspace] = useState<Workspace>(() => initialNavigation.workspace);
   const [draft, setDraft] = useState<Draft>(() => {
     const saved = loadDraft();
     return {
@@ -39,7 +40,7 @@ function App() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const [pendingAnswer, setPendingAnswer] = useState("");
-  const [questionJump, setQuestionJump] = useState(() => new URLSearchParams(window.location.search).get("q") || "");
+  const [questionJump, setQuestionJump] = useState(() => initialNavigation.questionJump);
   const [deletingSession, setDeletingSession] = useState("");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
@@ -57,9 +58,10 @@ function App() {
 
   useEffect(() => {
     const onPop = () => {
-      setRoute(normalizeRoute(window.location.pathname));
-      setWorkspace(workspaceForRoute(normalizeRoute(window.location.pathname)));
-      setQuestionJump(new URLSearchParams(window.location.search).get("q") || "");
+      const next = resolveNavigationState(window.location.pathname, window.location.search);
+      setRoute(next.route);
+      setWorkspace(next.workspace);
+      setQuestionJump(next.questionJump);
     };
     window.addEventListener("popstate", onPop);
     if (window.location.pathname === "/") navigate(routes.resume);

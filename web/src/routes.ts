@@ -47,6 +47,21 @@ export function defaultRouteForWorkspace(workspace: Workspace): Route {
   return workspace === "admin" ? routes.questions : routes.resume;
 }
 
+export type NavigationState = {
+  route: Route;
+  workspace: Workspace;
+  questionJump: string;
+};
+
+export function resolveNavigationState(pathname: string, search: string): NavigationState {
+  const route = normalizeRoute(pathname);
+  return {
+    route,
+    workspace: workspaceForRoute(route),
+    questionJump: new URLSearchParams(search).get("q") || "",
+  };
+}
+
 export function questionURL(id: string): string {
-	return `${routes.questions}?q=${encodeURIComponent(id)}`;
+  return `${routes.questions}?q=${encodeURIComponent(id)}`;
 }
