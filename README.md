@@ -175,7 +175,9 @@ mingw32-make load-test
 - `fallback_rate`：embedding/retriever 失败导致降级的比例。
 - `avg_latency_ms` / `p95_latency_ms`：离线检索耗时。
 
-`cmd/rag-eval` 支持可选质量门槛：`-min-recall-at-5`、`-min-recall-at-10`、`-min-mrr-at-k`、`-min-ndcg-at-k`。默认 0 表示只统计不拦截；显式设置后，低于门槛会在 `summary.json` 写入 `gate_failures` 并以非 0 退出。
+`cmd/rag-eval` 支持可选全局质量门槛：`-min-recall-at-5`、`-min-recall-at-10`、`-min-mrr-at-k`、`-min-ndcg-at-k`。默认 0 表示只统计不拦截；显式设置后，低于门槛会在 `summary.json` 写入 `gate_failures` 并以非 0 退出。
+
+`summary.json.groups` 按 `skill:*` 和 `tag:*` 输出分组召回质量；分组质量门槛 flags 为 `-min-group-cases`、`-min-group-recall-at-5`、`-min-group-recall-at-10`、`-min-group-mrr-at-k`、`-min-group-ndcg-at-k`。`-min-group-cases` 为 0 时分组门槛不启用；设置为正数后，`worst_groups` 会列出达到该 case 数且低于分组阈值的组，避免小样本误伤。
 
 `cmd/questionbank-lint` 用于暴露题库元数据质量，不自动修数据。`mingw32-make questionbank-lint` 使用当前 seed 基线阈值，保证本地回归能通过；`mingw32-make questionbank-lint-strict` 使用目标阈值，要求每题至少 3 个 expected points，且 `scenario` 覆盖率不低于 80%。当前 seed 已补齐核心元数据，strict 目标应保持通过；后续扩题时如果失败，说明新增题没有按同一结构治理。
 

@@ -67,7 +67,11 @@ type summary struct {
 	GateFailures []string               `json:"gate_failures,omitempty"`
 	BySkill      map[string]groupMetric `json:"by_skill,omitempty"`
 	ByTag        map[string]groupMetric `json:"by_tag,omitempty"`
+	Groups       map[string]groupMetric `json:"groups,omitempty"`
+	WorstGroups  []groupFailure         `json:"worst_groups,omitempty"`
 	Cases        []caseResult           `json:"cases"`
+
+	groupGatesEvaluated bool
 }
 
 type groupMetric struct {
@@ -76,6 +80,23 @@ type groupMetric struct {
 	RecallAt10 float64 `json:"recall_at_10"`
 	MRRAtK     float64 `json:"mrr_at_k"`
 	NDCGAtK    float64 `json:"ndcg_at_k"`
+}
+
+type groupFailure struct {
+	Group     string  `json:"group"`
+	Metric    string  `json:"metric"`
+	Value     float64 `json:"value"`
+	Threshold float64 `json:"threshold"`
+	Cases     int     `json:"cases"`
+}
+
+type groupGateOptions struct {
+	MinCases      int
+	MinRecallAt5  float64
+	MinRecallAt10 float64
+	MinMRRAtK     float64
+	MinNDCGAtK    float64
+	Limit         int
 }
 
 type options struct {
@@ -89,6 +110,12 @@ type options struct {
 	MinRecallAt10 float64
 	MinMRRAtK     float64
 	MinNDCGAtK    float64
+
+	MinGroupCases      int
+	MinGroupRecallAt5  float64
+	MinGroupRecallAt10 float64
+	MinGroupMRRAtK     float64
+	MinGroupNDCGAtK    float64
 }
 
 func main() {
@@ -102,6 +129,11 @@ func main() {
 	flag.Float64Var(&opts.MinRecallAt10, "min-recall-at-10", 0, "fail when recall@10 is below this threshold; 0 disables")
 	flag.Float64Var(&opts.MinMRRAtK, "min-mrr-at-k", 0, "fail when MRR@K is below this threshold; 0 disables")
 	flag.Float64Var(&opts.MinNDCGAtK, "min-ndcg-at-k", 0, "fail when nDCG@K is below this threshold; 0 disables")
+	flag.IntVar(&opts.MinGroupCases, "min-group-cases", 0, "minimum cases required before group gates apply; 0 disables group gates")
+	flag.Float64Var(&opts.MinGroupRecallAt5, "min-group-recall-at-5", 0, "fail when any eligible group recall@5 is below this threshold; 0 disables")
+	flag.Float64Var(&opts.MinGroupRecallAt10, "min-group-recall-at-10", 0, "fail when any eligible group recall@10 is below this threshold; 0 disables")
+	flag.Float64Var(&opts.MinGroupMRRAtK, "min-group-mrr-at-k", 0, "fail when any eligible group MRR@K is below this threshold; 0 disables")
+	flag.Float64Var(&opts.MinGroupNDCGAtK, "min-group-ndcg-at-k", 0, "fail when any eligible group nDCG@K is below this threshold; 0 disables")
 	flag.Parse()
 
 	code := run(context.Background(), opts, os.Stdout, os.Stderr)
@@ -135,6 +167,14 @@ func run(ctx context.Context, opts options, stdout, stderr io.Writer) int {
 	defer cleanup()
 
 	result := evaluate(ctx, cases, opts.K, source, embedder, r)
+	result.WorstGroups = worstGroups(result.Groups, groupGateOptions{
+		MinCases:      opts.MinGroupCases,
+		MinRecallAt5:  opts.MinGroupRecallAt5,
+		MinRecallAt10: opts.MinGroupRecallAt10,
+		MinMRRAtK:     opts.MinGroupMRRAtK,
+		MinNDCGAtK:    opts.MinGroupNDCGAtK,
+	})
+	result.groupGatesEvaluated = true
 	result.GateFailures = thresholdFailures(result, opts)
 	if err := writeOutputs(opts.OutDir, result); err != nil {
 		fmt.Fprintf(stderr, "ERROR: write outputs: %v\n", err)
@@ -167,6 +207,20 @@ func thresholdFailures(s summary, opts options) []string {
 	}
 	if opts.MinNDCGAtK > 0 && s.NDCGAtK < opts.MinNDCGAtK {
 		failures = append(failures, fmt.Sprintf("ndcg@k %.3f below threshold %.3f", s.NDCGAtK, opts.MinNDCGAtK))
+	}
+	groupFailures := s.WorstGroups
+	if !s.groupGatesEvaluated {
+		groupFailures = worstGroups(s.Groups, groupGateOptions{
+			MinCases:      opts.MinGroupCases,
+			MinRecallAt5:  opts.MinGroupRecallAt5,
+			MinRecallAt10: opts.MinGroupRecallAt10,
+			MinMRRAtK:     opts.MinGroupMRRAtK,
+			MinNDCGAtK:    opts.MinGroupNDCGAtK,
+		})
+	}
+	for _, failure := range groupFailures {
+		failures = append(failures, fmt.Sprintf("group %s %s %.3f below threshold %.3f cases=%d",
+			failure.Group, failure.Metric, failure.Value, failure.Threshold, failure.Cases))
 	}
 	return failures
 }
@@ -291,7 +345,54 @@ func aggregate(results []caseResult, k int, source string) summary {
 	out.ByTag = aggregateGroups(results, func(r caseResult) []string {
 		return r.Tags
 	})
+	out.Groups = map[string]groupMetric{}
+	for skill, metric := range out.BySkill {
+		out.Groups["skill:"+skill] = metric
+	}
+	for tag, metric := range out.ByTag {
+		out.Groups["tag:"+tag] = metric
+	}
 	return out
+}
+
+func worstGroups(groups map[string]groupMetric, opts groupGateOptions) []groupFailure {
+	if opts.MinCases <= 0 {
+		return nil
+	}
+	if opts.Limit <= 0 {
+		opts.Limit = 5
+	}
+	var failures []groupFailure
+	for name, g := range groups {
+		if opts.MinCases > 0 && g.CaseCount < opts.MinCases {
+			continue
+		}
+		if opts.MinRecallAt5 > 0 && g.RecallAt5 < opts.MinRecallAt5 {
+			failures = append(failures, groupFailure{name, "recall_at_5", g.RecallAt5, opts.MinRecallAt5, g.CaseCount})
+		}
+		if opts.MinRecallAt10 > 0 && g.RecallAt10 < opts.MinRecallAt10 {
+			failures = append(failures, groupFailure{name, "recall_at_10", g.RecallAt10, opts.MinRecallAt10, g.CaseCount})
+		}
+		if opts.MinMRRAtK > 0 && g.MRRAtK < opts.MinMRRAtK {
+			failures = append(failures, groupFailure{name, "mrr_at_k", g.MRRAtK, opts.MinMRRAtK, g.CaseCount})
+		}
+		if opts.MinNDCGAtK > 0 && g.NDCGAtK < opts.MinNDCGAtK {
+			failures = append(failures, groupFailure{name, "ndcg_at_k", g.NDCGAtK, opts.MinNDCGAtK, g.CaseCount})
+		}
+	}
+	sort.Slice(failures, func(i, j int) bool {
+		if failures[i].Value == failures[j].Value {
+			if failures[i].Group == failures[j].Group {
+				return failures[i].Metric < failures[j].Metric
+			}
+			return failures[i].Group < failures[j].Group
+		}
+		return failures[i].Value < failures[j].Value
+	})
+	if len(failures) > opts.Limit {
+		failures = failures[:opts.Limit]
+	}
+	return failures
 }
 
 func aggregateGroups(results []caseResult, keys func(caseResult) []string) map[string]groupMetric {

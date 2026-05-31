@@ -48,6 +48,28 @@ func TestAggregate(t *testing.T) {
 	}
 }
 
+func TestAggregateBuildsStableGroupsAndWorstGroups(t *testing.T) {
+	s := aggregate([]caseResult{
+		{ID: "go-q1", Tags: []string{"go", "concurrency"}, Skill: "go", RecallAt5: 1, RecallAt10: 1, MRRAtK: 1, NDCGAtK: 1, LatencyMS: 10},
+		{ID: "redis-q1", Tags: []string{"redis", "cache"}, Skill: "redis", RecallAt5: 0, RecallAt10: 0.5, MRRAtK: 0.5, NDCGAtK: 0.5, LatencyMS: 20},
+	}, 10, "seed")
+
+	if got := s.Groups["skill:redis"].RecallAt5; got != 0 {
+		t.Fatalf("skill redis recall@5 = %f, want 0", got)
+	}
+	if got := s.Groups["tag:cache"].CaseCount; got != 1 {
+		t.Fatalf("tag cache cases = %d, want 1", got)
+	}
+	worst := worstGroups(s.Groups, groupGateOptions{
+		MinCases:     1,
+		MinRecallAt5: 0.8,
+		Limit:        1,
+	})
+	if len(worst) != 1 || worst[0].Group != "skill:redis" || worst[0].Metric != "recall_at_5" {
+		t.Fatalf("worst groups = %+v", worst)
+	}
+}
+
 func TestThresholdFailures(t *testing.T) {
 	s := summary{RecallAt5: 0.7, RecallAt10: 0.86, MRRAtK: 0.93, NDCGAtK: 0.81}
 	failures := thresholdFailures(s, options{
@@ -59,6 +81,46 @@ func TestThresholdFailures(t *testing.T) {
 
 	if len(failures) != 2 {
 		t.Fatalf("failures = %v, want recall@5 and ndcg@k failures", failures)
+	}
+}
+
+func TestThresholdFailuresIncludesWorstGroups(t *testing.T) {
+	s := summary{
+		RecallAt5:  0.9,
+		RecallAt10: 0.9,
+		MRRAtK:     0.9,
+		NDCGAtK:    0.9,
+		Groups: map[string]groupMetric{
+			"skill:redis": {CaseCount: 2, RecallAt5: 0.25, RecallAt10: 0.5, MRRAtK: 0.5, NDCGAtK: 0.5},
+		},
+	}
+	failures := thresholdFailures(s, options{
+		MinGroupCases:     2,
+		MinGroupRecallAt5: 0.7,
+	})
+	if len(failures) != 1 {
+		t.Fatalf("failures = %v, want one group failure", failures)
+	}
+	if failures[0] != "group skill:redis recall_at_5 0.250 below threshold 0.700 cases=2" {
+		t.Fatalf("failure = %q", failures[0])
+	}
+}
+
+func TestThresholdFailuresDisablesGroupGatesWithoutMinGroupCases(t *testing.T) {
+	s := summary{
+		RecallAt5:  0.9,
+		RecallAt10: 0.9,
+		MRRAtK:     0.9,
+		NDCGAtK:    0.9,
+		Groups: map[string]groupMetric{
+			"skill:redis": {CaseCount: 2, RecallAt5: 0.25, RecallAt10: 0.5, MRRAtK: 0.5, NDCGAtK: 0.5},
+		},
+	}
+	failures := thresholdFailures(s, options{
+		MinGroupRecallAt5: 0.7,
+	})
+	if len(failures) != 0 {
+		t.Fatalf("failures = %v, want no group failure when min group cases is zero", failures)
 	}
 }
 
