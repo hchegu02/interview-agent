@@ -3,9 +3,10 @@
 GO ?= go
 APP := bin/server
 CONFIG ?= config/config.yaml.example
+PWSH ?= pwsh -NoProfile -ExecutionPolicy Bypass
 
 help: ## show this help
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-18s %s\n", $$1, $$2}'
+	@$(PWSH) -Command 'Get-Content "Makefile" | ForEach-Object { if ($$_ -match "^([a-zA-Z_-]+):.*?## (.*)$$") { "  {0,-18} {1}" -f $$matches[1], $$matches[2] } }'
 
 tidy: ## go mod tidy
 	$(GO) mod tidy
@@ -32,7 +33,7 @@ lint: ## run golangci-lint
 	golangci-lint run ./...
 
 eval-rag: ## run offline RAG retrieval evaluation
-	$(GO) run ./cmd/rag-eval -cases testdata/rag/golden_queries.jsonl -config $(CONFIG) -out tmp/eval/rag
+	$(GO) run ./cmd/rag-eval -cases testdata/rag/golden_queries.jsonl -config $(CONFIG) -out tmp/eval/rag -min-recall-at-5 0.70 -min-recall-at-10 0.80 -min-mrr-at-k 0.90 -min-ndcg-at-k 0.75
 
 questionbank-lint: ## lint seed question bank metadata quality
 	$(GO) run ./cmd/questionbank-lint -seed seeds/question_bank.json -min-expected-points 3 -min-scenario-ratio 0.05
@@ -44,59 +45,55 @@ eval-mock: ## run offline mock evaluation fixtures
 	$(GO) run ./cmd/eval -suite testdata/eval -mode mock -out tmp/eval/mock
 
 migrate-up: ## apply DB migrations (requires docker postgres up)
-	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/001_init.up.sql
-	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/002_question_bank_expected_points.up.sql
-	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/003_question_bank_metadata.up.sql
-	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/004_question_bank_imports.up.sql
-	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/005_question_bank_embedding_status.up.sql
-	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/006_question_bank_import_lease.up.sql
-	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/007_question_bank_import_review_status.up.sql
-	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/008_question_bank_import_field_provenance.up.sql
-	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/009_question_bank_content_trgm.up.sql
+	$(PWSH) -Command 'psql $$env:INTERVIEW_POSTGRES_DSN -v ON_ERROR_STOP=1 -f migrations/001_init.up.sql'
+	$(PWSH) -Command 'psql $$env:INTERVIEW_POSTGRES_DSN -v ON_ERROR_STOP=1 -f migrations/002_question_bank_expected_points.up.sql'
+	$(PWSH) -Command 'psql $$env:INTERVIEW_POSTGRES_DSN -v ON_ERROR_STOP=1 -f migrations/003_question_bank_metadata.up.sql'
+	$(PWSH) -Command 'psql $$env:INTERVIEW_POSTGRES_DSN -v ON_ERROR_STOP=1 -f migrations/004_question_bank_imports.up.sql'
+	$(PWSH) -Command 'psql $$env:INTERVIEW_POSTGRES_DSN -v ON_ERROR_STOP=1 -f migrations/005_question_bank_embedding_status.up.sql'
+	$(PWSH) -Command 'psql $$env:INTERVIEW_POSTGRES_DSN -v ON_ERROR_STOP=1 -f migrations/006_question_bank_import_lease.up.sql'
+	$(PWSH) -Command 'psql $$env:INTERVIEW_POSTGRES_DSN -v ON_ERROR_STOP=1 -f migrations/007_question_bank_import_review_status.up.sql'
+	$(PWSH) -Command 'psql $$env:INTERVIEW_POSTGRES_DSN -v ON_ERROR_STOP=1 -f migrations/008_question_bank_import_field_provenance.up.sql'
+	$(PWSH) -Command 'psql $$env:INTERVIEW_POSTGRES_DSN -v ON_ERROR_STOP=1 -f migrations/009_question_bank_content_trgm.up.sql'
 
 migrate-down: ## roll back DB migrations
-	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/009_question_bank_content_trgm.down.sql
-	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/008_question_bank_import_field_provenance.down.sql
-	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/007_question_bank_import_review_status.down.sql
-	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/006_question_bank_import_lease.down.sql
-	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/005_question_bank_embedding_status.down.sql
-	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/004_question_bank_imports.down.sql
-	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/003_question_bank_metadata.down.sql
-	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/002_question_bank_expected_points.down.sql
-	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/001_init.down.sql
+	$(PWSH) -Command 'psql $$env:INTERVIEW_POSTGRES_DSN -v ON_ERROR_STOP=1 -f migrations/009_question_bank_content_trgm.down.sql'
+	$(PWSH) -Command 'psql $$env:INTERVIEW_POSTGRES_DSN -v ON_ERROR_STOP=1 -f migrations/008_question_bank_import_field_provenance.down.sql'
+	$(PWSH) -Command 'psql $$env:INTERVIEW_POSTGRES_DSN -v ON_ERROR_STOP=1 -f migrations/007_question_bank_import_review_status.down.sql'
+	$(PWSH) -Command 'psql $$env:INTERVIEW_POSTGRES_DSN -v ON_ERROR_STOP=1 -f migrations/006_question_bank_import_lease.down.sql'
+	$(PWSH) -Command 'psql $$env:INTERVIEW_POSTGRES_DSN -v ON_ERROR_STOP=1 -f migrations/005_question_bank_embedding_status.down.sql'
+	$(PWSH) -Command 'psql $$env:INTERVIEW_POSTGRES_DSN -v ON_ERROR_STOP=1 -f migrations/004_question_bank_imports.down.sql'
+	$(PWSH) -Command 'psql $$env:INTERVIEW_POSTGRES_DSN -v ON_ERROR_STOP=1 -f migrations/003_question_bank_metadata.down.sql'
+	$(PWSH) -Command 'psql $$env:INTERVIEW_POSTGRES_DSN -v ON_ERROR_STOP=1 -f migrations/002_question_bank_expected_points.down.sql'
+	$(PWSH) -Command 'psql $$env:INTERVIEW_POSTGRES_DSN -v ON_ERROR_STOP=1 -f migrations/001_init.down.sql'
 
 seed: ## load demo question bank rows
-	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/seed_question_bank.sql
+	$(PWSH) -Command 'psql $$env:INTERVIEW_POSTGRES_DSN -v ON_ERROR_STOP=1 -f migrations/seed_question_bank.sql'
 
 real-rag-reindex: ## rebuild question_bank embeddings with real embedding API
-	@[ -n "$$INTERVIEW_EMBEDDING_API_KEY" ] || (echo "INTERVIEW_EMBEDDING_API_KEY required" && exit 1)
-	$(GO) run ./cmd/reindex -seed seeds/question_bank.json -mode real -base-url "$${INTERVIEW_EMBEDDING_BASE_URL:-http://127.0.0.1:8000/v1}" -model "$${INTERVIEW_EMBEDDING_MODEL:-BAAI/bge-m3}" -dim "$${INTERVIEW_EMBEDDING_DIMENSION:-1024}"
+	@$(PWSH) -Command 'if (-not $$env:INTERVIEW_EMBEDDING_API_KEY) { throw "INTERVIEW_EMBEDDING_API_KEY required" }; $$baseUrl = if ($$env:INTERVIEW_EMBEDDING_BASE_URL) { $$env:INTERVIEW_EMBEDDING_BASE_URL } else { "http://127.0.0.1:8000/v1" }; $$model = if ($$env:INTERVIEW_EMBEDDING_MODEL) { $$env:INTERVIEW_EMBEDDING_MODEL } else { "BAAI/bge-m3" }; $$dim = if ($$env:INTERVIEW_EMBEDDING_DIMENSION) { $$env:INTERVIEW_EMBEDDING_DIMENSION } else { "1024" }; $(GO) run ./cmd/reindex -seed seeds/question_bank.json -mode real -base-url $$baseUrl -model $$model -dim $$dim'
 
 demo: build ## smoke test: start, ping, stop
-	sh ./scripts/smoke.sh
+	$(PWSH) -File scripts/smoke.ps1 -ServerBin ".\$(APP)" -ConfigPath "$(CONFIG)"
 
 demo-web: web-build ## run web interview server in mock mode
-	INTERVIEW_LLM_MODE=mock INTERVIEW_EMBEDDING_MODE=mock $(GO) run ./cmd/server -config $(CONFIG)
+	$(PWSH) -Command '$$env:INTERVIEW_LLM_MODE="mock"; $$env:INTERVIEW_EMBEDDING_MODE="mock"; $(GO) run ./cmd/server -config "$(CONFIG)"'
 
 demo-web-real: web-build ## run web interview server with real LLM; API key may come from env or YAML
-	INTERVIEW_LLM_MODE=real INTERVIEW_EMBEDDING_MODE=mock $(GO) run ./cmd/server -config $(CONFIG)
+	$(PWSH) -Command '$$env:INTERVIEW_LLM_MODE="real"; $$env:INTERVIEW_EMBEDDING_MODE="mock"; $(GO) run ./cmd/server -config "$(CONFIG)"'
 
 demo-pg: build ## smoke test against configured PG DSN
-	sh ./scripts/smoke.sh
+	$(PWSH) -File scripts/smoke.ps1 -ServerBin ".\$(APP)" -ConfigPath "$(CONFIG)"
 
 demo-pg-full: docker-up build ## migrate, seed, and smoke test against configured PG DSN
 	$(MAKE) migrate-up
 	$(MAKE) seed
-	sh ./scripts/smoke.sh
+	$(PWSH) -File scripts/smoke.ps1 -ServerBin ".\$(APP)" -ConfigPath "$(CONFIG)"
 
 demo-mock: ## run cmd/demo end-to-end against mock LLM
-	INTERVIEW_LLM_MODE=mock INTERVIEW_EMBEDDING_MODE=mock \
-	$(GO) run ./cmd/demo -config config/config.yaml.example -script testdata/demo/example.yaml
+	$(PWSH) -Command '$$env:INTERVIEW_LLM_MODE="mock"; $$env:INTERVIEW_EMBEDDING_MODE="mock"; $(GO) run ./cmd/demo -config config/config.yaml.example -script testdata/demo/example.yaml'
 
 demo-real: ## run cmd/demo end-to-end against real LLM (requires INTERVIEW_LLM_API_KEY)
-	@[ -n "$$INTERVIEW_LLM_API_KEY" ] || (echo "INTERVIEW_LLM_API_KEY required" && exit 1)
-	INTERVIEW_LLM_MODE=real INTERVIEW_EMBEDDING_MODE=mock \
-	$(GO) run ./cmd/demo -config config/config.yaml.example -script testdata/demo/example.yaml
+	@$(PWSH) -Command 'if (-not $$env:INTERVIEW_LLM_API_KEY) { throw "INTERVIEW_LLM_API_KEY required" }; $$env:INTERVIEW_LLM_MODE="real"; $$env:INTERVIEW_EMBEDDING_MODE="mock"; $(GO) run ./cmd/demo -config config/config.yaml.example -script testdata/demo/example.yaml'
 
 demo-real-full: ## run Docker PG/Redis + real embedding reindex + real CLI/Web E2E
 	pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/real_e2e.ps1
@@ -121,4 +118,4 @@ docker-down: ## stop everything
 	docker compose down -v
 
 clean: ## remove build artifacts
-	rm -rf bin/
+	$(PWSH) -Command 'Remove-Item -LiteralPath "bin" -Recurse -Force -ErrorAction SilentlyContinue'
