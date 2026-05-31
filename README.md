@@ -30,7 +30,7 @@
 - Smoke 脚本：`mingw32-make demo` 调用 `scripts/smoke.ps1`，覆盖健康检查与 start/get/answer/list；`scripts/smoke_sse.ps1` 覆盖 SSE 服务级路径
 - 结构化 demo CLI：`mingw32-make demo-mock` / `mingw32-make demo-real` 会生成 `tmp/demos/<timestamp>/run.json` 和 `report.md`
 
-仍未完成：OTel tracing、Helm chart、题单预览节点、真实业务规模的 RAG 评估集和长期压测报告；Prometheus 仍使用本项目轻量文本渲染器，没有引入 Prometheus SDK。
+仍未完成：OTel tracing 后端接入、题单预览节点、真实业务规模的 RAG 评估集和长期压测报告；Prometheus 仍使用本项目轻量文本渲染器，没有引入 Prometheus SDK。
 
 ## 项目架构
 
@@ -278,6 +278,16 @@ Invoke-RestMethod http://127.0.0.1:8080/readyz
 ```
 
 Web 演示入口是 `http://127.0.0.1:8080`。compose 默认使用 `INTERVIEW_LLM_MODE=mock` 和 `INTERVIEW_EMBEDDING_MODE=mock`，同时连接容器内 PostgreSQL/pgvector 与 Redis；如果切真实模式，只改运行时环境变量，不要把密钥写入镜像或仓库。
+
+## Helm 部署
+
+最小 Helm chart 位于 `deploy/helm/interview-agent`，默认使用 mock LLM 和 mock embedding，不需要 PG、Redis 或 API key：
+
+```powershell
+helm template interview-agent "deploy/helm/interview-agent"
+```
+
+chart 默认把 readiness probe 指向 `/readyz`，liveness probe 指向 `/healthz`。真实 LLM、PostgreSQL 和 Redis 只通过 values/env 注入，例如 `INTERVIEW_LLM_MODE=real`、`INTERVIEW_LLM_API_KEY`、`INTERVIEW_POSTGRES_DSN`、`INTERVIEW_REDIS_URL`；不要把密钥、DSN 或私有配置写入仓库。
 
 ## 真实完整演示
 

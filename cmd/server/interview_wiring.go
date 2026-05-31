@@ -14,6 +14,7 @@ import (
 	"interview-agent/internal/httpapi"
 	"interview-agent/internal/llm"
 	"interview-agent/internal/nodes"
+	"interview-agent/internal/observability"
 	"interview-agent/internal/retriever"
 )
 
@@ -62,7 +63,10 @@ func buildInterviewRunner(ctx context.Context, cfg *config.Config, deps appDeps,
 	if retrieverWrapper != nil {
 		r = retrieverWrapper(r, retrieverKind)
 	}
-	callbacks := []graph.Callback{httpapi.NewInterviewGraphCallback(events)}
+	callbacks := []graph.Callback{
+		httpapi.NewInterviewGraphCallback(events),
+		observability.NewTracingGraphCallback(observability.NoopTracer{}),
+	}
 	if metricsCallback != nil {
 		callbacks = append(callbacks, metricsCallback)
 	}

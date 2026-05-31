@@ -162,6 +162,47 @@ func TestMetricsGraphCallback_RecordsNodeLifecycle(t *testing.T) {
 	}
 }
 
+func TestMetricsGraphCallback_SeparatesInterleavedSessionsOnSameNode(t *testing.T) {
+	recorder := newMetricsRecorder()
+	cb := NewMetricsGraphCallback(recorder)
+	metricsCB := cb.(*metricsGraphCallback)
+	t0 := time.Date(2026, 5, 31, 20, 0, 0, 0, time.UTC)
+	ticks := []time.Time{
+		t0,
+		t0.Add(100 * time.Millisecond),
+		t0.Add(200 * time.Millisecond),
+		t0.Add(300 * time.Millisecond),
+	}
+	calls := 0
+	metricsCB.now = func() time.Time {
+		if calls >= len(ticks) {
+			return ticks[len(ticks)-1]
+		}
+		t := ticks[calls]
+		calls++
+		return t
+	}
+	sessA := &domain.Session{ID: "sess-a"}
+	sessB := &domain.Session{ID: "sess-b"}
+
+	cb.OnNodeStart(context.Background(), "evaluate", sessA)
+	cb.OnNodeStart(context.Background(), "evaluate", sessB)
+	cb.OnNodeEnd(context.Background(), "evaluate", sessA)
+	cb.OnNodeError(context.Background(), "evaluate", sessB, errors.New("boom"))
+
+	got := recorder.renderPrometheus()
+	for _, marker := range []string{
+		`interview_graph_node_total{node="evaluate",status="ok"} 1`,
+		`interview_graph_node_total{node="evaluate",status="other"} 1`,
+		`interview_graph_node_duration_seconds_sum{node="evaluate",status="ok"} 0.200000`,
+		`interview_graph_node_duration_seconds_sum{node="evaluate",status="other"} 0.200000`,
+	} {
+		if !strings.Contains(got, marker) {
+			t.Fatalf("metrics missing %q\n--- metrics ---\n%s", marker, got)
+		}
+	}
+}
+
 func getMetrics(t *testing.T, baseURL string) string {
 	t.Helper()
 	resp, err := http.Get(baseURL + "/metrics")

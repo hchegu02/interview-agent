@@ -28,36 +28,42 @@ func NewMetricsGraphCallback(recorder *metricsRecorder) graph.Callback {
 	}
 }
 
-func (c *metricsGraphCallback) OnNodeStart(ctx context.Context, node string, _ *domain.Session) {
+func (c *metricsGraphCallback) OnNodeStart(ctx context.Context, node string, sess *domain.Session) {
+	sessionID := metricsSessionID(sess)
+	key := metricsSpanKey(sessionID, node)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if old, ok := c.inflight[node]; ok {
+	if old, ok := c.inflight[key]; ok {
 		slog.WarnContext(ctx, "metrics callback: node started while previous in-flight",
 			"event", "node_overlap",
 			"node", node,
+			"session_id", sessionID,
 			"previous_started_at", old,
 		)
 	}
-	c.inflight[node] = c.now()
+	c.inflight[key] = c.now()
 }
 
-func (c *metricsGraphCallback) OnNodeEnd(ctx context.Context, node string, _ *domain.Session) {
-	c.complete(ctx, node, nil)
+func (c *metricsGraphCallback) OnNodeEnd(ctx context.Context, node string, sess *domain.Session) {
+	c.complete(ctx, node, sess, nil)
 }
 
-func (c *metricsGraphCallback) OnNodeError(ctx context.Context, node string, _ *domain.Session, err error) {
-	c.complete(ctx, node, err)
+func (c *metricsGraphCallback) OnNodeError(ctx context.Context, node string, sess *domain.Session, err error) {
+	c.complete(ctx, node, sess, err)
 }
 
-func (c *metricsGraphCallback) complete(ctx context.Context, node string, err error) {
+func (c *metricsGraphCallback) complete(ctx context.Context, node string, sess *domain.Session, err error) {
+	sessionID := metricsSessionID(sess)
+	key := metricsSpanKey(sessionID, node)
 	c.mu.Lock()
-	start, ok := c.inflight[node]
+	start, ok := c.inflight[key]
 	if ok {
-		delete(c.inflight, node)
+		delete(c.inflight, key)
 	} else {
 		slog.WarnContext(ctx, "metrics callback: node completed without matching start",
 			"event", "node_unmatched_end",
 			"node", node,
+			"session_id", sessionID,
 		)
 		start = c.now()
 	}
@@ -65,6 +71,17 @@ func (c *metricsGraphCallback) complete(ctx context.Context, node string, err er
 	c.mu.Unlock()
 
 	c.recorder.recordGraphNode(node, classifyGraphNodeErr(err), duration)
+}
+
+func metricsSessionID(sess *domain.Session) string {
+	if sess == nil {
+		return ""
+	}
+	return sess.ID
+}
+
+func metricsSpanKey(sessionID, node string) string {
+	return sessionID + "\x00" + node
 }
 
 func classifyGraphNodeErr(err error) string {

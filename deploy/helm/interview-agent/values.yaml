@@ -1,0 +1,21 @@
+replicaCount: 1
+
+image:
+  repository: interview-agent
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 8080
+
+env:
+  INTERVIEW_SERVER_ADDR: ":8080"
+  INTERVIEW_LLM_MODE: "mock"
+  INTERVIEW_EMBEDDING_MODE: "mock"
+  INTERVIEW_IMPORT_SPOOL_DIR: "/var/lib/interview-agent/import-spool"
+
+extraEnv: []
+
+resources: {}
