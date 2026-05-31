@@ -27,8 +27,8 @@
 - Prometheus metrics 文本指标：`GET /metrics` 暴露 HTTP、简历解析、SSE、Graph 节点、LLM 调用 / token、熔断器状态和背压计数
 - 离线题库工具：`cmd/reindex`
 - 离线量化工具：`cmd/rag-eval`、`cmd/questionbank-lint`、`cmd/eval`
-- Smoke 脚本：`make demo` 调用 `scripts/smoke.sh`，覆盖健康检查与 start/get/answer/list；`scripts/smoke_sse.ps1` 覆盖 SSE 服务级路径
-- 结构化 demo CLI：`make demo-mock` / `make demo-real` 会生成 `tmp/demos/<timestamp>/run.json` 和 `report.md`
+- Smoke 脚本：`mingw32-make demo` 调用 `scripts/smoke.ps1`，覆盖健康检查与 start/get/answer/list；`scripts/smoke_sse.ps1` 覆盖 SSE 服务级路径
+- 结构化 demo CLI：`mingw32-make demo-mock` / `mingw32-make demo-real` 会生成 `tmp/demos/<timestamp>/run.json` 和 `report.md`
 
 仍未完成：OTel tracing、Helm chart、题单预览节点、真实业务规模的 RAG 评估集和长期压测报告；Prometheus 仍使用本项目轻量文本渲染器，没有引入 Prometheus SDK。
 
@@ -152,19 +152,19 @@ go run ./cmd/questionbank-lint -seed seeds/question_bank.json -min-expected-poin
 go run ./cmd/eval -suite testdata/eval -mode mock -out tmp/eval/mock
 ```
 
-Makefile 等价入口：
+Makefile 等价入口（Windows 使用 `mingw32-make`；有 GNU Make 的环境可把命令里的 `mingw32-make` 替换为 `make`）：
 
-```bash
-make eval-rag
-make questionbank-lint
-make questionbank-lint-strict
-make eval-mock
-make e2e-smoke
-make chaos-dry-run
-make load-test
+```powershell
+mingw32-make eval-rag
+mingw32-make questionbank-lint
+mingw32-make questionbank-lint-strict
+mingw32-make eval-mock
+mingw32-make e2e-smoke
+mingw32-make chaos-dry-run
+mingw32-make load-test
 ```
 
-`make e2e-smoke` 会启动 mock server，覆盖 health/ready、题库 facets/list、interview start、SSE snapshot、answer/report、session detail/list 和 `/metrics`，并输出 `tmp/e2e/<timestamp>/summary.json`。
+`mingw32-make e2e-smoke` 会启动 mock server，覆盖 health/ready、题库 facets/list、interview start、SSE snapshot、answer/report、session detail/list 和 `/metrics`，并输出 `tmp/e2e/<timestamp>/summary.json`。
 
 `cmd/rag-eval` 输出 `summary.json` 和 `report.md`，指标包括：
 
@@ -177,7 +177,7 @@ make load-test
 
 `cmd/rag-eval` 支持可选质量门槛：`-min-recall-at-5`、`-min-recall-at-10`、`-min-mrr-at-k`、`-min-ndcg-at-k`。默认 0 表示只统计不拦截；显式设置后，低于门槛会在 `summary.json` 写入 `gate_failures` 并以非 0 退出。
 
-`cmd/questionbank-lint` 用于暴露题库元数据质量，不自动修数据。`make questionbank-lint` 使用当前 seed 基线阈值，保证本地回归能通过；`make questionbank-lint-strict` 使用目标阈值，要求每题至少 3 个 expected points，且 `scenario` 覆盖率不低于 80%。当前 seed 已补齐核心元数据，strict 目标应保持通过；后续扩题时如果失败，说明新增题没有按同一结构治理。
+`cmd/questionbank-lint` 用于暴露题库元数据质量，不自动修数据。`mingw32-make questionbank-lint` 使用当前 seed 基线阈值，保证本地回归能通过；`mingw32-make questionbank-lint-strict` 使用目标阈值，要求每题至少 3 个 expected points，且 `scenario` 覆盖率不低于 80%。当前 seed 已补齐核心元数据，strict 目标应保持通过；后续扩题时如果失败，说明新增题没有按同一结构治理。
 
 `cmd/eval` 读取 `testdata/eval/` 下的 profile、scoring、report fixture，做结构一致性和报告引用关系检查。scoring fixture 可声明 `cases`，输出 `scoring_range_hit_rate`、`expected_point_hit_rate`、`expected_miss_hit_rate`，用于检查分数区间和命中/缺失要点是否符合金标。默认 `mock` 模式只做稳定离线回归；real LLM 评估需要人工设置 API key 后手动跑，不进入默认 CI。
 
@@ -193,37 +193,37 @@ make load-test
 
 ```powershell
 $env:BASE_URL="http://127.0.0.1:8080"
-make load-test
+mingw32-make load-test
 ```
 
-`make load-test` 会创建 `tmp/chaos/<timestamp>/summary.json`。k6 summary 统一输出 `status`、`checks`、`failures`、`sessions_started`、`answers_completed`、`http_req_failed_rate`、`http_req_duration_p95_ms`、`sse_first_packet_p95_ms` 等字段。SSE 是长连接，k6 会把按 timeout 结束的 stream 请求计入 `http_req_failed_rate`，所以该字段只做观测；通过/失败门禁看 503 率、409 背压率、answer 完成数和 SSE 首包耗时。默认目标是 `K6_TARGET_USERS=1000`，本地小规模验证可先设置：
+`mingw32-make load-test` 会创建 `tmp/chaos/<timestamp>/summary.json`。k6 summary 统一输出 `status`、`checks`、`failures`、`sessions_started`、`answers_completed`、`http_req_failed_rate`、`http_req_duration_p95_ms`、`sse_first_packet_p95_ms` 等字段。SSE 是长连接，k6 会把按 timeout 结束的 stream 请求计入 `http_req_failed_rate`，所以该字段只做观测；通过/失败门禁看 503 率、409 背压率、answer 完成数和 SSE 首包耗时。默认目标是 `K6_TARGET_USERS=1000`，本地小规模验证可先设置：
 
 ```powershell
 $env:K6_TARGET_USERS="5"
 $env:K6_RAMP_UP="10s"
 $env:K6_HOLD="20s"
 $env:K6_RAMP_DOWN="5s"
-make load-test
+mingw32-make load-test
 ```
 
 Chaos smoke 入口：
 
 ```powershell
-make chaos-dry-run
+mingw32-make chaos-dry-run
 ./scripts/chaos_redis_restart.ps1
 ./scripts/chaos_pg_restart.ps1
 ```
 
-`make chaos-dry-run` 只验证脚本和 summary 结构，不执行 Docker restart，也不访问 `/readyz`。两个真实 chaos 脚本会把摘要写到 `tmp/chaos/<timestamp>/summary.json`，字段包括 `status`、`duration_ms`、`recovery_ms`、`checks`、`failures`、`dry_run`。真实脚本会重启 Docker Compose 里的 Redis/PostgreSQL，只应在本地或测试环境运行。
+`mingw32-make chaos-dry-run` 只验证脚本和 summary 结构，不执行 Docker restart，也不访问 `/readyz`。两个真实 chaos 脚本会把摘要写到 `tmp/chaos/<timestamp>/summary.json`，字段包括 `status`、`duration_ms`、`recovery_ms`、`checks`、`failures`、`dry_run`。真实脚本会重启 Docker Compose 里的 Redis/PostgreSQL，只应在本地或测试环境运行。
 
 ## 快速启动
 
-```bash
+```powershell
 # 1. 拉取依赖
 go mod tidy
 
 # 2. 启动 Web 服务（mock LLM，无外部依赖）
-make demo-web
+mingw32-make demo-web
 
 # 3. 打开浏览器
 # http://localhost:8080
@@ -238,10 +238,10 @@ Web 页面支持直接输入岗位 JD 和候选人简历，也可以点击“读
 
 真实 LLM Web 模式：
 
-```bash
+```powershell
 # API key 推荐通过环境变量注入；也支持本地未入仓 YAML fallback，环境变量优先级更高。
-export INTERVIEW_LLM_API_KEY="sk-xxx"
-make demo-web-real
+$env:INTERVIEW_LLM_API_KEY="sk-xxx"
+mingw32-make demo-web-real
 ```
 
 Windows / PowerShell 可用等价命令：
@@ -324,16 +324,16 @@ $env:INTERVIEW_REDIS_URL="redis://localhost:6379/0"
 
 也可以通过 Makefile 调用：
 
-```bash
-make demo-real-full
+```powershell
+mingw32-make demo-real-full
 ```
 
-`make demo` 会构建并启动本地服务，然后检查 `/healthz`、`/readyz`、`/api/ping`，并用 mock 模式跑一轮 `interview/start`、`sessions/:id`、`interview/answer`、`sessions?user_id=...`。
+`mingw32-make demo` 会构建并启动本地服务，然后检查 `/healthz`、`/readyz`、`/api/ping`，并用 mock 模式跑一轮 `interview/start`、`sessions/:id`、`interview/answer`、`sessions?user_id=...`。
 
 核心回归可用：
 
-```bash
-make test-core
+```powershell
+mingw32-make test-core
 ```
 
 结构化端到端 demo 可直接跑 CLI，不启 HTTP，也不依赖 Redis。设置 `INTERVIEW_POSTGRES_DSN` 时会使用 PG/pgvector 题库；未设置时会降级到 fallback 题库，`run.json.config.retriever` 会明确记录实际路径：
@@ -345,14 +345,9 @@ go run ./cmd/demo -config config/config.yaml -script testdata/demo/example.yaml
 
 如果服务已经手动启动，可只跑 HTTP 检查：
 
-```bash
-USE_EXISTING_SERVER=1 sh ./scripts/smoke.sh
-```
-
-Windows / PowerShell 可用：
-
 ```powershell
-$env:USE_EXISTING_SERVER="1"; ./scripts/smoke.ps1
+$env:USE_EXISTING_SERVER="1"
+./scripts/smoke.ps1
 ```
 
 SSE 服务级 smoke 可用：
@@ -372,16 +367,16 @@ $env:SERVER_BIN=".\server-smoke.exe"; ./scripts/smoke_sse.ps1
 
 真实 PG smoke：
 
-```bash
-export INTERVIEW_POSTGRES_DSN="postgres://interview:interview@localhost:5432/interview?sslmode=disable"
-make demo-pg
+```powershell
+$env:INTERVIEW_POSTGRES_DSN="postgres://interview:interview@localhost:5432/interview?sslmode=disable"
+mingw32-make demo-pg
 ```
 
 如果还没迁移和 seed：
 
-```bash
-export INTERVIEW_POSTGRES_DSN="postgres://interview:interview@localhost:5432/interview?sslmode=disable"
-make demo-pg-full
+```powershell
+$env:INTERVIEW_POSTGRES_DSN="postgres://interview:interview@localhost:5432/interview?sslmode=disable"
+mingw32-make demo-pg-full
 ```
 
 ## API
@@ -489,9 +484,9 @@ Real LLM 模式会套进程内并发限制，配置项为 `llm.max_concurrency`�
 
 ## 测试
 
-```bash
+```powershell
 # 全量测试
-make test
+mingw32-make test
 
 # 关键回归
 go test ./internal/nodes/ -run AgentLoop -v -count=1
@@ -503,25 +498,29 @@ go test ./internal/httpapi -v -count=1
 
 Redis Streams 集成测试受 `INTEGRATION=1` + `INTERVIEW_REDIS_URL` 控制：
 
-```bash
-INTERVIEW_REDIS_URL=redis://localhost:6379/0 INTEGRATION=1 go test ./internal/httpapi -run TestRedisInterviewEventHub_IntegrationPublishSubscribe -count=1 -v
+```powershell
+$env:INTERVIEW_REDIS_URL="redis://localhost:6379/0"
+$env:INTEGRATION="1"
+go test ./internal/httpapi -run TestRedisInterviewEventHub_IntegrationPublishSubscribe -count=1 -v
 ```
 
 Redis session coordinator 集成测试：
 
-```bash
-INTERVIEW_REDIS_URL=redis://localhost:6379/0 INTEGRATION=1 go test ./internal/httpapi -run TestRedisSessionCoordinator -count=1 -v
+```powershell
+$env:INTERVIEW_REDIS_URL="redis://localhost:6379/0"
+$env:INTEGRATION="1"
+go test ./internal/httpapi -run TestRedisSessionCoordinator -count=1 -v
 ```
 
 ## 数据库与题库
 
-```bash
+```powershell
 # 启动 PG + Redis
-make docker-up
+mingw32-make docker-up
 
 # 设置 DSN 后迁移
-export INTERVIEW_POSTGRES_DSN="postgres://interview:interview@localhost:5432/interview?sslmode=disable"
-make migrate-up
+$env:INTERVIEW_POSTGRES_DSN="postgres://interview:interview@localhost:5432/interview?sslmode=disable"
+mingw32-make migrate-up
 
 # 重建题库 embedding
 go run ./cmd/reindex -seed seeds/question_bank.json -mode mock
