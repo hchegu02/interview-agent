@@ -10,6 +10,9 @@ describe("draftStore helpers", () => {
 
     expect(got).toContain("原始 JD");
     expect(got).toContain("本轮专项训练重点");
+    expect(got).toContain("缓存一致性薄弱");
+    expect(got).toContain("redis-001");
+    expect(got).toContain("go-003");
     expect(got).toContain("- redis：缓存一致性薄弱");
     expect(got).toContain("优先覆盖题库题：redis-001、go-003");
   });

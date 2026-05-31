@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { navItemsForWorkspace, resolveNavigationState } from "./routes";
+import { navItemsForWorkspace, questionURL, resolveNavigationState } from "./routes";
 
 describe("workspace navigation", () => {
   it("keeps candidate interview navigation separate from admin navigation", () => {
@@ -18,5 +18,9 @@ describe("workspace navigation", () => {
       workspace: "candidate",
       questionJump: "ignored",
     });
+  });
+
+  it("builds encoded question bank jump URLs", () => {
+    expect(questionURL("redis hot/key")).toBe("/questions?q=redis%20hot%2Fkey");
   });
 });

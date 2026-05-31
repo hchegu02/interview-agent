@@ -2,7 +2,8 @@ import React, { useEffect, useState } from "react";
 import { apiClient } from "./apiClient";
 import { analysisSummary, draftScopeSummary, normalizeQuestionBankFilter, normalizeResumeSections } from "./draftStore";
 import { clamp, formatYearsGap, modeLabel, shouldShowCurrent } from "./interviewView";
-import { questionURL, routes, type Route } from "./routes";
+import { drillPlanSummary } from "./reportView";
+import { routes, type Route } from "./routes";
 import { EmptyPage, PageHeader, Select } from "./sharedView";
 import type {
   Draft,
@@ -307,7 +308,7 @@ function TranscriptPanel({ analysis }: { analysis?: TranscriptAnalysis }) {
 
 function DrillPlanPanel({ plan, startDrill, jumpQuestion }: { plan: DrillPlanItem[]; startDrill: (plan: DrillPlanItem[]) => void; jumpQuestion: (id: string) => void }) {
   if (!plan.length) return null;
-  return <section className="drill-plan"><div className="analysis-head"><div><p className="eyebrow">训练计划</p><h2>下一轮按弱项顺序练，不再泛刷题。</h2></div><button className="secondary drill-start" onClick={() => startDrill(plan)}>按此计划训练</button></div><div className="drill-list">{plan.map((item) => <article className="drill-card" key={`${item.practice_order}-${item.skill}`}><div className="drill-order">{item.practice_order}</div><div><div className="drill-head"><strong>{item.skill || "综合表达"}</strong><span>目标 {item.target_score || 75} 分</span></div><p>{item.reason}</p><div className="recommended-question-ids">{item.recommended_question_ids?.map((id) => <button key={id} onClick={() => jumpQuestion(id)}>题库题 {id}</button>)}</div><ul>{item.recommended_questions?.map((q) => <li key={q}>{q}</li>)}</ul></div></article>)}</div></section>;
+  return <section className="drill-plan"><div className="analysis-head"><div><p className="eyebrow">训练计划</p><h2>下一轮按弱项顺序练，不再泛刷题。</h2><p>{drillPlanSummary(plan)}</p></div><button className="secondary drill-start" onClick={() => startDrill(plan)}>按此计划训练</button></div><div className="drill-list">{plan.map((item) => <article className="drill-card" key={`${item.practice_order}-${item.skill}`}><div className="drill-order">{item.practice_order}</div><div><div className="drill-head"><strong>{item.skill || "综合表达"}</strong><span>目标 {item.target_score || 75} 分</span></div><p>{item.reason}</p><div className="recommended-question-ids">{item.recommended_question_ids?.map((id) => <button key={id} onClick={() => jumpQuestion(id)}>题库题 {id}</button>)}</div><ul>{item.recommended_questions?.map((q) => <li key={q}>{q}</li>)}</ul></div></article>)}</div></section>;
 }
 
 function ListSection({ title, items }: { title: string; items?: string[] }) {
