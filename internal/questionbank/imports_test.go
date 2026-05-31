@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -559,6 +560,79 @@ func TestImportService_RecoverPendingJobsUsesLease(t *testing.T) {
 	}
 	if leased.OwnerID != "worker-a" || leased.LeaseUntil.IsZero() {
 		t.Fatalf("job lease = owner %q until %v, want worker-a lease", leased.OwnerID, leased.LeaseUntil)
+	}
+}
+
+func TestImportService_ShutdownWaitsForBackgroundTasks(t *testing.T) {
+	service := NewImportService(ImportServiceDeps{Imports: NewMemoryImportStore()})
+	started := make(chan struct{})
+	release := make(chan struct{})
+
+	if ok := service.runAsync(func() {
+		close(started)
+		<-release
+	}); !ok {
+		t.Fatal("runAsync should accept work before shutdown")
+	}
+	<-started
+
+	done := make(chan error, 1)
+	go func() {
+		done <- service.Shutdown(context.Background())
+	}()
+	select {
+	case err := <-done:
+		t.Fatalf("Shutdown returned before background task finished: %v", err)
+	case <-time.After(25 * time.Millisecond):
+	}
+
+	close(release)
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Shutdown: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Shutdown did not return after background task finished")
+	}
+}
+
+func TestImportService_ShutdownRejectsNewBackgroundTasks(t *testing.T) {
+	service := NewImportService(ImportServiceDeps{Imports: NewMemoryImportStore()})
+	if err := service.Shutdown(context.Background()); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	if ok := service.runAsync(func() {
+		t.Fatal("background task should not run after shutdown")
+	}); ok {
+		t.Fatal("runAsync should reject work after shutdown")
+	}
+}
+
+func TestImportService_EnqueueImportRejectsAfterShutdown(t *testing.T) {
+	ctx := context.Background()
+	imports := NewMemoryImportStore()
+	service := NewImportService(ImportServiceDeps{
+		Imports: imports,
+		Writer:  NewMemoryStore(nil),
+		Spool:   NewLocalImportSpool(t.TempDir()),
+	})
+	if err := service.Shutdown(ctx); err != nil {
+		t.Fatalf("Shutdown: %v", err)
+	}
+	_, err := service.EnqueueImport(ctx, ImportSourceQuestionBank, ImportFile{
+		Filename: "closed.json",
+		Reader:   bytes.NewBufferString(`[]`),
+	})
+	if !errors.Is(err, ErrImportServiceShutdown) {
+		t.Fatalf("EnqueueImport error = %v, want ErrImportServiceShutdown", err)
+	}
+	jobs, err := imports.ListJobs(ctx)
+	if err != nil {
+		t.Fatalf("ListJobs: %v", err)
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("jobs = %+v, want none after rejected enqueue", jobs)
 	}
 }
 

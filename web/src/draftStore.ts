@@ -1,4 +1,4 @@
-import type { Draft, ProfileAnalyzeResponse, QuestionBankFilter } from "./types";
+import type { Draft, ProfileAnalyzeResponse, QuestionBankFilter, ResumeSections } from "./types";
 
 export const DRAFT_KEY = "interview_agent_draft_v1";
 
@@ -13,8 +13,10 @@ export function loadDraft(): Draft {
     const raw = window.localStorage.getItem(DRAFT_KEY);
     if (!raw) return { ...emptyDraft };
     const parsed = JSON.parse(raw) as Partial<Draft>;
+    const resumeSections = normalizeResumeSections(parsed.resume_sections, parsed.resume_text || "");
     return {
-      resume_text: parsed.resume_text || "",
+      resume_text: parsed.resume_text || resumeTextFromSections(resumeSections),
+      resume_sections: resumeSections,
       jd_text: parsed.jd_text || "",
       question_bank_filter: normalizeQuestionBankFilter(parsed.question_bank_filter),
       analysis: parsed.analysis,
@@ -32,9 +34,18 @@ export function saveDraft(patch: Partial<Draft>): Draft {
 }
 
 export function buildDraft(current: Draft, patch: Partial<Draft>, now = new Date().toISOString()): Draft {
+  const resumeSections = normalizeResumeSections(
+    patch.resume_sections ?? current.resume_sections,
+    patch.resume_text ?? current.resume_text,
+  );
+  const resumeText = patch.resume_sections
+    ? resumeTextFromSections(resumeSections)
+    : patch.resume_text ?? current.resume_text ?? resumeTextFromSections(resumeSections);
   return {
     ...current,
     ...patch,
+    resume_text: resumeText,
+    resume_sections: resumeSections,
     question_bank_filter: normalizeQuestionBankFilter(patch.question_bank_filter ?? current.question_bank_filter),
     updated_at: now,
   };
@@ -58,6 +69,39 @@ export function drillJDText(rawJD: string, plan: { skill?: string; reason?: stri
     lines.push("", `优先覆盖题库题：${ids.join("、")}`);
   }
   return lines.join("\n");
+}
+
+export function resumeTextFromSections(sections: ResumeSections): string {
+  return [
+    ["概况", sections.summary],
+    ["技能", sections.skills],
+    ["项目", sections.projects],
+    ["亮点", sections.highlights],
+    ["原文补充", sections.raw_notes],
+  ]
+    .filter(([, value]) => value.trim())
+    .map(([label, value]) => `【${label}】\n${value.trim()}`)
+    .join("\n\n");
+}
+
+export function normalizeResumeSections(sections?: Partial<ResumeSections>, fallbackText = ""): ResumeSections {
+  if (sections) {
+    return {
+      summary: sections.summary || "",
+      skills: sections.skills || "",
+      projects: sections.projects || "",
+      highlights: sections.highlights || "",
+      raw_notes: sections.raw_notes || "",
+    };
+  }
+  const text = fallbackText.trim();
+  return {
+    summary: firstNonEmptyLine(text),
+    skills: linesMatching(text, ["技能", "技术", "stack", "redis", "go", "postgres", "kafka"]).join("\n"),
+    projects: linesMatching(text, ["项目", "负责", "系统", "平台", "服务"]).join("\n"),
+    highlights: linesMatching(text, ["优化", "提升", "降低", "增长", "%", "qps", "延迟"]).join("\n"),
+    raw_notes: text,
+  };
 }
 
 export function analysisSummary(analysis?: ProfileAnalyzeResponse): string {
@@ -103,6 +147,20 @@ export function normalizeQuestionBankFilter(filter?: QuestionBankFilter): Questi
 
 function uniqueValues(items: string[]): string[] {
   return [...new Set(items.filter(Boolean))];
+}
+
+function firstNonEmptyLine(text: string): string {
+  return text.split(/\r?\n/).map((line) => line.trim()).find(Boolean) || text;
+}
+
+function linesMatching(text: string, keywords: string[]): string[] {
+  const lowerKeywords = keywords.map((item) => item.toLowerCase());
+  return text.split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => {
+      const lower = line.toLowerCase();
+      return lowerKeywords.some((keyword) => lower.includes(keyword));
+    });
 }
 
 function compact(items?: string[]): string[] {

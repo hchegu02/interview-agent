@@ -1,0 +1,52 @@
+id: basic
+name: Basic Scoring
+scale:
+  min: 0
+  max: 5
+weights:
+  correctness: 0.45
+  depth: 0.25
+  tradeoffs: 0.20
+  communication: 0.10
+passing_score: 3.5
+labels:
+  strong: 4.5
+  pass: 3.5
+  weak: 2.0
+cases:
+  - id: redis-lock-001
+    question: Redis 分布式锁如何避免误删和锁过期导致的并发问题？
+    answer: 使用 SET NX EX 获取锁，value 存唯一 token，释放时用 Lua 比较 token 后删除；业务时间可能超过 TTL 时需要续期，Redlock 在网络分区下仍有争议。
+    expected_score_min: 3.5
+    expected_score_max: 4.5
+    actual_score: 4.0
+    expected_hits:
+      - SET NX EX
+      - Lua token 解锁
+      - 续期
+    actual_hits:
+      - SET NX EX
+      - Lua token 解锁
+      - 续期
+    expected_misses:
+      - Redlock 风险
+    actual_misses:
+      - Redlock 风险
+  - id: pg-index-001
+    question: 慢 SQL 优化时如何判断 PostgreSQL 复合索引是否有效？
+    answer: 先看 EXPLAIN ANALYZE 的 rows、loops 和 actual time，再看 WHERE 条件是否匹配索引前缀；索引过多会拖慢写入，所以要结合查询频率和选择性保留。
+    expected_score_min: 3.0
+    expected_score_max: 4.2
+    actual_score: 3.6
+    expected_hits:
+      - EXPLAIN ANALYZE
+      - 选择性
+      - 写入代价
+    actual_hits:
+      - EXPLAIN ANALYZE
+      - 选择性
+      - 写入代价
+    expected_misses:
+      - 只看 cost 不看 actual
+    actual_misses:
+      - 只看 cost 不看 actual

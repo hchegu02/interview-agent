@@ -1,0 +1,16 @@
+id: basic
+name: Basic Go Backend Evaluation
+description: Minimal fixture profile for local cmd/eval smoke runs.
+candidate:
+  level: mid
+  role: backend
+  skills:
+    - go
+    - redis
+    - postgresql
+    - system-design
+rag:
+  golden_queries: testdata/rag/golden_queries.jsonl
+limits:
+  max_questions: 8
+  per_category: 2

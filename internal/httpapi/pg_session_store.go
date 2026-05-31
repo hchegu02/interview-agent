@@ -107,6 +107,20 @@ LIMIT $2`, userID, limit)
 	return out, nil
 }
 
+func (s *PGSessionStore) DeleteForUser(ctx context.Context, id, userID string) error {
+	if s == nil || s.Pool == nil {
+		return fmt.Errorf("pg session store: pool not initialized")
+	}
+	tag, err := s.Pool.Exec(ctx, `DELETE FROM sessions WHERE id = $1 AND user_id = $2`, id, userID)
+	if err != nil {
+		return fmt.Errorf("delete session: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("%w: %q", ErrSessionNotFound, id)
+	}
+	return nil
+}
+
 func pgInterval(d time.Duration) string {
 	seconds := int64(d.Seconds())
 	if seconds <= 0 {

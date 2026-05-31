@@ -96,3 +96,19 @@ func TestNormalizeSeedRowMetadataKeepsDatabaseArraysNonNull(t *testing.T) {
 		t.Fatalf("Status = %q, want active", row.Status)
 	}
 }
+
+func TestEmbedTextIncludesAnswerSignals(t *testing.T) {
+	got := embedText(seedRow{
+		Content:        "Redis AOF 和 RDB 持久化差异是什么？",
+		Tags:           []string{"redis_persistence"},
+		SkillCategory:  "redis",
+		ExpectedPoints: []string{"AOF 追加日志", "RDB 快照"},
+		SampleAnswer:   "AOF 适合降低数据丢失窗口，RDB 适合快速恢复。",
+	})
+
+	for _, want := range []string{"AOF 追加日志", "RDB 快照", "降低数据丢失窗口"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("embed text missing %q: %s", want, got)
+		}
+	}
+}

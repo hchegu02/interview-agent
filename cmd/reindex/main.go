@@ -207,10 +207,18 @@ func buildEmbedder(mode, baseURL, model string, dim int) (embedding.Embedder, er
 }
 
 // embedText 把一条题目拼成 embed 用的语料。
-// content 占主导，tags/category 作为弱信号串进去——避免噪声但有利于聚类。
+// content 仍占主导；expected_points / sample_answer 提供短题干缺失的语义细节。
 func embedText(r seedRow) string {
 	var sb strings.Builder
 	sb.WriteString(r.Content)
+	if len(r.ExpectedPoints) > 0 {
+		sb.WriteString("\nExpected: ")
+		sb.WriteString(strings.Join(r.ExpectedPoints, "; "))
+	}
+	if strings.TrimSpace(r.SampleAnswer) != "" {
+		sb.WriteString("\nSample: ")
+		sb.WriteString(r.SampleAnswer)
+	}
 	if len(r.Tags) > 0 {
 		sb.WriteString("\nTags: ")
 		sb.WriteString(strings.Join(r.Tags, ", "))

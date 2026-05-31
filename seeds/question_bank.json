@@ -2,257 +2,1648 @@
   {
     "id": "go-001",
     "content": "讲一下 Go 的 GMP 调度模型：G、M、P 各自的职责是什么？为什么需要 P 这一层抽象？",
-    "tags": ["go_concurrency", "go_runtime"],
+    "tags": [
+      "go_concurrency",
+      "go_runtime"
+    ],
     "skill_category": "go",
     "difficulty": 3,
     "scenario": "fundamentals",
-    "role_tags": ["backend"],
-    "expected_points": ["G/M/P 三者定义", "P 的作用是隔离全局调度锁", "本地队列与全局队列", "work stealing"],
+    "role_tags": [
+      "backend"
+    ],
+    "expected_points": [
+      "G/M/P 三者定义",
+      "P 的作用是隔离全局调度锁",
+      "本地队列与全局队列",
+      "work stealing"
+    ],
     "rubric": {
       "good": "能说明 G/M/P 职责、本地队列/全局队列和 work stealing。",
       "weak": "只停留在名词解释，讲不出 P 的调度意义。"
     },
     "sample_answer": "G 是 goroutine，M 是系统线程，P 持有本地运行队列并负责把 G 调度到 M 上执行。P 减少全局锁竞争，配合本地队列、全局队列和 work stealing 提升并发调度效率。",
-    "follow_up_hints": ["什么时候会触发 work stealing？", "syscall 阻塞时 P 和 M 会怎么处理？"]
+    "follow_up_hints": [
+      "什么时候会触发 work stealing？",
+      "syscall 阻塞时 P 和 M 会怎么处理？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "go-002",
     "content": "Go channel 的底层数据结构是怎样的？无缓冲 channel 和有缓冲 channel 在发送/接收时分别走哪条路径？",
-    "tags": ["channel", "go_concurrency"],
+    "tags": [
+      "channel",
+      "go_concurrency"
+    ],
     "skill_category": "go",
     "difficulty": 3,
     "scenario": "fundamentals",
-    "role_tags": ["backend"],
-    "expected_points": ["hchan 结构", "sendq/recvq waitlist", "直接传递 vs 拷贝到 buf", "唤醒 goroutine 的时机"],
+    "role_tags": [
+      "backend"
+    ],
+    "expected_points": [
+      "hchan 结构",
+      "sendq/recvq waitlist",
+      "直接传递 vs 拷贝到 buf",
+      "唤醒 goroutine 的时机"
+    ],
     "rubric": {
       "good": "能讲清 hchan、环形缓冲、sendq/recvq 和无缓冲直接交接。",
       "weak": "只说 channel 是通信机制，没有底层路径。"
     },
     "sample_answer": "channel 底层核心是 hchan，包含缓冲区、sendq、recvq 和锁。无缓冲 channel 如果有等待接收者会直接交接数据，否则发送者入 sendq 阻塞；有缓冲 channel 优先写入 ring buffer，缓冲满时才阻塞。",
-    "follow_up_hints": ["关闭 channel 时 sendq/recvq 如何被唤醒？", "为什么 channel 操作需要锁？"]
+    "follow_up_hints": [
+      "关闭 channel 时 sendq/recvq 如何被唤醒？",
+      "为什么 channel 操作需要锁？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "go-003",
     "content": "sync.Mutex 在 Go 1.9 之后引入了饥饿模式，请说明饥饿模式的触发条件和切换逻辑。",
-    "tags": ["mutex", "go_concurrency"],
+    "tags": [
+      "mutex",
+      "go_concurrency"
+    ],
     "skill_category": "go",
     "difficulty": 4,
-    "expected_points": ["等待超过 1ms 触发饥饿", "饥饿模式直接交接所有权", "退出饥饿的条件", "为什么需要饥饿模式"]
+    "expected_points": [
+      "等待超过 1ms 触发饥饿",
+      "饥饿模式直接交接所有权",
+      "退出饥饿的条件",
+      "为什么需要饥饿模式"
+    ],
+    "scenario": "deep-dive",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 go 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 等待超过 1ms 触发饥饿、饥饿模式直接交接所有权、退出饥饿的条件，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个机制在高并发下有什么坑？",
+      "如果线上出问题，你会怎么定位？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "go-004",
     "content": "sync.Map 适用什么场景？相比 map+RWMutex 有什么取舍？",
-    "tags": ["go_concurrency", "sync_map"],
+    "tags": [
+      "go_concurrency",
+      "sync_map"
+    ],
     "skill_category": "go",
     "difficulty": 2,
-    "expected_points": ["读多写少且 key 集合稳定", "read/dirty 双 map 设计", "amended 标志", "miss 提升 dirty"]
+    "expected_points": [
+      "读多写少且 key 集合稳定",
+      "read/dirty 双 map 设计",
+      "amended 标志",
+      "miss 提升 dirty"
+    ],
+    "scenario": "fundamentals",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 go 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 读多写少且 key 集合稳定、read/dirty 双 map 设计、amended 标志，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个机制在高并发下有什么坑？",
+      "如果线上出问题，你会怎么定位？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "go-005",
     "content": "atomic 和 mutex 在性能、可读性、适用场景上各有什么取舍？什么时候必须用 mutex？",
-    "tags": ["atomic", "mutex", "go_concurrency"],
+    "tags": [
+      "atomic",
+      "mutex",
+      "go_concurrency"
+    ],
     "skill_category": "go",
     "difficulty": 3,
-    "expected_points": ["atomic 只能保护单字节/单字", "复合操作必须 mutex", "atomic 在 hot path 性能优势", "ABA 问题"]
+    "expected_points": [
+      "atomic 只能保护单字节/单字",
+      "复合操作必须 mutex",
+      "atomic 在 hot path 性能优势",
+      "ABA 问题"
+    ],
+    "scenario": "fundamentals",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 go 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 atomic 只能保护单字节/单字、复合操作必须 mutex、atomic 在 hot path 性能优势，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个机制在高并发下有什么坑？",
+      "如果线上出问题，你会怎么定位？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "go-006",
     "content": "Go 的内存模型 happens-before 关系如何定义?channel send/receive 与 mutex Lock/Unlock 分别提供什么顺序保证？",
-    "tags": ["go_memory_model", "go_concurrency"],
+    "tags": [
+      "go_memory_model",
+      "go_concurrency"
+    ],
     "skill_category": "go",
     "difficulty": 5,
-    "expected_points": ["happens-before 定义", "channel 发送 happens-before 对应接收完成", "Unlock happens-before 后续 Lock", "go 关键字 happens-before goroutine 内第一条语句"]
+    "expected_points": [
+      "happens-before 定义",
+      "channel 发送 happens-before 对应接收完成",
+      "Unlock happens-before 后续 Lock",
+      "go 关键字 happens-before goroutine 内第一条语句"
+    ],
+    "scenario": "deep-dive",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 go 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 happens-before 定义、channel 发送 happens-before 对应接收完成、Unlock happens-before 后续 Lock，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个机制在高并发下有什么坑？",
+      "如果线上出问题，你会怎么定位？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "go-007",
     "content": "Go 的 GC 是什么算法？三色标记法配合写屏障如何保证不漏标？",
-    "tags": ["gc", "go_runtime"],
+    "tags": [
+      "gc",
+      "go_runtime"
+    ],
     "skill_category": "go",
     "difficulty": 4,
-    "expected_points": ["并发三色标记", "插入屏障 vs 删除屏障", "Go 1.8 后用混合写屏障", "STW 阶段做了什么"]
+    "expected_points": [
+      "并发三色标记",
+      "插入屏障 vs 删除屏障",
+      "Go 1.8 后用混合写屏障",
+      "STW 阶段做了什么"
+    ],
+    "scenario": "deep-dive",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 go 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 并发三色标记、插入屏障 vs 删除屏障、Go 1.8 后用混合写屏障，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个方案的失败边界是什么？",
+      "如果要上线，你会加哪些监控指标？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "go-008",
     "content": "context.Context 的取消传播是怎么实现的？WithCancel 派生出多层 context 时，cancel 如何沿树向下广播？",
-    "tags": ["context", "go_concurrency"],
+    "tags": [
+      "context",
+      "go_concurrency"
+    ],
     "skill_category": "go",
     "difficulty": 3,
-    "expected_points": ["cancelCtx 结构持有 children 集合", "cancel 时遍历 children 调用其 cancel", "Done channel close 触发监听者", "为什么 context 不应该当容器传值"]
+    "expected_points": [
+      "cancelCtx 结构持有 children 集合",
+      "cancel 时遍历 children 调用其 cancel",
+      "Done channel close 触发监听者",
+      "为什么 context 不应该当容器传值"
+    ],
+    "scenario": "fundamentals",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 go 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 cancelCtx 结构持有 children 集合、cancel 时遍历 children 调用其 cancel、Done channel close 触发监听者，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个机制在高并发下有什么坑？",
+      "如果线上出问题，你会怎么定位？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "go-009",
     "content": "errgroup 和 sync.WaitGroup 的区别？errgroup 内部如何实现 first-error 收集和早退取消？",
-    "tags": ["errgroup", "go_concurrency"],
+    "tags": [
+      "errgroup",
+      "go_concurrency"
+    ],
     "skill_category": "go",
     "difficulty": 3,
-    "expected_points": ["errgroup 内嵌 WaitGroup", "sync.Once 收第一个 error", "WithContext 返回的 ctx 在出错时被 cancel", "Wait 返回 err"]
+    "expected_points": [
+      "errgroup 内嵌 WaitGroup",
+      "sync.Once 收第一个 error",
+      "WithContext 返回的 ctx 在出错时被 cancel",
+      "Wait 返回 err"
+    ],
+    "scenario": "fundamentals",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 go 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 errgroup 内嵌 WaitGroup、sync.Once 收第一个 error、WithContext 返回的 ctx 在出错时被 cancel，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个机制在高并发下有什么坑？",
+      "如果线上出问题，你会怎么定位？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "go-010",
     "content": "Go 的 net/http server 默认是怎样的并发模型？每个请求开一个 goroutine 会不会被打满？",
-    "tags": ["http_server", "go_concurrency"],
+    "tags": [
+      "http_server",
+      "go_concurrency"
+    ],
     "skill_category": "go",
     "difficulty": 3,
-    "expected_points": ["每连接一 goroutine", "没有内置 worker pool", "需要靠 semaphore/rate limit 控背压", "ReadTimeout/WriteTimeout 配合限连"]
+    "expected_points": [
+      "每连接一 goroutine",
+      "没有内置 worker pool",
+      "需要靠 semaphore/rate limit 控背压",
+      "ReadTimeout/WriteTimeout 配合限连"
+    ],
+    "scenario": "fundamentals",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 go 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 每连接一 goroutine、没有内置 worker pool、需要靠 semaphore/rate limit 控背压，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个机制在高并发下有什么坑？",
+      "如果线上出问题，你会怎么定位？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "redis-001",
     "content": "AOF 和 RDB 两种持久化方式有什么区别？aof-rewrite 期间新写入是怎么处理的？",
-    "tags": ["aof", "rdb", "redis_persistence"],
+    "tags": [
+      "aof",
+      "rdb",
+      "redis_persistence"
+    ],
     "skill_category": "redis",
     "difficulty": 3,
-    "expected_points": ["AOF 是追加命令，RDB 是快照", "appendfsync 三档", "aof-rewrite 用 child + buffer", "混合持久化 aof-use-rdb-preamble"]
+    "expected_points": [
+      "AOF 是追加命令，RDB 是快照",
+      "appendfsync 三档",
+      "aof-rewrite 用 child + buffer",
+      "混合持久化 aof-use-rdb-preamble"
+    ],
+    "scenario": "fundamentals",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 redis 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 AOF 是追加命令，RDB 是快照、appendfsync 三档、aof-rewrite 用 child + buffer，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个方案在 Redis 故障时怎么降级？",
+      "如何观测它的命中率和延迟？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "redis-002",
     "content": "Redis 哨兵的选主流程是怎样的？quorum 和 majority 分别在什么阶段起作用？",
-    "tags": ["sentinel", "redis_ha"],
+    "tags": [
+      "sentinel",
+      "redis_ha"
+    ],
     "skill_category": "redis",
     "difficulty": 4,
-    "expected_points": ["主观下线 SDOWN", "客观下线 ODOWN 需 quorum", "领导者选举需要 majority", "选主优先级 slave-priority/offset/runid"]
+    "expected_points": [
+      "主观下线 SDOWN",
+      "客观下线 ODOWN 需 quorum",
+      "领导者选举需要 majority",
+      "选主优先级 slave-priority/offset/runid"
+    ],
+    "scenario": "deep-dive",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 redis 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 主观下线 SDOWN、客观下线 ODOWN 需 quorum、领导者选举需要 majority，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个方案在 Redis 故障时怎么降级？",
+      "如何观测它的命中率和延迟？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "redis-003",
     "content": "Redis Cluster 的 slot 是怎么分配的？跨 slot 的事务/lua 脚本为什么不行？",
-    "tags": ["redis_cluster", "redis_ha"],
+    "tags": [
+      "redis_cluster",
+      "redis_ha"
+    ],
     "skill_category": "redis",
     "difficulty": 4,
-    "expected_points": ["16384 slot CRC16", "MOVED/ASK 重定向", "事务和 lua 必须 hash slot 一致", "{tag} hashtag 强制同 slot"]
+    "expected_points": [
+      "16384 slot CRC16",
+      "MOVED/ASK 重定向",
+      "事务和 lua 必须 hash slot 一致",
+      "{tag} hashtag 强制同 slot"
+    ],
+    "scenario": "deep-dive",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 redis 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 16384 slot CRC16、MOVED/ASK 重定向、事务和 lua 必须 hash slot 一致，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个方案在 Redis 故障时怎么降级？",
+      "如何观测它的命中率和延迟？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "redis-004",
     "content": "用 Redis 实现分布式锁，单实例 SETNX EX 方案有什么坑？Redlock 算法又解决了什么、又有什么争议？",
-    "tags": ["distributed_lock", "redis_ha", "go_concurrency"],
+    "tags": [
+      "distributed_lock",
+      "redis_ha",
+      "go_concurrency"
+    ],
     "skill_category": "redis",
     "difficulty": 4,
-    "expected_points": ["SETNX 必须带 EX 原子", "释放锁要 lua 比 value", "Redlock N/2+1 拿锁", "Martin Kleppmann fencing token 质疑"]
+    "expected_points": [
+      "SETNX 必须带 EX 原子",
+      "释放锁要 lua 比 value",
+      "Redlock N/2+1 拿锁",
+      "Martin Kleppmann fencing token 质疑"
+    ],
+    "scenario": "deep-dive",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 redis 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 SETNX 必须带 EX 原子、释放锁要 lua 比 value、Redlock N/2+1 拿锁，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个机制在高并发下有什么坑？",
+      "如果线上出问题，你会怎么定位？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "redis-005",
     "content": "Redis 缓存击穿、穿透、雪崩三者的区别是什么？分别用什么手段防御？",
-    "tags": ["cache", "redis"],
+    "tags": [
+      "cache",
+      "redis"
+    ],
     "skill_category": "redis",
     "difficulty": 2,
-    "expected_points": ["击穿单 key 热点", "穿透不存在的 key", "雪崩大批量 ttl 同时过期", "singleflight/布隆/随机 ttl"]
+    "expected_points": [
+      "击穿单 key 热点",
+      "穿透不存在的 key",
+      "雪崩大批量 ttl 同时过期",
+      "singleflight/布隆/随机 ttl"
+    ],
+    "scenario": "fundamentals",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 redis 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 击穿单 key 热点、穿透不存在的 key、雪崩大批量 ttl 同时过期，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个方案在 Redis 故障时怎么降级？",
+      "如何观测它的命中率和延迟？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "redis-006",
     "content": "Redis 6 引入的多线程 IO 是怎么工作的？为什么命令执行还是单线程？",
-    "tags": ["redis", "redis_threading"],
+    "tags": [
+      "redis",
+      "redis_threading"
+    ],
     "skill_category": "redis",
     "difficulty": 3,
-    "expected_points": ["IO 线程只读写 socket 和协议解析", "命令执行依然主线程", "避免命令并发的复杂度", "io-threads 配置"]
+    "expected_points": [
+      "IO 线程只读写 socket 和协议解析",
+      "命令执行依然主线程",
+      "避免命令并发的复杂度",
+      "io-threads 配置"
+    ],
+    "scenario": "fundamentals",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 redis 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 IO 线程只读写 socket 和协议解析、命令执行依然主线程、避免命令并发的复杂度，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个方案在 Redis 故障时怎么降级？",
+      "如何观测它的命中率和延迟？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "redis-007",
     "content": "Redis 大 key 和热 key 各有什么危害？线上发现该怎么排查和处理？",
-    "tags": ["redis", "performance"],
+    "tags": [
+      "redis",
+      "performance"
+    ],
     "skill_category": "redis",
     "difficulty": 3,
-    "expected_points": ["大 key 阻塞主线程/迁移慢", "热 key 单 slot 压力", "--bigkeys / hotkeys 扫描", "拆分/本地缓存/读副本"]
+    "expected_points": [
+      "大 key 阻塞主线程/迁移慢",
+      "热 key 单 slot 压力",
+      "--bigkeys / hotkeys 扫描",
+      "拆分/本地缓存/读副本"
+    ],
+    "scenario": "troubleshooting",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 redis 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 大 key 阻塞主线程/迁移慢、热 key 单 slot 压力、--bigkeys / hotkeys 扫描，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个方案在 Redis 故障时怎么降级？",
+      "如何观测它的命中率和延迟？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "pg-001",
     "content": "PostgreSQL 的 MVCC 是怎么实现的？元组的 xmin/xmax 和 vacuum 有什么关系？",
-    "tags": ["mvcc", "pg_concurrency"],
+    "tags": [
+      "mvcc",
+      "pg_concurrency"
+    ],
     "skill_category": "pg",
     "difficulty": 4,
-    "expected_points": ["每个元组带 xmin/xmax", "snapshot 决定可见性", "更新是 insert 新版本+标记旧", "vacuum 清理 dead tuple/freeze xid"]
+    "expected_points": [
+      "每个元组带 xmin/xmax",
+      "snapshot 决定可见性",
+      "更新是 insert 新版本+标记旧",
+      "vacuum 清理 dead tuple/freeze xid"
+    ],
+    "scenario": "deep-dive",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 pg 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 每个元组带 xmin/xmax、snapshot 决定可见性、更新是 insert 新版本+标记旧，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "怎么用执行计划或监控验证你的判断？",
+      "数据量变大后方案会怎么退化？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "pg-002",
     "content": "PostgreSQL 的 B-tree 和 GIN 索引分别适合什么场景？数组和 jsonb 字段建什么索引？",
-    "tags": ["index", "pg_index"],
+    "tags": [
+      "index",
+      "pg_index"
+    ],
     "skill_category": "pg",
     "difficulty": 3,
-    "expected_points": ["B-tree 等值/范围/有序", "GIN 倒排，适合数组/jsonb/全文", "GIN 写放大", "tags && query_tags 用 GIN"]
+    "expected_points": [
+      "B-tree 等值/范围/有序",
+      "GIN 倒排，适合数组/jsonb/全文",
+      "GIN 写放大",
+      "tags && query_tags 用 GIN"
+    ],
+    "scenario": "fundamentals",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 pg 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 B-tree 等值/范围/有序、GIN 倒排，适合数组/jsonb/全文、GIN 写放大，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "怎么用执行计划或监控验证你的判断？",
+      "数据量变大后方案会怎么退化？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "pg-003",
     "content": "pgvector 的 HNSW 索引相比 IVFFlat 有什么取舍？查询时 ORDER BY 必须怎么写才能用上索引？",
-    "tags": ["pgvector", "vector_search"],
+    "tags": [
+      "pgvector",
+      "vector_search"
+    ],
     "skill_category": "pg",
     "difficulty": 4,
-    "expected_points": ["HNSW 高召回低延迟，构建慢", "IVFFlat 训练快，需要 PROBES", "必须 ORDER BY embedding <=> $1 LIMIT N", "ef_search 影响召回精度"]
+    "expected_points": [
+      "HNSW 高召回低延迟，构建慢",
+      "IVFFlat 训练快，需要 PROBES",
+      "必须 ORDER BY embedding <=> $1 LIMIT N",
+      "ef_search 影响召回精度"
+    ],
+    "scenario": "deep-dive",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 pg 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 HNSW 高召回低延迟，构建慢、IVFFlat 训练快，需要 PROBES、必须 ORDER BY embedding <=> $1 LIMIT N，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "怎么用执行计划或监控验证你的判断？",
+      "数据量变大后方案会怎么退化？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "pg-004",
     "content": "PostgreSQL 的事务隔离级别 RC 和 RR 在实现上有什么不同？为什么 PG 的 RR 比 MySQL 的 RR 更接近 Serializable？",
-    "tags": ["isolation_level", "pg_concurrency"],
+    "tags": [
+      "isolation_level",
+      "pg_concurrency"
+    ],
     "skill_category": "pg",
     "difficulty": 4,
-    "expected_points": ["snapshot 取的时机不同", "PG RR 不会出现幻读", "Serializable Snapshot Isolation", "MySQL RR 靠 gap lock"]
+    "expected_points": [
+      "snapshot 取的时机不同",
+      "PG RR 不会出现幻读",
+      "Serializable Snapshot Isolation",
+      "MySQL RR 靠 gap lock"
+    ],
+    "scenario": "deep-dive",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 pg 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 snapshot 取的时机不同、PG RR 不会出现幻读、Serializable Snapshot Isolation，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "怎么用执行计划或监控验证你的判断？",
+      "数据量变大后方案会怎么退化？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "pg-005",
     "content": "EXPLAIN ANALYZE 输出里 cost、actual time、rows、loops 分别是什么含义？怎么判断查询计划是否符合预期？",
-    "tags": ["explain", "performance"],
+    "tags": [
+      "explain",
+      "performance"
+    ],
     "skill_category": "pg",
     "difficulty": 3,
-    "expected_points": ["cost 是估算两阶段", "actual time 是实测", "rows 估算 vs 真实差距", "Nested Loop 的 loops×inner cost"]
+    "expected_points": [
+      "cost 是估算两阶段",
+      "actual time 是实测",
+      "rows 估算 vs 真实差距",
+      "Nested Loop 的 loops×inner cost"
+    ],
+    "scenario": "troubleshooting",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 pg 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 cost 是估算两阶段、actual time 是实测、rows 估算 vs 真实差距，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "怎么用执行计划或监控验证你的判断？",
+      "数据量变大后方案会怎么退化？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "pg-006",
     "content": "PostgreSQL 的 CTE 在 12 之前默认是 optimization fence，12 之后行为变了，背后的原因是什么？哪些场景需要主动加 MATERIALIZED？",
-    "tags": ["cte", "pg_query"],
+    "tags": [
+      "cte",
+      "pg_query"
+    ],
     "skill_category": "pg",
     "difficulty": 4,
-    "expected_points": ["12 前 CTE 物化是默认", "12 后 inlining 默认", "非确定性/写操作仍物化", "强制物化用 MATERIALIZED 关键字"]
+    "expected_points": [
+      "12 前 CTE 物化是默认",
+      "12 后 inlining 默认",
+      "非确定性/写操作仍物化",
+      "强制物化用 MATERIALIZED 关键字"
+    ],
+    "scenario": "deep-dive",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 pg 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 12 前 CTE 物化是默认、12 后 inlining 默认、非确定性/写操作仍物化，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "怎么用执行计划或监控验证你的判断？",
+      "数据量变大后方案会怎么退化？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "pg-007",
     "content": "连接池 pgbouncer 的 session/transaction/statement 三种模式各自的限制是什么？应用端要注意什么？",
-    "tags": ["pgbouncer", "pg_pool"],
+    "tags": [
+      "pgbouncer",
+      "pg_pool"
+    ],
     "skill_category": "pg",
     "difficulty": 3,
-    "expected_points": ["session 模式全功能", "transaction 模式不支持 prepared/session GUC", "statement 不支持事务", "pgx 的 simple protocol 兼容性"]
+    "expected_points": [
+      "session 模式全功能",
+      "transaction 模式不支持 prepared/session GUC",
+      "statement 不支持事务",
+      "pgx 的 simple protocol 兼容性"
+    ],
+    "scenario": "fundamentals",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 pg 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 session 模式全功能、transaction 模式不支持 prepared/session GUC、statement 不支持事务，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "怎么用执行计划或监控验证你的判断？",
+      "数据量变大后方案会怎么退化？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "sd-001",
     "content": "设计一个秒杀系统，支持 10w 商品 + 1000 QPS 抢购。重点谈一下库存扣减、防超卖、限流策略。",
-    "tags": ["system_design", "distributed_lock", "redis"],
+    "tags": [
+      "system_design",
+      "distributed_lock",
+      "redis"
+    ],
     "skill_category": "system-design",
     "difficulty": 4,
-    "expected_points": ["库存预扣 Redis lua", "MQ 异步落库", "令牌桶 + 单用户限流", "数据库行锁 vs 乐观锁"]
+    "expected_points": [
+      "库存预扣 Redis lua",
+      "MQ 异步落库",
+      "令牌桶 + 单用户限流",
+      "数据库行锁 vs 乐观锁"
+    ],
+    "scenario": "system-design",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 system-design 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 库存预扣 Redis lua、MQ 异步落库、令牌桶 + 单用户限流，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个方案在 Redis 故障时怎么降级？",
+      "如何观测它的命中率和延迟？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "sd-002",
     "content": "设计一个短链系统，每天 1 亿次访问 + 100w 新建。讨论 ID 生成、存储、缓存、统计的方案。",
-    "tags": ["system_design", "id_gen", "cache"],
+    "tags": [
+      "system_design",
+      "id_gen",
+      "cache"
+    ],
     "skill_category": "system-design",
     "difficulty": 4,
-    "expected_points": ["发号器 snowflake/号段", "Base62 编码", "热点 KV 缓存", "异步埋点 + Kafka 落仓"]
+    "expected_points": [
+      "发号器 snowflake/号段",
+      "Base62 编码",
+      "热点 KV 缓存",
+      "异步埋点 + Kafka 落仓"
+    ],
+    "scenario": "system-design",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 system-design 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 发号器 snowflake/号段、Base62 编码、热点 KV 缓存，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "单机瓶颈在哪里？",
+      "如何做限流、降级和可观测性？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "sd-003",
     "content": "如果让你设计一个 SSE 长连接推送服务，单机 5w 长连接、支持广播和单播，关键技术点有哪些？",
-    "tags": ["system_design", "sse", "http_server"],
+    "tags": [
+      "system_design",
+      "sse",
+      "http_server"
+    ],
     "skill_category": "system-design",
     "difficulty": 4,
-    "expected_points": ["epoll/poll 多路复用", "心跳保活/重连恢复", "广播扇出与背压", "连接路由表 user→node"]
+    "expected_points": [
+      "epoll/poll 多路复用",
+      "心跳保活/重连恢复",
+      "广播扇出与背压",
+      "连接路由表 user→node"
+    ],
+    "scenario": "system-design",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 system-design 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 epoll/poll 多路复用、心跳保活/重连恢复、广播扇出与背压，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "单机瓶颈在哪里？",
+      "如何做限流、降级和可观测性？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "sd-004",
     "content": "微服务从单体拆出来时，怎么选切分边界？分布式事务（TCC / Saga / 消息事务）三者怎么选？",
-    "tags": ["system_design", "distributed_txn"],
+    "tags": [
+      "system_design",
+      "distributed_txn"
+    ],
     "skill_category": "system-design",
     "difficulty": 5,
-    "expected_points": ["DDD 限界上下文切边界", "TCC 需业务改造", "Saga 长事务补偿", "消息事务依赖 MQ 投递语义"]
+    "expected_points": [
+      "DDD 限界上下文切边界",
+      "TCC 需业务改造",
+      "Saga 长事务补偿",
+      "消息事务依赖 MQ 投递语义"
+    ],
+    "scenario": "system-design",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 system-design 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 DDD 限界上下文切边界、TCC 需业务改造、Saga 长事务补偿，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "单机瓶颈在哪里？",
+      "如何做限流、降级和可观测性？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "sd-005",
     "content": "线上服务出现 P99 抖动，平均延迟正常。给你一个排查思路。",
-    "tags": ["system_design", "performance"],
+    "tags": [
+      "system_design",
+      "performance"
+    ],
     "skill_category": "system-design",
     "difficulty": 4,
-    "expected_points": ["先看 GC/调度", "TCP 重传/网络抖动", "下游慢调用排队", "锁竞争 / 热点 key", "Tail Latency 治理思路"]
+    "expected_points": [
+      "先看 GC/调度",
+      "TCP 重传/网络抖动",
+      "下游慢调用排队",
+      "锁竞争 / 热点 key",
+      "Tail Latency 治理思路"
+    ],
+    "scenario": "troubleshooting",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 system-design 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 先看 GC/调度、TCP 重传/网络抖动、下游慢调用排队，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "单机瓶颈在哪里？",
+      "如何做限流、降级和可观测性？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   },
   {
     "id": "sd-006",
     "content": "讲一下 Raft 协议的领导者选举、日志复制、安全性约束。和 Paxos 比有什么工程优势？",
-    "tags": ["system_design", "consensus", "raft"],
+    "tags": [
+      "system_design",
+      "consensus",
+      "raft"
+    ],
     "skill_category": "system-design",
     "difficulty": 5,
-    "expected_points": ["Term + RequestVote", "AppendEntries 复制 + 提交", "Leader Completeness", "比 Paxos 易懂、状态机分离"]
+    "expected_points": [
+      "Term + RequestVote",
+      "AppendEntries 复制 + 提交",
+      "Leader Completeness",
+      "比 Paxos 易懂、状态机分离"
+    ],
+    "scenario": "system-design",
+    "role_tags": [
+      "backend"
+    ],
+    "rubric": {
+      "good": "能围绕 system-design 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 Term + RequestVote、AppendEntries 复制 + 提交、Leader Completeness，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "单机瓶颈在哪里？",
+      "如何做限流、降级和可观测性？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
+  },
+  {
+    "id": "go-011",
+    "content": "Go map 是并发安全的吗？并发读写时为什么 runtime 选择 fatal error，而不是普通 panic？",
+    "tags": [
+      "go",
+      "go_concurrency",
+      "map"
+    ],
+    "skill_category": "go",
+    "difficulty": 3,
+    "scenario": "fundamentals",
+    "role_tags": [
+      "backend"
+    ],
+    "expected_points": [
+      "普通 map 并发读写不安全",
+      "bucket/overflow/扩容迁移会被破坏",
+      "fatal error 不能靠 recover 正常兜底",
+      "业务上用 map+RWMutex 或 sync.Map"
+    ],
+    "rubric": {
+      "good": "能围绕 go 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 普通 map 并发读写不安全、bucket/overflow/扩容迁移会被破坏、fatal error 不能靠 recover 正常兜底，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个机制在高并发下有什么坑？",
+      "如果线上出问题，你会怎么定位？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
+  },
+  {
+    "id": "go-012",
+    "content": "关闭后的 channel 读写分别会发生什么？如何避免重复关闭 channel？",
+    "tags": [
+      "go",
+      "channel",
+      "go_concurrency"
+    ],
+    "skill_category": "go",
+    "difficulty": 3,
+    "scenario": "fundamentals",
+    "role_tags": [
+      "backend"
+    ],
+    "expected_points": [
+      "关闭后读会返回零值和 ok=false",
+      "向已关闭 channel 发送会 panic",
+      "重复 close 会 panic",
+      "由发送方或 owner 负责关闭"
+    ],
+    "rubric": {
+      "good": "能围绕 go 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 关闭后读会返回零值和 ok=false、向已关闭 channel 发送会 panic、重复 close 会 panic，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个机制在高并发下有什么坑？",
+      "如果线上出问题，你会怎么定位？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
+  },
+  {
+    "id": "go-013",
+    "content": "defer 的执行顺序和参数求值时机是什么？命名返回值场景下 defer 如何影响返回结果？",
+    "tags": [
+      "go",
+      "defer",
+      "go_runtime"
+    ],
+    "skill_category": "go",
+    "difficulty": 3,
+    "scenario": "fundamentals",
+    "role_tags": [
+      "backend"
+    ],
+    "expected_points": [
+      "defer 后进先出",
+      "参数在注册 defer 时求值",
+      "闭包捕获变量引用",
+      "命名返回值可在 defer 中被修改"
+    ],
+    "rubric": {
+      "good": "能围绕 go 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 defer 后进先出、参数在注册 defer 时求值、闭包捕获变量引用，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个方案的失败边界是什么？",
+      "如果要上线，你会加哪些监控指标？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
+  },
+  {
+    "id": "go-014",
+    "content": "Go 对象逃逸是什么？什么情况下变量会逃逸到堆上，如何用 pprof 或编译参数定位？",
+    "tags": [
+      "go",
+      "escape",
+      "go_runtime"
+    ],
+    "skill_category": "go",
+    "difficulty": 4,
+    "scenario": "troubleshooting",
+    "role_tags": [
+      "backend"
+    ],
+    "expected_points": [
+      "逃逸分析决定栈/堆分配",
+      "返回局部变量地址或接口装箱可能逃逸",
+      "go build -gcflags=-m",
+      "pprof 观察 alloc_space/alloc_objects"
+    ],
+    "rubric": {
+      "good": "能围绕 go 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 逃逸分析决定栈/堆分配、返回局部变量地址或接口装箱可能逃逸、go build -gcflags=-m，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个方案的失败边界是什么？",
+      "如果要上线，你会加哪些监控指标？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
+  },
+  {
+    "id": "go-015",
+    "content": "怎么实现两个 goroutine 交替打印 1 到 100？请说明 channel 和 sync.Cond 两种思路的取舍。",
+    "tags": [
+      "go",
+      "go_concurrency",
+      "channel"
+    ],
+    "skill_category": "go",
+    "difficulty": 3,
+    "scenario": "coding",
+    "role_tags": [
+      "backend"
+    ],
+    "expected_points": [
+      "两个 channel 传递令牌",
+      "控制退出和关闭顺序",
+      "sync.Cond 用条件变量唤醒",
+      "避免忙等和 goroutine 泄漏"
+    ],
+    "rubric": {
+      "good": "能围绕 go 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 两个 channel 传递令牌、控制退出和关闭顺序、sync.Cond 用条件变量唤醒，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个机制在高并发下有什么坑？",
+      "如果线上出问题，你会怎么定位？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
+  },
+  {
+    "id": "redis-008",
+    "content": "Redis 的 String、Hash、List、Set、ZSet 分别适合什么业务场景？排行榜为什么常用 ZSet？",
+    "tags": [
+      "redis",
+      "redis_datastructure"
+    ],
+    "skill_category": "redis",
+    "difficulty": 2,
+    "scenario": "fundamentals",
+    "role_tags": [
+      "backend"
+    ],
+    "expected_points": [
+      "String 适合 KV/计数",
+      "Hash 适合对象字段",
+      "Set 适合去重集合",
+      "ZSet 适合按 score 排序和范围查询"
+    ],
+    "rubric": {
+      "good": "能围绕 redis 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 String 适合 KV/计数、Hash 适合对象字段、Set 适合去重集合，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个方案在 Redis 故障时怎么降级？",
+      "如何观测它的命中率和延迟？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
+  },
+  {
+    "id": "redis-009",
+    "content": "Redis ZSet 的跳表大致怎么实现？为什么同时需要 dict 和 skiplist？",
+    "tags": [
+      "redis",
+      "skiplist",
+      "redis_datastructure"
+    ],
+    "skill_category": "redis",
+    "difficulty": 4,
+    "scenario": "deep-dive",
+    "role_tags": [
+      "backend"
+    ],
+    "expected_points": [
+      "dict 支持 member 到 score 的 O(1) 查询",
+      "skiplist 支持按 score 排序和范围扫描",
+      "多层 forward 指针降低查找复杂度",
+      "score 相同按 member 字典序"
+    ],
+    "rubric": {
+      "good": "能围绕 redis 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 dict 支持 member 到 score 的 O(1) 查询、skiplist 支持按 score 排序和范围扫描、多层 forward 指针降低查找复杂度，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个方案在 Redis 故障时怎么降级？",
+      "如何观测它的命中率和延迟？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
+  },
+  {
+    "id": "redis-010",
+    "content": "Redis key 过期后是怎么删除的？惰性删除、定期删除和内存淘汰分别解决什么问题？",
+    "tags": [
+      "redis",
+      "ttl",
+      "redis_eviction"
+    ],
+    "skill_category": "redis",
+    "difficulty": 3,
+    "scenario": "fundamentals",
+    "role_tags": [
+      "backend"
+    ],
+    "expected_points": [
+      "读写访问时惰性删除",
+      "后台定期抽样删除过期 key",
+      "内存不足触发 maxmemory 淘汰策略",
+      "过期删除不等于内存淘汰"
+    ],
+    "rubric": {
+      "good": "能围绕 redis 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 读写访问时惰性删除、后台定期抽样删除过期 key、内存不足触发 maxmemory 淘汰策略，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个方案在 Redis 故障时怎么降级？",
+      "如何观测它的命中率和延迟？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
+  },
+  {
+    "id": "redis-011",
+    "content": "Redis 大 key 和热 key 如何排查？它们分别会带来哪些风险？",
+    "tags": [
+      "redis",
+      "performance",
+      "hot_key"
+    ],
+    "skill_category": "redis",
+    "difficulty": 3,
+    "scenario": "troubleshooting",
+    "role_tags": [
+      "backend"
+    ],
+    "expected_points": [
+      "bigkeys/hotkeys/slowlog/监控定位",
+      "大 key 阻塞主线程和迁移",
+      "热 key 打爆单分片",
+      "拆分、本地缓存、读副本和限流"
+    ],
+    "rubric": {
+      "good": "能围绕 redis 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 bigkeys/hotkeys/slowlog/监控定位、大 key 阻塞主线程和迁移、热 key 打爆单分片，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个方案在 Redis 故障时怎么降级？",
+      "如何观测它的命中率和延迟？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
+  },
+  {
+    "id": "redis-012",
+    "content": "Redis 缓存一致性怎么保障？为什么常见方案是先更新数据库再删缓存，而不是同步更新缓存？",
+    "tags": [
+      "redis",
+      "cache",
+      "consistency"
+    ],
+    "skill_category": "redis",
+    "difficulty": 4,
+    "scenario": "system-design",
+    "role_tags": [
+      "backend"
+    ],
+    "expected_points": [
+      "缓存是派生数据",
+      "更新缓存容易写入旧值或并发覆盖",
+      "先写 DB 再删缓存降低不一致窗口",
+      "binlog/消息补偿和延迟双删"
+    ],
+    "rubric": {
+      "good": "能围绕 redis 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 缓存是派生数据、更新缓存容易写入旧值或并发覆盖、先写 DB 再删缓存降低不一致窗口，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个方案在 Redis 故障时怎么降级？",
+      "如何观测它的命中率和延迟？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
+  },
+  {
+    "id": "mysql-001",
+    "content": "MySQL 联合索引的最左前缀原则是什么？`WHERE b=1 AND a=2` 能否使用 `(a,b,c)` 索引？",
+    "tags": [
+      "mysql",
+      "index",
+      "database"
+    ],
+    "skill_category": "mysql",
+    "difficulty": 3,
+    "scenario": "fundamentals",
+    "role_tags": [
+      "backend"
+    ],
+    "expected_points": [
+      "联合索引按定义顺序组织",
+      "等值条件顺序可由优化器调整",
+      "a 和 b 都等值可用索引前缀",
+      "查询 c 可能形成覆盖索引"
+    ],
+    "rubric": {
+      "good": "能围绕 mysql 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 联合索引按定义顺序组织、等值条件顺序可由优化器调整、a 和 b 都等值可用索引前缀，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "怎么用执行计划或监控验证你的判断？",
+      "数据量变大后方案会怎么退化？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
+  },
+  {
+    "id": "mysql-002",
+    "content": "明明建了索引，MySQL 执行计划却没走索引，常见原因有哪些？",
+    "tags": [
+      "mysql",
+      "index",
+      "explain",
+      "performance"
+    ],
+    "skill_category": "mysql",
+    "difficulty": 3,
+    "scenario": "troubleshooting",
+    "role_tags": [
+      "backend"
+    ],
+    "expected_points": [
+      "函数/表达式/隐式转换",
+      "不满足最左前缀或范围截断",
+      "选择性差导致优化器认为全表更便宜",
+      "统计信息不准或回表成本高"
+    ],
+    "rubric": {
+      "good": "能围绕 mysql 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 函数/表达式/隐式转换、不满足最左前缀或范围截断、选择性差导致优化器认为全表更便宜，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "怎么用执行计划或监控验证你的判断？",
+      "数据量变大后方案会怎么退化？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
+  },
+  {
+    "id": "mysql-003",
+    "content": "MySQL 的事务隔离级别有哪些？分别解决脏读、不可重复读和幻读中的哪些问题？",
+    "tags": [
+      "mysql",
+      "transaction",
+      "isolation_level"
+    ],
+    "skill_category": "mysql",
+    "difficulty": 3,
+    "scenario": "fundamentals",
+    "role_tags": [
+      "backend"
+    ],
+    "expected_points": [
+      "RU/RC/RR/Serializable 四级",
+      "RC 解决脏读",
+      "RR 解决不可重复读并配合 next-key lock 处理幻读",
+      "隔离越强并发代价越高"
+    ],
+    "rubric": {
+      "good": "能围绕 mysql 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 RU/RC/RR/Serializable 四级、RC 解决脏读、RR 解决不可重复读并配合 next-key lock 处理幻读，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "怎么用执行计划或监控验证你的判断？",
+      "数据量变大后方案会怎么退化？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
+  },
+  {
+    "id": "mysql-004",
+    "content": "MySQL 为什么常用 B+Tree 做索引，而不是普通 BTree？",
+    "tags": [
+      "mysql",
+      "index",
+      "b_plus_tree"
+    ],
+    "skill_category": "mysql",
+    "difficulty": 3,
+    "scenario": "deep-dive",
+    "role_tags": [
+      "backend"
+    ],
+    "expected_points": [
+      "非叶子节点只存 key 提高扇出",
+      "树高更低减少 IO",
+      "叶子链表适合范围扫描",
+      "磁盘页和缓存局部性更好"
+    ],
+    "rubric": {
+      "good": "能围绕 mysql 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 非叶子节点只存 key 提高扇出、树高更低减少 IO、叶子链表适合范围扫描，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "怎么用执行计划或监控验证你的判断？",
+      "数据量变大后方案会怎么退化？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
+  },
+  {
+    "id": "network-001",
+    "content": "HTTP 和 HTTPS 的区别是什么？TLS 握手中对称加密和非对称加密分别承担什么角色？",
+    "tags": [
+      "network",
+      "http",
+      "https",
+      "tls"
+    ],
+    "skill_category": "network",
+    "difficulty": 3,
+    "scenario": "fundamentals",
+    "role_tags": [
+      "backend"
+    ],
+    "expected_points": [
+      "HTTPS = HTTP over TLS",
+      "证书验证服务端身份",
+      "非对称/密钥交换用于协商会话密钥",
+      "后续数据用对称加密提升性能"
+    ],
+    "rubric": {
+      "good": "能围绕 network 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 HTTPS = HTTP over TLS、证书验证服务端身份、非对称/密钥交换用于协商会话密钥，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个方案的失败边界是什么？",
+      "如果要上线，你会加哪些监控指标？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
+  },
+  {
+    "id": "network-002",
+    "content": "TCP 三次握手和四次挥手的完整过程是什么？为什么主动关闭方会进入 TIME_WAIT？",
+    "tags": [
+      "network",
+      "tcp"
+    ],
+    "skill_category": "network",
+    "difficulty": 3,
+    "scenario": "fundamentals",
+    "role_tags": [
+      "backend"
+    ],
+    "expected_points": [
+      "SYN/SYN-ACK/ACK 建连",
+      "FIN/ACK 双向关闭",
+      "TIME_WAIT 等待旧报文过期",
+      "保证最后 ACK 可重传"
+    ],
+    "rubric": {
+      "good": "能围绕 network 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 SYN/SYN-ACK/ACK 建连、FIN/ACK 双向关闭、TIME_WAIT 等待旧报文过期，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个方案的失败边界是什么？",
+      "如果要上线，你会加哪些监控指标？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
+  },
+  {
+    "id": "network-003",
+    "content": "WebSocket 和 SSE 有什么区别？什么场景下你会选择 SSE？",
+    "tags": [
+      "network",
+      "sse",
+      "websocket",
+      "http_server"
+    ],
+    "skill_category": "network",
+    "difficulty": 3,
+    "scenario": "system-design",
+    "role_tags": [
+      "backend"
+    ],
+    "expected_points": [
+      "WebSocket 双向通信",
+      "SSE 服务端单向推送",
+      "SSE 基于 HTTP 易穿代理和重连",
+      "任务进度/日志流/事件流适合 SSE"
+    ],
+    "rubric": {
+      "good": "能围绕 network 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 WebSocket 双向通信、SSE 服务端单向推送、SSE 基于 HTTP 易穿代理和重连，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个方案的失败边界是什么？",
+      "如果要上线，你会加哪些监控指标？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
+  },
+  {
+    "id": "mq-001",
+    "content": "Kafka 为什么能做到高吞吐？如何保障消息可靠性？",
+    "tags": [
+      "kafka",
+      "mq",
+      "reliability"
+    ],
+    "skill_category": "mq",
+    "difficulty": 4,
+    "scenario": "deep-dive",
+    "role_tags": [
+      "backend"
+    ],
+    "expected_points": [
+      "顺序追加写和 page cache",
+      "批量发送和压缩",
+      "分区并行",
+      "acks、ISR、副本和幂等 producer"
+    ],
+    "rubric": {
+      "good": "能围绕 mq 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 顺序追加写和 page cache、批量发送和压缩、分区并行，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个方案的失败边界是什么？",
+      "如果要上线，你会加哪些监控指标？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
+  },
+  {
+    "id": "system-007",
+    "content": "接口限流有哪些常见算法？滑动窗口、令牌桶和漏桶分别适合什么场景？",
+    "tags": [
+      "system_design",
+      "rate_limit",
+      "performance"
+    ],
+    "skill_category": "system-design",
+    "difficulty": 3,
+    "scenario": "system-design",
+    "role_tags": [
+      "backend"
+    ],
+    "expected_points": [
+      "固定窗口有边界突刺",
+      "滑动窗口更平滑但状态更多",
+      "令牌桶允许突发",
+      "漏桶平滑出流"
+    ],
+    "rubric": {
+      "good": "能围绕 system-design 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 固定窗口有边界突刺、滑动窗口更平滑但状态更多、令牌桶允许突发，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "单机瓶颈在哪里？",
+      "如何做限流、降级和可观测性？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
+  },
+  {
+    "id": "system-008",
+    "content": "热点数据突然从 20% 扩大到 80%，原架构扛不住，你会怎么扩容和降级？",
+    "tags": [
+      "system_design",
+      "hot_key",
+      "cache",
+      "degradation"
+    ],
+    "skill_category": "system-design",
+    "difficulty": 4,
+    "scenario": "system-design",
+    "role_tags": [
+      "backend"
+    ],
+    "expected_points": [
+      "先识别热点和容量瓶颈",
+      "缓存分片/本地缓存/读副本",
+      "限流降级保护下游",
+      "异步化和预热扩容"
+    ],
+    "rubric": {
+      "good": "能围绕 system-design 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 先识别热点和容量瓶颈、缓存分片/本地缓存/读副本、限流降级保护下游，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "单机瓶颈在哪里？",
+      "如何做限流、降级和可观测性？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
+  },
+  {
+    "id": "ai-001",
+    "content": "Agent 系统的端到端成功率和工具误调用率应该怎么量化？",
+    "tags": [
+      "ai",
+      "agent",
+      "evaluation"
+    ],
+    "skill_category": "ai",
+    "difficulty": 4,
+    "scenario": "deep-dive",
+    "role_tags": [
+      "backend",
+      "ai"
+    ],
+    "expected_points": [
+      "定义任务成功 gold set",
+      "记录 tool call precision/recall",
+      "按场景分桶统计失败原因",
+      "用回放集和人工抽检闭环改进"
+    ],
+    "rubric": {
+      "good": "能围绕 ai 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 定义任务成功 gold set、记录 tool call precision/recall、按场景分桶统计失败原因，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个方案的失败边界是什么？",
+      "如果要上线，你会加哪些监控指标？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
+  },
+  {
+    "id": "ai-002",
+    "content": "RAG 技术有哪些难点？如何横向比较向量检索、混合检索和 Graph RAG 的效果？",
+    "tags": [
+      "ai",
+      "rag",
+      "evaluation",
+      "vector_search"
+    ],
+    "skill_category": "ai",
+    "difficulty": 4,
+    "scenario": "deep-dive",
+    "role_tags": [
+      "backend",
+      "ai"
+    ],
+    "expected_points": [
+      "构造带相关文档标注的评估集",
+      "Recall@K/MRR/nDCG 评估检索",
+      "faithfulness/relevance 评估生成",
+      "比较成本、延迟、可解释性和维护复杂度"
+    ],
+    "rubric": {
+      "good": "能围绕 ai 主题讲清核心机制、边界条件和工程取舍。",
+      "weak": "只背概念，缺少关键机制、失败场景或落地取舍。"
+    },
+    "sample_answer": "回答应覆盖 构造带相关文档标注的评估集、Recall@K/MRR/nDCG 评估检索、faithfulness/relevance 评估生成，并结合实际场景说明为什么这样设计以及可能的风险。",
+    "follow_up_hints": [
+      "这个方案的失败边界是什么？",
+      "如果要上线，你会加哪些监控指标？"
+    ],
+    "locale": "zh-CN",
+    "status": "active"
   }
 ]

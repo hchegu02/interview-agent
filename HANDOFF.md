@@ -101,6 +101,11 @@
 - `internal/httpapi/metrics.go`：`/metrics` 覆盖 HTTP request、parser document、SSE active/total、Graph node total / duration summary、LLM calls / duration summary / tokens、breaker state、in-flight 和 backpressure rejection。
 - `internal/httpapi/metrics_graph_callback.go`：新增 Graph metrics callback，按 node + status 记录节点执行次数和耗时。
 - `internal/llm/recording.go`：`RecordingChatModel` 支持可选 observer，server 用它把每次 LLM 调用同步写入 metrics，demo 原有 Snapshot 行为不变。
+- `cmd/rag-eval`：新增离线 RAG 评估命令，读取 `testdata/rag/golden_queries.jsonl` 输出 Recall@5/10、MRR、nDCG、empty/fallback rate 和延迟。
+- `cmd/questionbank-lint`：新增题库质量门禁，检查 seed 字段完整率、tag 规范、难度/技能/场景分布、重复题和 expected points。
+- `cmd/eval`：新增离线 fixture 评估命令，读取 `testdata/eval` 的 profile/scoring/report，输出结构一致性摘要。
+- `internal/httpapi/metrics.go`：HTTP、Graph、LLM duration 现同时输出 histogram bucket；新增 RAG 和 event hub 指标渲染。
+- `chaos/k6_load_1000users.js`、`scripts/chaos_redis_restart.ps1`、`scripts/chaos_pg_restart.ps1`：新增压测和本地故障恢复 smoke。
 - `cmd/server/main.go`：server 启动时先创建 metrics recorder，再把 Graph callback 和 LLM observer 注入 runner；`/metrics` 现在能反映真实 start/answer 链路。
 - `migrations/003_question_bank_metadata.*.sql`：给 `question_bank` 增加 `scenario`、`role_tags`、`rubric`、`sample_answer`、`follow_up_hints`、`locale`、`status`、`updated_at`，为题库产品化打底。
 - `internal/questionbank/`：新增题库只读 Store，包含 memory seed store 和 PG store；默认只暴露 active 题。
@@ -119,9 +124,9 @@
 - `WorkingMemory.ScoredRounds` / `DegradedRounds` 已提成强类型字段；`ReflectTopic` 已作为 reflection_check → pick_next 的强类型补漏信号；降级原因已集中到 `DegradedReasons`；`Notes` 不再承载主流程协议，只兼容旧 `reflect_topic`。
 - `Score = -1` 仍是评估失败哨兵；所有统计逻辑必须先判 `<0`。
 - `cmd/server` 已接最小 PG session store；还没有 repository 层的 lease / takeover / list sessions 等能力。
-- SSE 流已有 `server.max_streams` 背压和 `/metrics` active/total / rejection 计数；还缺 dropped event 与连接 duration 细分指标。
+- SSE 流已有 `server.max_streams` 背压和 `/metrics` active/total / rejection 计数；还缺连接 duration 细分指标。
 - 真实 LLM demo 流程已搭好并已由操作者本地验证：prompt schema 稳定，provider 调用无错误，报告能识别答非所问并给出合理低分；`cmd/demo` 现在会在 `INTERVIEW_POSTGRES_DSN` 存在时走真实 PG/pgvector 题库，`run.json.config.retriever` 会明确记录 `pgvector` / `fallback`；尚无跨多次运行的 prompt regression diff。
-- `/metrics` 已有 HTTP / parser / SSE / Graph / LLM / breaker / backpressure；当前 duration 用 summary count/sum，没有接 Prometheus SDK histogram bucket。
+- `/metrics` 已有 HTTP / parser / SSE / Graph / LLM / RAG / breaker / backpressure；duration 已补轻量 histogram bucket，但仍未接 Prometheus SDK。
 - README 已修正为自研 Graph，但设计文档里可能仍有 Eino/阶段旧描述。
 - 当前环境多次出现 Windows sandbox `CreateProcessAsUserW failed: 1920`，导致 `gofmt`、`git status`、`go build`、`sh -n` 偶发无法执行；`go test ./... -count=1` 已通过。
 
@@ -173,11 +178,11 @@ pgvector / PG session store 集成测试受 `INTEGRATION=1` + `INTERVIEW_POSTGRE
 
 推荐顺序：
 
-1. 真实浏览器流程验收：`make demo-web` 或 `go run ./cmd/server -config config/config.yaml.example`，跑上传简历、开始面试、SSE 更新、回答、报告、历史会话切换。
-2. 前端题库预览页：搜索、技能/场景/难度/标签过滤、候选人视图隐藏答案、admin 视图展示 rubric。
-3. 扩充 seed：优先 Go / Redis / PG / troubleshooting，每类补足 rubric、sample_answer、follow_up_hints。
-4. 面试前题库范围选择：把 skill/scenario/difficulty/tag 选择传入 session，影响 retrieve_rag 查询。
-5. OTel tracing：贯穿 HTTP → Graph → LLM / Parser / Retriever，能按 trace_id 定位慢节点。
+1. 继续扩充 `testdata/rag/golden_queries.jsonl` 到 MySQL、网络、MQ、AI/Agent 类别，并为 seed/mock 检索设定可执行的最低阈值。
+2. 真实浏览器流程验收：`make demo-web` 或 `go run ./cmd/server -config config/config.yaml.example`，跑上传简历、开始面试、SSE 更新、回答、报告、历史会话切换。
+3. 前端题库预览页：搜索、技能/场景/难度/标签过滤、候选人视图隐藏答案、admin 视图展示 rubric。
+4. OTel tracing：贯穿 HTTP → Graph → LLM / Parser / Retriever，能按 `trace_id` 定位慢节点。
+5. 长期压测报告：基于 `chaos/k6_load_1000users.js` 固化 mock/real 两套 SLO 基线。
 
 ## 8. 不要做哪些事
 - 不要在 router 里做副作用。

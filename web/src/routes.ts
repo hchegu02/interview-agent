@@ -1,4 +1,6 @@
 export type Route = "/" | "/resume" | "/jd" | "/interview" | "/report" | "/questions";
+export type Workspace = "candidate" | "admin";
+export type NavItem = { label: string; route: Route };
 
 export const routes = {
   home: "/" as Route,
@@ -23,6 +25,28 @@ export function normalizeRoute(pathname: string): Route {
   }
 }
 
+export function navItemsForWorkspace(workspace: Workspace): NavItem[] {
+  if (workspace === "admin") {
+    return [
+      { label: "题库", route: routes.questions },
+    ];
+  }
+  return [
+    { label: "简历", route: routes.resume },
+    { label: "JD 分析", route: routes.jd },
+    { label: "面试", route: routes.interview },
+    { label: "报告", route: routes.report },
+  ];
+}
+
+export function workspaceForRoute(route: Route): Workspace {
+  return route === routes.questions ? "admin" : "candidate";
+}
+
+export function defaultRouteForWorkspace(workspace: Workspace): Route {
+  return workspace === "admin" ? routes.questions : routes.resume;
+}
+
 export function questionURL(id: string): string {
-  return `${routes.questions}?q=${encodeURIComponent(id)}`;
+	return `${routes.questions}?q=${encodeURIComponent(id)}`;
 }

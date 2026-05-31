@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -61,6 +62,8 @@ func NewPGVectorRetriever(pool *pgxpool.Pool, fusion Fusion) *PGVectorRetriever 
 //	$8 = hard min difficulty (int, 0 means unset)
 //	$9 = hard max difficulty (int, 0 means unset)
 //	$10 = hard tags-overlap filter (text[])
+//	$11 = raw query text (text)
+//	$12 = text candidate limit (int)
 //
 // 关键 design notes：
 //   - vector_candidates 用 MATERIALIZED 强制物化，避免 PG 把 CTE 内联导致
@@ -89,7 +92,7 @@ WITH vector_candidates AS MATERIALIZED (
 tag_candidates AS MATERIALIZED (
     SELECT id
     FROM question_bank
-    WHERE tags && $2::text[]
+    WHERE (tags || ARRAY[skill_category]) && $2::text[]
       AND status = 'active'
       AND embedding_status = 'embedded'
       AND embedding IS NOT NULL
@@ -101,15 +104,33 @@ tag_candidates AS MATERIALIZED (
       AND (cardinality($10::text[]) = 0 OR tags && $10::text[])
     LIMIT $5
 ),
+text_candidates AS MATERIALIZED (
+    SELECT id
+    FROM question_bank
+    WHERE $11::text <> ''
+      AND status = 'active'
+      AND embedding_status = 'embedded'
+      AND embedding IS NOT NULL
+      AND difficulty BETWEEN GREATEST($3 - 2, 1) AND LEAST($3 + 2, 5)
+      AND (cardinality($6::text[]) = 0 OR skill_category = ANY($6::text[]))
+      AND (cardinality($7::text[]) = 0 OR scenario = ANY($7::text[]))
+      AND ($8::int = 0 OR difficulty >= $8)
+      AND ($9::int = 0 OR difficulty <= $9)
+      AND (cardinality($10::text[]) = 0 OR tags && $10::text[])
+    ORDER BY similarity(content, $11::text) DESC
+    LIMIT $12
+),
 candidates AS (
     SELECT id FROM vector_candidates
     UNION
     SELECT id FROM tag_candidates
+    UNION
+    SELECT id FROM text_candidates
 )
 SELECT
     q.id, q.content, q.tags, q.difficulty, q.skill_category, q.expected_points,
     COALESCE(vc.vec_dist, q.embedding <=> $1::vector) AS vec_dist,
-    (SELECT count(*)::int FROM unnest(q.tags) t WHERE t = ANY($2::text[])) AS tag_overlap
+    (SELECT count(*)::int FROM unnest(q.tags || ARRAY[q.skill_category]) t WHERE t = ANY($2::text[])) AS tag_overlap
 FROM candidates c
 JOIN question_bank q USING (id)
 LEFT JOIN vector_candidates vc USING (id);
@@ -134,6 +155,10 @@ func (r *PGVectorRetriever) Retrieve(ctx context.Context, q Query) ([]Result, er
 	tagN := q.TagCandidates
 	if tagN <= 0 {
 		tagN = K * 3
+	}
+	textN := q.TextCandidates
+	if textN <= 0 {
+		textN = K * 3
 	}
 	diff := q.Difficulty
 	if diff < 1 || diff > 5 {
@@ -177,7 +202,7 @@ func (r *PGVectorRetriever) Retrieve(ctx context.Context, q Query) ([]Result, er
 		_ = err
 	}
 
-	rows, err := tx.Query(ctx, retrieveSQL, vecLit, canonical, diff, vecN, tagN, skillCategories, scenarios, diffMin, diffMax, filterTags)
+	rows, err := tx.Query(ctx, retrieveSQL, vecLit, canonical, diff, vecN, tagN, skillCategories, scenarios, diffMin, diffMax, filterTags, q.Text, textN)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}
@@ -192,6 +217,11 @@ func (r *PGVectorRetriever) Retrieve(ctx context.Context, q Query) ([]Result, er
 		}
 		c.QueryTagCount = len(canonical)
 		c.TargetDiff = diff
+		if q.Text != "" {
+			vectorScore := clamp01(1 - c.VecDist)
+			lexicalScore := lexicalSimilarity(q.Text, c.Content)
+			c.VecDist = 1 - clamp01(0.75*vectorScore+0.25*lexicalScore)
+		}
 		candidates = append(candidates, c)
 	}
 	if rows.Err() != nil {
@@ -230,6 +260,71 @@ func normalizeHardDifficulty(n int) int {
 		return 0
 	}
 	return n
+}
+
+func lexicalSimilarity(query, doc string) float64 {
+	queryTokens := textTokenWeights(query)
+	if len(queryTokens) == 0 {
+		return 0
+	}
+	docTokens := textTokenWeights(doc)
+	var hit, total float64
+	for token, weight := range queryTokens {
+		total += weight
+		if _, ok := docTokens[token]; ok {
+			hit += weight
+		}
+	}
+	if total == 0 {
+		return 0
+	}
+	return clamp01(hit / total)
+}
+
+func textTokenWeights(s string) map[string]float64 {
+	out := map[string]float64{}
+	var ascii strings.Builder
+	han := make([]rune, 0, 8)
+	flushASCII := func() {
+		if ascii.Len() == 0 {
+			return
+		}
+		token := ascii.String()
+		ascii.Reset()
+		if len(token) >= 2 {
+			out[token] = 2
+		}
+	}
+	flushHan := func() {
+		if len(han) == 0 {
+			return
+		}
+		if len(han) == 1 {
+			out[string(han[0])] = 0.5
+			han = han[:0]
+			return
+		}
+		for i := 0; i < len(han)-1; i++ {
+			out[string(han[i:i+2])] = 1
+		}
+		han = han[:0]
+	}
+	for _, r := range strings.ToLower(s) {
+		switch {
+		case unicode.Is(unicode.Han, r):
+			flushASCII()
+			han = append(han, r)
+		case unicode.IsLetter(r) || unicode.IsDigit(r):
+			flushHan()
+			ascii.WriteRune(r)
+		default:
+			flushASCII()
+			flushHan()
+		}
+	}
+	flushASCII()
+	flushHan()
+	return out
 }
 
 // vectorLiteral 把 float32 切片格式化成 pgvector 字面量 '[0.1,0.2,...]'。

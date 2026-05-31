@@ -319,7 +319,7 @@ func TestRetrieveSQLIncludesQuestionBankHardFilters(t *testing.T) {
 }
 
 func TestRetrieveSQLRequiresEmbeddedActiveItemsInBothCandidatePaths(t *testing.T) {
-	for _, cte := range []string{"vector_candidates", "tag_candidates"} {
+	for _, cte := range []string{"vector_candidates", "tag_candidates", "text_candidates"} {
 		start := strings.Index(retrieveSQL, cte+" AS MATERIALIZED")
 		if start < 0 {
 			t.Fatalf("retrieveSQL missing %s CTE", cte)
@@ -334,6 +334,39 @@ func TestRetrieveSQLRequiresEmbeddedActiveItemsInBothCandidatePaths(t *testing.T
 				t.Fatalf("%s CTE missing %q", cte, want)
 			}
 		}
+	}
+}
+
+func TestRetrieveSQLIncludesTextCandidatePath(t *testing.T) {
+	for _, want := range []string{
+		"text_candidates AS MATERIALIZED",
+		"similarity(content, $11::text)",
+		"SELECT id FROM text_candidates",
+	} {
+		if !strings.Contains(retrieveSQL, want) {
+			t.Fatalf("retrieveSQL missing text candidate fragment %q", want)
+		}
+	}
+}
+
+func TestRetrieveSQLMatchesSkillCategoryAsTagSignal(t *testing.T) {
+	for _, want := range []string{
+		"(tags || ARRAY[skill_category]) && $2::text[]",
+		"unnest(q.tags || ARRAY[q.skill_category])",
+	} {
+		if !strings.Contains(retrieveSQL, want) {
+			t.Fatalf("retrieveSQL missing skill-category tag signal %q", want)
+		}
+	}
+}
+
+func TestLexicalSimilarityPrefersSharedTerms(t *testing.T) {
+	query := "Redis AOF 和 RDB 持久化差异"
+	match := lexicalSimilarity(query, "Redis AOF 和 RDB 持久化差异是什么？")
+	miss := lexicalSimilarity(query, "Redis 6 多线程 IO 网络读写")
+
+	if match <= miss {
+		t.Fatalf("match=%f miss=%f, want match > miss", match, miss)
 	}
 }
 

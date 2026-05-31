@@ -1,0 +1,40 @@
+{"id":"go-q001","query":"Go GMP 调度模型里 G、M、P 分别负责什么？为什么不能只有 G 和 M？","tags":["go","go_runtime","go_concurrency"],"difficulty":3,"relevant_ids":["go-001"]}
+{"id":"go-q002","query":"Go channel 底层 hchan、sendq、recvq 和缓冲区的发送接收路径是什么？","tags":["go","channel","go_concurrency"],"difficulty":3,"relevant_ids":["go-002","go-012"]}
+{"id":"go-q003","query":"sync.Mutex 饥饿模式什么时候触发，锁所有权如何交接？","tags":["go","mutex","go_concurrency"],"difficulty":4,"relevant_ids":["go-003","go-005"]}
+{"id":"go-q004","query":"sync.Map 适合什么读写场景？read 和 dirty 两层 map 怎么协作？","tags":["go","sync_map","concurrency"],"difficulty":2,"relevant_ids":["go-004","go-011"]}
+{"id":"go-q005","query":"atomic 和 mutex 的边界在哪里？复合状态更新为什么不能随便用 atomic？","tags":["go","atomic","mutex"],"difficulty":3,"relevant_ids":["go-005","go-003"]}
+{"id":"go-q006","query":"Go 内存模型的 happens-before 如何由 channel 和 mutex 建立？","tags":["go","go_memory_model","concurrency"],"difficulty":5,"relevant_ids":["go-006","go-002","go-003"]}
+{"id":"go-q007","query":"Go GC 的三色标记和混合写屏障如何避免并发标记漏标？","tags":["go","gc","runtime"],"difficulty":4,"relevant_ids":["go-007","go-014"]}
+{"id":"go-q008","query":"context.WithCancel 派生树里 cancel 是怎么向子 context 广播的？","tags":["go","context","cancellation"],"difficulty":3,"relevant_ids":["go-008"]}
+{"id":"go-q009","query":"errgroup 相比 WaitGroup 多了哪些错误收集和取消语义？","tags":["go","errgroup","concurrency"],"difficulty":3,"relevant_ids":["go-009","go-008"]}
+{"id":"go-q010","query":"Go net/http server 的请求并发模型是什么？如何避免 goroutine 被流量打满？","tags":["go","http_server","backpressure"],"difficulty":3,"relevant_ids":["go-010","sd-003"]}
+{"id":"redis-q001","query":"Redis AOF 和 RDB 持久化差异是什么？AOF rewrite 期间新写入怎么处理？","tags":["redis","aof","rdb","persistence"],"difficulty":3,"relevant_ids":["redis-001"]}
+{"id":"redis-q002","query":"Redis Sentinel 从主观下线到客观下线再到选主的完整流程是什么？","tags":["redis","sentinel","ha"],"difficulty":4,"relevant_ids":["redis-002"]}
+{"id":"redis-q003","query":"Redis Cluster 为什么是 16384 个 slot？MOVED、ASK 和 hashtag 分别解决什么问题？","tags":["redis","cluster","slot"],"difficulty":4,"relevant_ids":["redis-003"]}
+{"id":"redis-q004","query":"用 Redis 做分布式锁时 SET NX EX、Lua 解锁和 Redlock 各有什么坑？","tags":["redis","distributed_lock","redlock"],"difficulty":4,"relevant_ids":["redis-004","sd-001"]}
+{"id":"redis-q005","query":"缓存击穿、穿透、雪崩怎么区分？singleflight、布隆过滤器和随机 TTL 分别用在哪？","tags":["redis","cache","availability"],"difficulty":2,"relevant_ids":["redis-005","redis-010","redis-012","sd-002"]}
+{"id":"redis-q006","query":"Redis 6 多线程 IO 为什么只处理网络读写而不是并发执行命令？","tags":["redis","redis_threading","performance"],"difficulty":3,"relevant_ids":["redis-006"]}
+{"id":"redis-q007","query":"线上 Redis 大 key 和热 key 怎么发现？各自对主线程、迁移和 slot 有什么影响？","tags":["redis","performance","hot_key"],"difficulty":3,"relevant_ids":["redis-007","redis-011","redis-003"]}
+{"id":"redis-q008","query":"秒杀库存扣减为什么常用 Redis Lua？如何和数据库落库配合避免超卖？","tags":["redis","lua","system_design"],"difficulty":4,"relevant_ids":["sd-001","redis-004","redis-005","redis-012"]}
+{"id":"redis-q009","query":"短链高频访问场景下 Redis 缓存层要如何设计热点 key、TTL 和统计异步化？","tags":["redis","cache","system_design"],"difficulty":4,"relevant_ids":["sd-002","redis-005","redis-007","redis-010","redis-011","redis-012"]}
+{"id":"redis-q010","query":"Redis 高可用方案中 Sentinel 和 Cluster 分别解决什么问题，故障切换风险在哪里？","tags":["redis","ha","cluster"],"difficulty":4,"relevant_ids":["redis-002","redis-003","redis-001"]}
+{"id":"pg-q001","query":"PostgreSQL MVCC 里 xmin、xmax、snapshot 和 vacuum 的关系是什么？","tags":["postgresql","mvcc","vacuum"],"difficulty":4,"relevant_ids":["pg-001"]}
+{"id":"pg-q002","query":"PostgreSQL B-tree 和 GIN 索引适合哪些查询？数组和 jsonb 该怎么建索引？","tags":["postgresql","index","gin"],"difficulty":3,"relevant_ids":["pg-002"]}
+{"id":"pg-q003","query":"pgvector HNSW 和 IVFFlat 有什么取舍？向量查询怎么写才能命中索引？","tags":["postgresql","pgvector","vector_search"],"difficulty":4,"relevant_ids":["pg-003"]}
+{"id":"pg-q004","query":"PostgreSQL RC 和 RR 隔离级别的 snapshot 取法有什么不同？为什么 PG RR 不会幻读？","tags":["postgresql","isolation","mvcc"],"difficulty":4,"relevant_ids":["pg-004","pg-001"]}
+{"id":"pg-q005","query":"EXPLAIN ANALYZE 里的 cost、actual time、rows、loops 如何读？","tags":["postgresql","explain","performance"],"difficulty":3,"relevant_ids":["pg-005"]}
+{"id":"pg-q006","query":"PostgreSQL 12 前后 CTE 物化行为有什么变化？什么时候需要 MATERIALIZED？","tags":["postgresql","cte","query_planning"],"difficulty":4,"relevant_ids":["pg-006"]}
+{"id":"pg-q007","query":"pgbouncer session、transaction、statement 三种 pooling 模式分别限制什么？","tags":["postgresql","pgbouncer","pooling"],"difficulty":3,"relevant_ids":["pg-007"]}
+{"id":"pg-q008","query":"订单表慢查询优化时如何结合 EXPLAIN、B-tree 复合索引和连接池控制风险？","tags":["postgresql","performance","index"],"difficulty":3,"relevant_ids":["pg-005","pg-002","pg-007"]}
+{"id":"pg-q009","query":"PostgreSQL 写多读多场景下索引过多有什么代价？如何判断一个索引值得保留？","tags":["postgresql","index","performance"],"difficulty":3,"relevant_ids":["pg-002","pg-005"]}
+{"id":"pg-q010","query":"秒杀订单落库如何用 PostgreSQL 事务、唯一约束和隔离级别保证幂等？","tags":["postgresql","transaction","system_design"],"difficulty":4,"relevant_ids":["sd-001","pg-004","pg-001"]}
+{"id":"sd-q001","query":"设计秒杀系统时，库存预扣、限流、防超卖和异步落库怎么串起来？","tags":["system_design","seckill","redis"],"difficulty":4,"relevant_ids":["sd-001","redis-004","redis-012","pg-004","mq-001"]}
+{"id":"sd-q002","query":"每天 1 亿访问、100 万新建的短链系统，ID 生成、存储、缓存和统计怎么设计？","tags":["system_design","short_url","cache"],"difficulty":4,"relevant_ids":["sd-002","redis-005"]}
+{"id":"sd-q003","query":"SSE 长连接服务单机 5 万连接时，连接管理、广播扇出和背压怎么做？","tags":["system_design","sse","http_server"],"difficulty":4,"relevant_ids":["sd-003","go-010"]}
+{"id":"sd-q004","query":"单体拆微服务时如何确定边界？TCC、Saga、消息事务分别适合什么场景？","tags":["system_design","microservices","distributed_txn"],"difficulty":5,"relevant_ids":["sd-004"]}
+{"id":"sd-q005","query":"线上服务 P99 抖动但平均延迟正常，应该按什么顺序排查？","tags":["system_design","observability","performance"],"difficulty":4,"relevant_ids":["sd-005","system-008","pg-005","redis-007"]}
+{"id":"sd-q006","query":"Raft 的领导者选举、日志复制和安全性约束是什么？相比 Paxos 工程优势在哪？","tags":["system_design","raft","consensus"],"difficulty":5,"relevant_ids":["sd-006"]}
+{"id":"sd-q007","query":"高并发后端系统如何设计限流、降级、熔断和快速回滚来保护核心链路？","tags":["system_design","resilience","rate_limit"],"difficulty":4,"relevant_ids":["sd-005","sd-001","system-007","system-008"]}
+{"id":"sd-q008","query":"面向 Go 后端的可观测性方案如何把日志、指标、trace 和错误预算串起来？","tags":["system_design","observability","go"],"difficulty":4,"relevant_ids":["sd-005","go-010"]}
+{"id":"sd-q009","query":"分布式缓存系统面对热 key、大 key 和故障切换时如何保证服务可用？","tags":["system_design","redis","availability"],"difficulty":4,"relevant_ids":["redis-007","redis-011","redis-002","redis-003"]}
+{"id":"sd-q010","query":"需要强一致库存和高吞吐下单时，Redis 预扣、消息队列、PostgreSQL 幂等写入如何配合？","tags":["system_design","seckill","postgresql"],"difficulty":5,"relevant_ids":["sd-001","redis-004","redis-012","pg-004","pg-007","mq-001"]}

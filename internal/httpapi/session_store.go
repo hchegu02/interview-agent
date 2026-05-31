@@ -16,6 +16,7 @@ type SessionStore interface {
 	Save(ctx context.Context, sess *domain.Session) error
 	Get(ctx context.Context, id string) (*domain.Session, error)
 	ListByUser(ctx context.Context, userID string, limit int) ([]*domain.Session, error)
+	DeleteForUser(ctx context.Context, id, userID string) error
 }
 
 const (
@@ -91,4 +92,18 @@ func (s *MemorySessionStore) ListByUser(ctx context.Context, userID string, limi
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+func (s *MemorySessionStore) DeleteForUser(ctx context.Context, id, userID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[id]
+	if !ok || sess.UserID != userID {
+		return fmt.Errorf("%w: %q", ErrSessionNotFound, id)
+	}
+	delete(s.sessions, id)
+	return nil
 }

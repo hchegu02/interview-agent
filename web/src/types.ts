@@ -2,10 +2,19 @@ export type Mode = "practice" | "exam";
 
 export type Draft = {
   resume_text: string;
+  resume_sections?: ResumeSections;
   jd_text: string;
   question_bank_filter?: QuestionBankFilter;
   analysis?: ProfileAnalyzeResponse;
   updated_at: string;
+};
+
+export type ResumeSections = {
+  summary: string;
+  skills: string;
+  projects: string;
+  highlights: string;
+  raw_notes: string;
 };
 
 export type QuestionBankFilter = {

@@ -66,6 +66,11 @@ export const apiClient = {
   listSessions: (userId: string) =>
     api<{ sessions: SessionSummary[] }>(`/api/interview/sessions?user_id=${encodeURIComponent(userId)}&limit=20`),
 
+  deleteSession: (sessionId: string, userId: string) =>
+    api<{ deleted: boolean }>(`/api/interview/sessions/${encodeURIComponent(sessionId)}?user_id=${encodeURIComponent(userId)}`, {
+      method: "DELETE",
+    }),
+
   questionFacets: () => api<QuestionFacets>("/api/question-bank/facets"),
 
   questionBank: (params: URLSearchParams) =>

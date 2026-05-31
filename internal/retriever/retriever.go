@@ -18,6 +18,7 @@ import "context"
 // QueryEmbedding 由调用方提前算好——retriever 不依赖 embedder，
 // 保持单一职责（embedder 不稳定时不会拖垮检索路径）。
 type Query struct {
+	Text           string    // 原始查询文本；PG retriever 当前忽略，离线 seed eval 可用作确定性文本排序信号
 	QueryEmbedding []float32 // 必填；维度必须与 question_bank.embedding 一致
 	Tags           []string  // 用户/上游节点提供的标签；会先经过 alias 归一化
 	Difficulty     int       // 目标难度 1-5；用作软过滤 ±2 和 difficulty_score
@@ -35,6 +36,7 @@ type Query struct {
 	// 0 时走默认：VectorCandidates = K * 5, TagCandidates = K * 3
 	VectorCandidates int
 	TagCandidates    int
+	TextCandidates   int
 }
 
 // Result 是融合打分后的最终候选。

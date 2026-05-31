@@ -37,7 +37,7 @@ func buildAgentSubgraph(t *testing.T, model llm.ChatModel) *graph.Runnable {
 		AddNode(NodeProbeAsk, NewProbeAskNode(model, ProbeAskOptions{})).
 		AddNode("probe_eval", NewProbeEvalNode(model, ProbeEvalOptions{})).
 		AddNode(NodeUpdateMemory, NewUpdateMemoryNode(UpdateMemoryOptions{})).
-		AddNode("reflection_check", NewReflectionCheckNode(model, ReflectionCheckOptions{})).
+		AddNode("reflection_check", NewReflectionCheckNode(model, ReflectionCheckOptions{MinRounds: 1})).
 		AddNode(NodeReport, NewReportNode()).
 		Entry(NodePickNext).
 		AddBranch(NodePickNext, RouteAfterPickNext).

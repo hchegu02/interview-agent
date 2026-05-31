@@ -73,6 +73,21 @@ func TestReflection_LLMEnd_PassThrough(t *testing.T) {
 	}
 }
 
+func TestReflection_LLMEnd_BeforeMinimumRounds_DowngradesToAskNew(t *testing.T) {
+	stub := &stubChatModel{responses: []string{
+		`{"action":"end","reasoning":"覆盖度够了","reflect_topic":""}`,
+	}}
+	sess := buildReflectSession(1, 8, 0, nil)
+	node := NewReflectionCheckNode(stub, ReflectionCheckOptions{})
+	_ = node(context.Background(), sess)
+	if sess.PendingDecision.Action != domain.ActionAskNew {
+		t.Errorf("early end should downgrade to ask_new, got %v", sess.PendingDecision.Action)
+	}
+	if sess.PendingDecision.Reasoning == "覆盖度够了" {
+		t.Error("reasoning should explain early end was blocked")
+	}
+}
+
 func TestReflection_LLMReflect_NoBudget_Downgrades(t *testing.T) {
 	// LLM 说 reflect, 但 ReflectionsUsed=1=MaxReflections → 强制 ask_new
 	stub := &stubChatModel{responses: []string{

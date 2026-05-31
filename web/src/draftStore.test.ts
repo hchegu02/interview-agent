@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { analysisSummary, buildDraft, draftScopeSummary, drillJDText } from "./draftStore";
+import { analysisSummary, buildDraft, draftScopeSummary, drillJDText, resumeTextFromSections } from "./draftStore";
 
 describe("draftStore helpers", () => {
   it("builds drill JD text from weak-area plan and question ids", () => {
@@ -51,5 +51,28 @@ describe("draftStore helpers", () => {
     expect(got.jd_text).toBe("默认 JD");
     expect(got.question_bank_filter?.skill_categories).toEqual(["redis"]);
     expect(got.updated_at).toBe("2026-05-28T00:00:00.000Z");
+  });
+
+  it("keeps resume text compatible while editing structured sections", () => {
+    const got = buildDraft({
+      resume_text: "三年 Go 后端经验，做过 Redis 和 PostgreSQL 优化。",
+      jd_text: "默认 JD",
+      updated_at: "old",
+    }, {}, "2026-05-28T00:00:00.000Z");
+
+    expect(got.resume_sections?.summary).toContain("三年 Go 后端经验");
+
+    const text = resumeTextFromSections({
+      summary: "三年 Go 后端经验",
+      skills: "Go, Redis, PostgreSQL",
+      projects: "秒杀系统：负责缓存和队列削峰",
+      highlights: "接口耗时降低 40%",
+      raw_notes: "原文补充",
+    });
+
+    expect(text).toContain("【概况】\n三年 Go 后端经验");
+    expect(text).toContain("【技能】\nGo, Redis, PostgreSQL");
+    expect(text).toContain("【项目】\n秒杀系统：负责缓存和队列削峰");
+    expect(text).toContain("【亮点】\n接口耗时降低 40%");
   });
 });

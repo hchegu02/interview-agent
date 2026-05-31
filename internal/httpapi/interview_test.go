@@ -127,6 +127,10 @@ func (s *flakyReadSessionStore) ListByUser(ctx context.Context, userID string, l
 	return out, nil
 }
 
+func (s *flakyReadSessionStore) DeleteForUser(ctx context.Context, id, userID string) error {
+	return fmt.Errorf("%w: %q", ErrSessionNotFound, id)
+}
+
 func TestInterviewStart_ReturnsFirstQuestion(t *testing.T) {
 	svc := NewInterviewService(fakeInterviewRunner{})
 	server := NewServerWithInterview(&config.Config{}, svc)
@@ -1035,6 +1039,51 @@ func TestInterviewGetSession_UserMismatch(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status = %d, want 400, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestInterviewDeleteSession_RemovesOnlySameUserSession(t *testing.T) {
+	svc := NewInterviewService(fakeInterviewRunner{})
+	server := NewServerWithInterview(&config.Config{}, svc)
+	router := server.Router()
+
+	for _, body := range []string{
+		`{"session_id":"s-delete","user_id":"u1","jd_text":"jd","resume_text":"resume"}`,
+		`{"session_id":"s-keep","user_id":"u2","jd_text":"jd","resume_text":"resume"}`,
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/api/interview/start", bytes.NewBufferString(body))
+		req.Header.Set("Content-Type", "application/json")
+		router.ServeHTTP(httptest.NewRecorder(), req)
+	}
+
+	wrongUser := httptest.NewRecorder()
+	wrongReq := httptest.NewRequest(http.MethodDelete, "/api/interview/sessions/s-delete?user_id=u2", nil)
+	router.ServeHTTP(wrongUser, wrongReq)
+	if wrongUser.Code != http.StatusBadRequest {
+		t.Fatalf("wrong user delete status = %d, want 400, body=%s", wrongUser.Code, wrongUser.Body.String())
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodDelete, "/api/interview/sessions/s-delete?user_id=u1", nil)
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete status = %d, want 200, body=%s", rec.Code, rec.Body.String())
+	}
+
+	listRec := httptest.NewRecorder()
+	listReq := httptest.NewRequest(http.MethodGet, "/api/interview/sessions?user_id=u1", nil)
+	router.ServeHTTP(listRec, listReq)
+	if listRec.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want 200, body=%s", listRec.Code, listRec.Body.String())
+	}
+	var got struct {
+		Sessions []interviewResponse `json:"sessions"`
+	}
+	if err := json.Unmarshal(listRec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	if len(got.Sessions) != 0 {
+		t.Fatalf("u1 sessions len = %d, want 0", len(got.Sessions))
 	}
 }
 

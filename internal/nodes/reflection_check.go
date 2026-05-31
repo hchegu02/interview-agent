@@ -47,6 +47,7 @@ import (
 type ReflectionCheckOptions struct {
 	Temperature float64 // 默认 0.2
 	MaxTokens   int     // 默认 300
+	MinRounds   int     // 默认 3, 防止一问一报
 }
 
 type reflectionShape struct {
@@ -87,6 +88,9 @@ func NewReflectionCheckNode(model llm.ChatModel, opts ReflectionCheckOptions) gr
 	}
 	if opts.MaxTokens == 0 {
 		opts.MaxTokens = 300
+	}
+	if opts.MinRounds == 0 {
+		opts.MinRounds = 3
 	}
 
 	return func(ctx context.Context, sess *domain.Session) error {
@@ -132,7 +136,11 @@ func NewReflectionCheckNode(model llm.ChatModel, opts ReflectionCheckOptions) gr
 				shape.Reasoning = "原决策 ask_new, 但无剩余主题题预算, 改为 end"
 			}
 		case domain.ActionEnd:
-			// end 没什么需要矫正的, 但仍记下决策
+			if mem.RoundsAsked < opts.MinRounds && mem.RemainingRounds() > 0 {
+				action = domain.ActionAskNew
+				shape.Reasoning = fmt.Sprintf("原决策 end, 但仅完成 %d/%d 道主题题, 未达到最小样本 %d, 改为 ask_new",
+					mem.RoundsAsked, mem.MaxRounds, opts.MinRounds)
+			}
 		default:
 			// schema validator 应该已经拦掉了, 但留个保险
 			action = domain.ActionAskNew

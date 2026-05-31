@@ -1,4 +1,4 @@
-.PHONY: help tidy build web-build run test test-core test-race lint migrate-up migrate-down seed real-rag-reindex demo demo-web demo-web-real demo-pg demo-pg-full demo-mock demo-real demo-real-full load-test docker-up docker-up-cluster docker-down clean
+.PHONY: help tidy build web-build run test test-core test-race lint eval-rag questionbank-lint questionbank-lint-strict eval-mock migrate-up migrate-down seed real-rag-reindex demo demo-web demo-web-real demo-pg demo-pg-full demo-mock demo-real demo-real-full e2e-smoke load-test chaos-dry-run docker-up docker-up-cluster docker-down clean
 
 GO ?= go
 APP := bin/server
@@ -31,6 +31,18 @@ test-race: ## run unit tests with race detector
 lint: ## run golangci-lint
 	golangci-lint run ./...
 
+eval-rag: ## run offline RAG retrieval evaluation
+	$(GO) run ./cmd/rag-eval -cases testdata/rag/golden_queries.jsonl -config $(CONFIG) -out tmp/eval/rag
+
+questionbank-lint: ## lint seed question bank metadata quality
+	$(GO) run ./cmd/questionbank-lint -seed seeds/question_bank.json -min-expected-points 3 -min-scenario-ratio 0.05
+
+questionbank-lint-strict: ## enforce target seed metadata quality gate
+	$(GO) run ./cmd/questionbank-lint -seed seeds/question_bank.json -min-expected-points 3 -min-scenario-ratio 0.8
+
+eval-mock: ## run offline mock evaluation fixtures
+	$(GO) run ./cmd/eval -suite testdata/eval -mode mock -out tmp/eval/mock
+
 migrate-up: ## apply DB migrations (requires docker postgres up)
 	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/001_init.up.sql
 	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/002_question_bank_expected_points.up.sql
@@ -40,8 +52,10 @@ migrate-up: ## apply DB migrations (requires docker postgres up)
 	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/006_question_bank_import_lease.up.sql
 	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/007_question_bank_import_review_status.up.sql
 	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/008_question_bank_import_field_provenance.up.sql
+	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/009_question_bank_content_trgm.up.sql
 
 migrate-down: ## roll back DB migrations
+	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/009_question_bank_content_trgm.down.sql
 	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/008_question_bank_import_field_provenance.down.sql
 	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/007_question_bank_import_review_status.down.sql
 	psql "$$INTERVIEW_POSTGRES_DSN" -v ON_ERROR_STOP=1 -f migrations/006_question_bank_import_lease.down.sql
@@ -87,8 +101,15 @@ demo-real: ## run cmd/demo end-to-end against real LLM (requires INTERVIEW_LLM_A
 demo-real-full: ## run Docker PG/Redis + real embedding reindex + real CLI/Web E2E
 	pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/real_e2e.ps1
 
-load-test: ## run k6 load test against local cluster (stage 8)
-	docker run --rm -i --network=host grafana/k6 run - < chaos/k6_load_1000users.js
+e2e-smoke: build ## run Windows-friendly HTTP/SSE/API e2e smoke
+	pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/e2e_smoke.ps1
+
+load-test: ## run k6 load test against local cluster
+	pwsh -NoProfile -ExecutionPolicy Bypass -Command '$$d = Join-Path "tmp\chaos" (Get-Date -Format "yyyyMMdd-HHmmssfff"); New-Item -ItemType Directory -Force -Path $$d | Out-Null; $$env:K6_SUMMARY_PATH = Join-Path $$d "summary.json"; k6 run chaos/k6_load_1000users.js'
+
+chaos-dry-run: ## validate chaos restart scripts without restarting services
+	pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/chaos_redis_restart.ps1 -DryRun -SkipReadyCheck
+	pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/chaos_pg_restart.ps1 -DryRun -SkipReadyCheck
 
 docker-up: ## start single-instance docker stack (pg + redis)
 	docker compose up -d postgres redis

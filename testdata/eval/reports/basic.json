@@ -1,0 +1,38 @@
+{
+  "id": "basic",
+  "profile_id": "basic",
+  "scoring_id": "basic",
+  "summary": {
+    "total_queries": 8,
+    "categories": {
+      "go": 2,
+      "redis": 2,
+      "postgresql": 2,
+      "system-design": 2
+    },
+    "average_score": 3.8,
+    "pass": true
+  },
+  "results": [
+    {
+      "category": "go",
+      "score": 4.0,
+      "query_ids": ["go-q001", "go-q002"]
+    },
+    {
+      "category": "redis",
+      "score": 3.8,
+      "query_ids": ["redis-q001", "redis-q005"]
+    },
+    {
+      "category": "postgresql",
+      "score": 3.6,
+      "query_ids": ["pg-q001", "pg-q005"]
+    },
+    {
+      "category": "system-design",
+      "score": 3.7,
+      "query_ids": ["sd-q001", "sd-q005"]
+    }
+  ]
+}

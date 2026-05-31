@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -35,7 +36,7 @@ func TestBuildInterviewRunner_MockModeStartsInterview(t *testing.T) {
 		t.Fatal("expected nil PG pool without DSN")
 	}
 
-	runner, cleanup, err := buildInterviewRunner(context.Background(), cfg, deps, events, nil, nil)
+	runner, cleanup, err := buildInterviewRunner(context.Background(), cfg, deps, events, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("build runner: %v", err)
 	}
@@ -83,7 +84,7 @@ func TestBuildInterviewRunner_WiresOperationalMetrics(t *testing.T) {
 	defer cleanupDeps()
 	events := httpapi.NewMemoryInterviewEventHub(16)
 	server := httpapi.NewServer(cfg)
-	runner, cleanupRunner, err := buildInterviewRunner(context.Background(), cfg, deps, events, server.GraphMetricsCallback(), server.ObserveLLMCall)
+	runner, cleanupRunner, err := buildInterviewRunner(context.Background(), cfg, deps, events, server.GraphMetricsCallback(), server.ObserveLLMCall, server.WrapRetriever)
 	if err != nil {
 		t.Fatalf("build runner: %v", err)
 	}
@@ -136,7 +137,7 @@ func TestBuildInterviewService_NoPostgresUsesMemoryStore(t *testing.T) {
 	defer cleanupDeps()
 
 	events := httpapi.NewMemoryInterviewEventHub(16)
-	runner, cleanup, err := buildInterviewRunner(context.Background(), cfg, deps, events, nil, nil)
+	runner, cleanup, err := buildInterviewRunner(context.Background(), cfg, deps, events, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("build runner: %v", err)
 	}
@@ -193,7 +194,7 @@ func TestBuildInterviewService_IgnoresTypedNilCoordinator(t *testing.T) {
 	}
 	defer cleanupDeps()
 
-	runner, cleanupRunner, err := buildInterviewRunner(context.Background(), cfg, deps, events, nil, nil)
+	runner, cleanupRunner, err := buildInterviewRunner(context.Background(), cfg, deps, events, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("build runner: %v", err)
 	}
@@ -362,5 +363,25 @@ func TestBuildChatModel_MockModeNoBreaker(t *testing.T) {
 	}
 	if breakerState != nil {
 		t.Fatal("breakerState should be nil for mock mode")
+	}
+}
+
+func TestShutdownServerClosesQuestionBankImportService(t *testing.T) {
+	imports := questionbank.NewImportService(questionbank.ImportServiceDeps{
+		Imports: questionbank.NewMemoryImportStore(),
+		Writer:  questionbank.NewMemoryStore(nil),
+		Spool:   questionbank.NewLocalImportSpool(t.TempDir()),
+	})
+	srv := &http.Server{Handler: http.NewServeMux()}
+
+	if err := shutdownServer(context.Background(), srv, imports); err != nil {
+		t.Fatalf("shutdownServer: %v", err)
+	}
+	_, err := imports.EnqueueImport(context.Background(), questionbank.ImportSourceQuestionBank, questionbank.ImportFile{
+		Filename: "after-shutdown.json",
+		Reader:   strings.NewReader(`[]`),
+	})
+	if !errors.Is(err, questionbank.ErrImportServiceShutdown) {
+		t.Fatalf("EnqueueImport error = %v, want ErrImportServiceShutdown", err)
 	}
 }

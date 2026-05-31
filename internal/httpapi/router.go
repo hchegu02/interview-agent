@@ -21,6 +21,7 @@ type Server struct {
 	questionImports *questionbank.ImportService
 	profileAnalyzer ProfileAnalyzer
 	metricsRecorder *metricsRecorder
+	eventHubMetrics func() EventHubMetrics
 
 	// breakerState 可选注入：real 模式下接 BreakingChatModel.State，返回
 	// "closed" / "open" / "half_open"。/readyz 在 open 时回报 degraded（仍 200）。
@@ -84,6 +85,7 @@ func (s *Server) Router() *gin.Engine {
 		api.GET("/question-bank/:id", s.getQuestionBankItem)
 		api.GET("/interview/sessions", s.listInterviewSessions)
 		api.GET("/interview/sessions/:session_id", s.getInterviewSession)
+		api.DELETE("/interview/sessions/:session_id", s.deleteInterviewSession)
 	}
 
 	streaming := r.Group("/api/interview")

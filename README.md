@@ -26,10 +26,11 @@
 - HTTP 背压：`/api/interview/start`、`/api/interview/answer` 使用 `server.max_in_flight` 限制突发并发；SSE 流使用 `server.max_streams`
 - Prometheus metrics 文本指标：`GET /metrics` 暴露 HTTP、简历解析、SSE、Graph 节点、LLM 调用 / token、熔断器状态和背压计数
 - 离线题库工具：`cmd/reindex`
+- 离线量化工具：`cmd/rag-eval`、`cmd/questionbank-lint`、`cmd/eval`
 - Smoke 脚本：`make demo` 调用 `scripts/smoke.sh`，覆盖健康检查与 start/get/answer/list；`scripts/smoke_sse.ps1` 覆盖 SSE 服务级路径
 - 结构化 demo CLI：`make demo-mock` / `make demo-real` 会生成 `tmp/demos/<timestamp>/run.json` 和 `report.md`
 
-仍未完成：OTel tracing、Chaos 故障注入脚本、压测报告、Helm chart、题单预览节点和 RAG 评估指标；Prometheus 目前用轻量 summary / counter / gauge，还没接 Prometheus SDK histogram。
+仍未完成：OTel tracing、Helm chart、题单预览节点、真实业务规模的 RAG 评估集和长期压测报告；Prometheus 仍使用本项目轻量文本渲染器，没有引入 Prometheus SDK。
 
 ## 项目架构
 
@@ -140,6 +141,80 @@ Redis snapshot 写入失败不会中断主流程，会记录到 `WorkingMemory.D
 4. import job 和 item 进入内存或 PG import store。
 5. 人工 review 后调用 commit，写入题库 store。
 6. real embedding 模式下写入 embedding 字段，供 pgvector 检索。
+
+## 工程化量化指标
+
+本项目现在把“能跑通 demo”和“质量可回归”分开验证。核心离线命令：
+
+```powershell
+go run ./cmd/rag-eval -cases testdata/rag/golden_queries.jsonl -config config/config.yaml.example -out tmp/eval/rag
+go run ./cmd/questionbank-lint -seed seeds/question_bank.json -min-expected-points 3 -min-scenario-ratio 0.8
+go run ./cmd/eval -suite testdata/eval -mode mock -out tmp/eval/mock
+```
+
+Makefile 等价入口：
+
+```bash
+make eval-rag
+make questionbank-lint
+make questionbank-lint-strict
+make eval-mock
+make e2e-smoke
+make chaos-dry-run
+make load-test
+```
+
+`make e2e-smoke` 会启动 mock server，覆盖 health/ready、题库 facets/list、interview start、SSE snapshot、answer/report、session detail/list 和 `/metrics`，并输出 `tmp/e2e/<timestamp>/summary.json`。
+
+`cmd/rag-eval` 输出 `summary.json` 和 `report.md`，指标包括：
+
+- `Recall@5` / `Recall@10`：相关题是否进入前 K 个召回结果。
+- `MRR@K`：第一个相关题越靠前分数越高。
+- `nDCG@K`：多个相关题按排序位置折损后的质量。
+- `empty_rate`：没有任何召回结果的比例。
+- `fallback_rate`：embedding/retriever 失败导致降级的比例。
+- `avg_latency_ms` / `p95_latency_ms`：离线检索耗时。
+
+`cmd/rag-eval` 支持可选质量门槛：`-min-recall-at-5`、`-min-recall-at-10`、`-min-mrr-at-k`、`-min-ndcg-at-k`。默认 0 表示只统计不拦截；显式设置后，低于门槛会在 `summary.json` 写入 `gate_failures` 并以非 0 退出。
+
+`cmd/questionbank-lint` 用于暴露题库元数据质量，不自动修数据。`make questionbank-lint` 使用当前 seed 基线阈值，保证本地回归能通过；`make questionbank-lint-strict` 使用目标阈值，要求每题至少 3 个 expected points，且 `scenario` 覆盖率不低于 80%。当前 seed 已补齐核心元数据，strict 目标应保持通过；后续扩题时如果失败，说明新增题没有按同一结构治理。
+
+`cmd/eval` 读取 `testdata/eval/` 下的 profile、scoring、report fixture，做结构一致性和报告引用关系检查。scoring fixture 可声明 `cases`，输出 `scoring_range_hit_rate`、`expected_point_hit_rate`、`expected_miss_hit_rate`，用于检查分数区间和命中/缺失要点是否符合金标。默认 `mock` 模式只做稳定离线回归；real LLM 评估需要人工设置 API key 后手动跑，不进入默认 CI。
+
+`/metrics` 继续保持无 SDK 的 Prometheus 文本输出，新增/补齐的口径包括：
+
+- HTTP request duration histogram：`interview_http_request_duration_seconds_bucket`
+- Graph node duration histogram：`interview_graph_node_duration_seconds_bucket`
+- LLM call duration histogram：`interview_llm_call_duration_seconds_bucket`
+- RAG retrieval：`interview_rag_retrieve_total`、`interview_rag_retrieve_duration_seconds_bucket`、`interview_rag_candidates_total`、`interview_rag_empty_total`、`interview_rag_fallback_total`
+- Event hub counters：`interview_event_hub_publish_errors_total`、`interview_event_hub_dropped_events_total`
+
+压测入口：
+
+```powershell
+$env:BASE_URL="http://127.0.0.1:8080"
+make load-test
+```
+
+`make load-test` 会创建 `tmp/chaos/<timestamp>/summary.json`。k6 summary 统一输出 `status`、`checks`、`failures`、`sessions_started`、`answers_completed`、`http_req_failed_rate`、`http_req_duration_p95_ms`、`sse_first_packet_p95_ms` 等字段。SSE 是长连接，k6 会把按 timeout 结束的 stream 请求计入 `http_req_failed_rate`，所以该字段只做观测；通过/失败门禁看 503 率、409 背压率、answer 完成数和 SSE 首包耗时。默认目标是 `K6_TARGET_USERS=1000`，本地小规模验证可先设置：
+
+```powershell
+$env:K6_TARGET_USERS="5"
+$env:K6_RAMP_UP="10s"
+$env:K6_HOLD="20s"
+$env:K6_RAMP_DOWN="5s"
+make load-test
+```
+
+Chaos smoke 入口：
+
+```powershell
+make chaos-dry-run
+./scripts/chaos_redis_restart.ps1
+./scripts/chaos_pg_restart.ps1
+```
+
+`make chaos-dry-run` 只验证脚本和 summary 结构，不执行 Docker restart，也不访问 `/readyz`。两个真实 chaos 脚本会把摘要写到 `tmp/chaos/<timestamp>/summary.json`，字段包括 `status`、`duration_ms`、`recovery_ms`、`checks`、`failures`、`dry_run`。真实脚本会重启 Docker Compose 里的 Redis/PostgreSQL，只应在本地或测试环境运行。
 
 ## 快速启动
 
