@@ -484,6 +484,14 @@ Real LLM 模式会套进程内并发限制，配置项为 `llm.max_concurrency`�
 
 ## 测试
 
+提交前本地门禁：
+
+```powershell
+mingw32-make verify-local
+```
+
+该命令只依赖 mock/default 路径，不需要 PG、Redis、Docker 或 API key；CI 使用同一组无外部依赖检查。
+
 ```powershell
 # 全量测试
 mingw32-make test

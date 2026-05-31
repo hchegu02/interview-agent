@@ -1,4 +1,4 @@
-.PHONY: help tidy build web-build run test test-core test-race lint eval-rag questionbank-lint questionbank-lint-strict eval-mock migrate-up migrate-down seed real-rag-reindex demo demo-web demo-web-real demo-pg demo-pg-full demo-mock demo-real demo-real-full e2e-smoke load-test chaos-dry-run docker-up docker-up-cluster docker-down clean
+.PHONY: help tidy build web-build run test test-core test-race lint verify-local eval-rag questionbank-lint questionbank-lint-strict eval-mock migrate-up migrate-down seed real-rag-reindex demo demo-web demo-web-real demo-pg demo-pg-full demo-mock demo-real demo-real-full e2e-smoke load-test chaos-dry-run docker-up docker-up-cluster docker-down clean
 
 GO ?= go
 APP := bin/server
@@ -31,6 +31,15 @@ test-race: ## run unit tests with race detector
 
 lint: ## run golangci-lint
 	golangci-lint run ./...
+
+verify-local: ## run dependency-free local quality gate
+	$(GO) test ./... -count=1
+	npm --prefix web run test
+	npm --prefix web run build
+	$(MAKE) eval-rag
+	$(MAKE) questionbank-lint
+	$(MAKE) eval-mock
+	git diff --check
 
 eval-rag: ## run offline RAG retrieval evaluation
 	$(GO) run ./cmd/rag-eval -cases testdata/rag/golden_queries.jsonl -config $(CONFIG) -out tmp/eval/rag -min-recall-at-5 0.70 -min-recall-at-10 0.80 -min-mrr-at-k 0.90 -min-ndcg-at-k 0.75
