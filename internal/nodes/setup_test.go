@@ -395,6 +395,19 @@ func (r *fakeRetriever) Retrieve(ctx context.Context, q retriever.Query) ([]retr
 	return r.results, r.err
 }
 
+type fakePipelineRetriever struct {
+	fakeRetriever
+	searchResult retriever.PipelineResult
+	searchErr    error
+	searchCalls  int
+}
+
+func (r *fakePipelineRetriever) Search(ctx context.Context, q retriever.Query) (retriever.PipelineResult, error) {
+	r.searchCalls++
+	r.lastQ = q
+	return r.searchResult, r.searchErr
+}
+
 // newFakeRetriever 用 id 列表快速构造结果。
 func newFakeRetriever(ids []string, err error) *fakeRetriever {
 	out := make([]retriever.Result, len(ids))
@@ -430,6 +443,49 @@ func TestRetrieveRAG_Success(t *testing.T) {
 	}
 	if got := sess.CandidatePool[0].ExpectedPoints; len(got) != 1 || got[0] != "要点 go-001" {
 		t.Fatalf("expected points should be copied from retriever result, got %+v", got)
+	}
+}
+
+func TestRetrieveRAG_SavesRetrievalTraceWhenSearcherAvailable(t *testing.T) {
+	embedder := &stubEmbedder{dim: 1024}
+	r := &fakePipelineRetriever{
+		searchResult: retriever.PipelineResult{
+			Results: []retriever.Result{{
+				ID:             "go-rrf-001",
+				Content:        "Go GMP 调度",
+				Tags:           []string{"go_concurrency"},
+				Difficulty:     3,
+				Category:       "go",
+				ExpectedPoints: []string{"GMP"},
+			}},
+			Trace: retriever.RetrievalTrace{
+				Query: "go",
+				Stages: []retriever.StageTrace{{
+					Stage: retriever.StageRerank,
+					Count: 1,
+					Items: []retriever.ResultTrace{{ID: "go-rrf-001", Rank: 1, Score: 0.9, Stage: retriever.StageRerank}},
+				}},
+				Final: []retriever.ResultTrace{{ID: "go-rrf-001", Rank: 1, Score: 0.9, Stage: retriever.StageRerank}},
+			},
+		},
+	}
+	node := NewRetrieveRAGNode(embedder, r, RetrieveRAGOptions{TopK: 10})
+
+	sess := buildRAGSession([]string{"go"}, []string{"go"})
+	if err := node(context.Background(), sess); err != nil {
+		t.Fatalf("node failed: %v", err)
+	}
+	if r.searchCalls != 1 || r.calls != 0 {
+		t.Fatalf("calls: search=%d retrieve=%d, want search only", r.searchCalls, r.calls)
+	}
+	if len(sess.CandidatePool) != 1 || sess.CandidatePool[0].ID != "go-rrf-001" {
+		t.Fatalf("candidate pool = %+v", sess.CandidatePool)
+	}
+	if sess.RetrievalTrace == nil || len(sess.RetrievalTrace.Stages) != 1 {
+		t.Fatalf("retrieval trace missing: %+v", sess.RetrievalTrace)
+	}
+	if sess.RetrievalTrace.Stages[0].Stage != retriever.StageRerank {
+		t.Fatalf("trace stage = %+v, want rerank", sess.RetrievalTrace.Stages[0])
 	}
 }
 

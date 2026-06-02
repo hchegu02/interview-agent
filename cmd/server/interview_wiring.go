@@ -15,6 +15,7 @@ import (
 	"interview-agent/internal/llm"
 	"interview-agent/internal/nodes"
 	"interview-agent/internal/observability"
+	"interview-agent/internal/questionbank"
 	"interview-agent/internal/retriever"
 )
 
@@ -139,7 +140,50 @@ func buildRetriever(ctx context.Context, cfg *config.Config, deps appDeps) (retr
 	if deps.PGPool == nil {
 		return fallbackRetriever{}, func() {}, "fallback", nil
 	}
-	return retriever.NewPGVectorRetriever(deps.PGPool, nil), func() {}, "pgvector", nil
+	vector := retriever.NewPGVectorRetriever(deps.PGPool, nil)
+	pipeline, err := buildRetrievalPipeline(ctx, vector, questionbank.NewPGStore(deps.PGPool))
+	if err != nil {
+		return nil, func() {}, "pgvector_pipeline", err
+	}
+	return pipeline, func() {}, "pgvector_pipeline", nil
+}
+
+func buildRetrievalPipeline(ctx context.Context, vector retriever.Retriever, store questionbank.Store) (retriever.Retriever, error) {
+	docs, err := loadRetrieverDocs(ctx, store)
+	if err != nil {
+		return nil, err
+	}
+	return retriever.NewRetrievalPipeline(retriever.RetrievalPipelineDeps{
+		Vector:   vector,
+		BM25:     retriever.NewBM25Retriever(docs),
+		Rule:     retriever.NewRuleRetriever(docs),
+		Reranker: retriever.NewLexicalReranker(),
+	}), nil
+}
+
+func loadRetrieverDocs(ctx context.Context, store questionbank.Store) ([]retriever.Result, error) {
+	var docs []retriever.Result
+	cursor := ""
+	for {
+		page, err := store.List(ctx, questionbank.Filter{Status: "active", Limit: 100, Cursor: cursor})
+		if err != nil {
+			return nil, fmt.Errorf("load question bank docs: %w", err)
+		}
+		for _, item := range page.Items {
+			docs = append(docs, retriever.Result{
+				ID:             item.ID,
+				Content:        item.Content,
+				Tags:           append([]string(nil), item.Tags...),
+				Difficulty:     item.Difficulty,
+				Category:       item.SkillCategory,
+				ExpectedPoints: append([]string(nil), item.ExpectedPoints...),
+			})
+		}
+		if page.NextCursor == "" {
+			return docs, nil
+		}
+		cursor = page.NextCursor
+	}
 }
 
 type fallbackRetriever struct{}

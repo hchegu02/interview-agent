@@ -67,6 +67,10 @@ type Session struct {
 	// 不直接给候选人——Agent 决策驱动出题顺序
 	CandidatePool []Question `json:"candidate_pool,omitempty"`
 
+	// RetrievalTrace 保存最近一次 retrieve_rag 的检索证据。
+	// 它是面试会话事实的一部分，供报告、前端解释和排障使用。
+	RetrievalTrace *RetrievalTrace `json:"retrieval_trace,omitempty"`
+
 	// QuestionBankFilter 是用户在准备阶段选择的题库范围。
 	// retrieve_rag 会把它转换成 Retriever 的硬过滤条件。
 	QuestionBankFilter *QuestionBankFilter `json:"question_bank_filter,omitempty"`
@@ -121,6 +125,34 @@ type CandidateProfile struct {
 	Projects      []ResumeProject `json:"projects"`    // 简历项目经历
 	Highlights    []string        `json:"highlights"`  // 可被 dynamic probing 的"亮点"短语
 	ResumeRawText string          `json:"resume_raw_text"`
+}
+
+// RetrievalTrace 是一次 RAG 检索的可序列化审计信息。
+// 结构刻意镜像 retriever.RetrievalTrace，但放在 domain 包避免领域模型依赖检索实现包。
+type RetrievalTrace struct {
+	Query           string                 `json:"query"`
+	Stages          []RetrievalStageTrace  `json:"stages,omitempty"`
+	Final           []RetrievalResultTrace `json:"final,omitempty"`
+	FallbackReasons []string               `json:"fallback_reasons,omitempty"`
+}
+
+// RetrievalStageTrace 是单个检索阶段的诊断信息。
+type RetrievalStageTrace struct {
+	Stage      string                 `json:"stage"`
+	Count      int                    `json:"count"`
+	DurationMS float64                `json:"duration_ms"`
+	Items      []RetrievalResultTrace `json:"items,omitempty"`
+	Error      string                 `json:"error,omitempty"`
+}
+
+// RetrievalResultTrace 是单个候选在 trace 中的排序证据。
+type RetrievalResultTrace struct {
+	ID      string             `json:"id"`
+	Rank    int                `json:"rank"`
+	Score   float64            `json:"score"`
+	Stage   string             `json:"stage,omitempty"`
+	Reason  string             `json:"reason,omitempty"`
+	Sources map[string]float64 `json:"sources,omitempty"`
 }
 
 // ResumeProject 是简历里一段项目经历，给 dynamic probing 节点用。

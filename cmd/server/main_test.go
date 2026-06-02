@@ -15,6 +15,7 @@ import (
 	"interview-agent/internal/httpapi"
 	"interview-agent/internal/llm"
 	"interview-agent/internal/questionbank"
+	"interview-agent/internal/retriever"
 )
 
 func TestBuildInterviewRunner_MockModeStartsInterview(t *testing.T) {
@@ -176,6 +177,53 @@ func TestBuildQuestionBankStore_NoPostgresLoadsSeed(t *testing.T) {
 	if len(got.Items) != 1 {
 		t.Fatalf("items = %d, want 1", len(got.Items))
 	}
+}
+
+func TestBuildRetrievalPipelineUsesQuestionBankStoreForLocalStages(t *testing.T) {
+	vector := fixedServerRetriever{results: []retriever.Result{{ID: "vector", Content: "Go runtime", Score: 0.9}}}
+	store := questionbank.NewMemoryStore([]questionbank.Item{
+		{
+			ID:             "bm25",
+			Content:        "Redis AOF rewrite 期间新写入怎么处理？",
+			Tags:           []string{"redis_persistence"},
+			SkillCategory:  "redis",
+			Difficulty:     3,
+			ExpectedPoints: []string{"AOF rewrite"},
+			Status:         "active",
+		},
+	})
+
+	got, err := buildRetrievalPipeline(context.Background(), vector, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	searcher, ok := got.(interface {
+		Search(context.Context, retriever.Query) (retriever.PipelineResult, error)
+	})
+	if !ok {
+		t.Fatalf("pipeline does not expose Search")
+	}
+	result, err := searcher.Search(context.Background(), retriever.Query{Text: "Redis AOF rewrite", K: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	foundBM25 := false
+	for _, stage := range result.Trace.Stages {
+		if stage.Stage == retriever.StageBM25 && stage.Count > 0 {
+			foundBM25 = true
+		}
+	}
+	if !foundBM25 {
+		t.Fatalf("trace stages = %+v, want BM25 candidates from question bank store", result.Trace.Stages)
+	}
+}
+
+type fixedServerRetriever struct {
+	results []retriever.Result
+}
+
+func (f fixedServerRetriever) Retrieve(context.Context, retriever.Query) ([]retriever.Result, error) {
+	return append([]retriever.Result(nil), f.results...), nil
 }
 
 func TestBuildInterviewService_IgnoresTypedNilCoordinator(t *testing.T) {

@@ -66,7 +66,7 @@ cmd/server
 `cmd/server/main.go` 是唯一服务入口，启动时按配置装配依赖：
 
 - `config.Load` 读取 `config/config.yaml.example` 或指定 YAML，并用环境变量覆盖敏感项。
-- `INTERVIEW_POSTGRES_DSN` 为空时使用内存 session store、内存题库 seed 和 fallback retriever；非空时连接 PostgreSQL/pgvector，启用 PG session store、PG 题库和 pgvector retriever。
+- `INTERVIEW_POSTGRES_DSN` 为空时使用内存 session store、内存题库 seed 和 fallback retriever；非空时连接 PostgreSQL/pgvector，启用 PG session store、PG 题库和 `pgvector_pipeline` 检索。
 - `INTERVIEW_REDIS_URL` 为空时使用内存事件总线；非空时使用 Redis Streams 事件总线，并启用 Redis session snapshot / lease / takeover。
 - `llm.mode=mock|real` 控制 ChatModel；real 模式会套 `LimitedChatModel` 和 `BreakingChatModel`，`/readyz` 通过 breaker state 暴露 degraded 状态。
 - `embedding.mode=mock|real` 控制题库检索 query embedding 和题库导入 embedding。
@@ -125,7 +125,7 @@ parse_jd
 | 会话恢复/租约 | 无跨实例恢复 | Redis snapshot + lease，冲突返回 HTTP 409 |
 | 事件总线 | 内存 hub | Redis Streams |
 | 题库 | `seeds/question_bank.json` 加载到内存 | PostgreSQL `question_bank` |
-| RAG 检索 | seed 题库上的 vector + BM25 + rule + RRF + 本地 rerank pipeline | pgvector |
+| RAG 检索 | seed 题库上的 vector + BM25 + rule + RRF + 本地 rerank pipeline | PGVector 作为 vector stage，PG 题库构建 BM25/rule，本地 rerank |
 | LLM | mock fixture | OpenAI-compatible real LLM + limiter + breaker |
 | Embedding | mock vector | OpenAI-compatible embedding |
 
@@ -738,7 +738,7 @@ Real embedding 模式需要设置 `INTERVIEW_EMBEDDING_API_KEY`，且 embedding 
 | 路径 | 说明 |
 |---|---|
 | `retriever.go` | Retriever 查询结构、结果结构和接口定义。 |
-| `pgvector.go` | PostgreSQL + pgvector 检索实现。 |
+| `pgvector.go` | PostgreSQL + pgvector 向量召回实现，是线上 RAG pipeline 的 vector stage。 |
 | `fusion.go` | 多路召回/排序融合逻辑。 |
 | `aliases.go` | 技能、标签、别名归一化。 |
 | `*_test.go` | pgvector、fusion、alias 行为测试。 |

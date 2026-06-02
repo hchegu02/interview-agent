@@ -68,6 +68,17 @@ func TestSession_JSONRoundTrip(t *testing.T) {
 		CandidatePool: []Question{
 			{ID: "q1", Content: "what is GMP", Tags: []string{"go"}, Difficulty: 3, Source: "rag-1"},
 		},
+		RetrievalTrace: &RetrievalTrace{
+			Query: "Go Backend 岗位面试题，重点考察：go",
+			Stages: []RetrievalStageTrace{
+				{
+					Stage: "vector",
+					Count: 1,
+					Items: []RetrievalResultTrace{{ID: "q1", Rank: 1, Score: 0.9, Stage: "vector"}},
+				},
+			},
+			Final: []RetrievalResultTrace{{ID: "q1", Rank: 1, Score: 0.9, Stage: "rerank"}},
+		},
 		WorkingMemory: NewWorkingMemory(),
 		Rounds: []AnswerRound{
 			{
@@ -148,6 +159,9 @@ func TestSession_JSONRoundTrip(t *testing.T) {
 	}
 	if got.Report == nil || got.Report.TranscriptAnalysis == nil || len(got.Report.DrillPlan) != 1 {
 		t.Errorf("report analysis lost: %+v", got.Report)
+	}
+	if got.RetrievalTrace == nil || got.RetrievalTrace.Stages[0].Stage != "vector" {
+		t.Errorf("retrieval trace lost: %+v", got.RetrievalTrace)
 	}
 	if got.WorkingMemory == nil || got.WorkingMemory.MaxRounds != 8 {
 		t.Errorf("working memory lost: %+v", got.WorkingMemory)

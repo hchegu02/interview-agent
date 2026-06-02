@@ -11,6 +11,10 @@ import (
 	"interview-agent/internal/retriever"
 )
 
+type retrievalSearcher interface {
+	Search(context.Context, retriever.Query) (retriever.PipelineResult, error)
+}
+
 // retrieve_rag 节点设计：
 //
 //   1. Query 构造：missing_skills 优先 + must_have 兜底
@@ -113,7 +117,8 @@ func NewRetrieveRAGNode(
 		}
 
 		// 2. Retrieve
-		results, err := r.Retrieve(ctx, retriever.Query{
+		query := retriever.Query{
+			Text:             queryText,
 			QueryEmbedding:   vectors[0],
 			Tags:             queryTags,
 			Difficulty:       targetDiff,
@@ -125,15 +130,18 @@ func NewRetrieveRAGNode(
 			FilterTags:       filterTags(sess.QuestionBankFilter),
 			VectorCandidates: opts.VectorCandidates,
 			TagCandidates:    opts.TagCandidates,
-		})
+		}
+		results, trace, err := retrieveWithTrace(ctx, r, query)
 		if err != nil {
 			markDegraded(sess, fmt.Sprintf("retrieve failed: %v", err))
 			sess.CandidatePool = cloneFallback(targetDiff, sess.QuestionBankFilter)
+			sess.RetrievalTrace = trace
 			return nil
 		}
 		if len(results) == 0 {
 			markDegraded(sess, "retrieve returned 0 results")
 			sess.CandidatePool = cloneFallback(targetDiff, sess.QuestionBankFilter)
+			sess.RetrievalTrace = trace
 			return nil
 		}
 
@@ -151,8 +159,62 @@ func NewRetrieveRAGNode(
 			})
 		}
 		sess.CandidatePool = pool
+		sess.RetrievalTrace = trace
 		return nil
 	}
+}
+
+func retrieveWithTrace(ctx context.Context, r retriever.Retriever, q retriever.Query) ([]retriever.Result, *domain.RetrievalTrace, error) {
+	if searcher, ok := r.(retrievalSearcher); ok {
+		result, err := searcher.Search(ctx, q)
+		return result.Results, toDomainRetrievalTrace(result.Trace), err
+	}
+	results, err := r.Retrieve(ctx, q)
+	return results, nil, err
+}
+
+func toDomainRetrievalTrace(trace retriever.RetrievalTrace) *domain.RetrievalTrace {
+	if trace.Query == "" && len(trace.Stages) == 0 && len(trace.Final) == 0 && len(trace.FallbackReasons) == 0 {
+		return nil
+	}
+	out := &domain.RetrievalTrace{
+		Query:           trace.Query,
+		FallbackReasons: append([]string(nil), trace.FallbackReasons...),
+	}
+	for _, stage := range trace.Stages {
+		dst := domain.RetrievalStageTrace{
+			Stage:      stage.Stage,
+			Count:      stage.Count,
+			DurationMS: stage.DurationMS,
+			Error:      stage.Error,
+			Items:      toDomainResultTrace(stage.Items),
+		}
+		out.Stages = append(out.Stages, dst)
+	}
+	out.Final = toDomainResultTrace(trace.Final)
+	return out
+}
+
+func toDomainResultTrace(items []retriever.ResultTrace) []domain.RetrievalResultTrace {
+	out := make([]domain.RetrievalResultTrace, 0, len(items))
+	for _, item := range items {
+		sources := map[string]float64(nil)
+		if item.Sources != nil {
+			sources = make(map[string]float64, len(item.Sources))
+			for key, value := range item.Sources {
+				sources[key] = value
+			}
+		}
+		out = append(out, domain.RetrievalResultTrace{
+			ID:      item.ID,
+			Rank:    item.Rank,
+			Score:   item.Score,
+			Stage:   item.Stage,
+			Reason:  item.Reason,
+			Sources: sources,
+		})
+	}
+	return out
 }
 
 func filterSkillCategories(filter *domain.QuestionBankFilter) []string {
