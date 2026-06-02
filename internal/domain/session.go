@@ -52,6 +52,8 @@ type Session struct {
 	Status      SessionStatus `json:"status"`         // session 当前状态，控制流程走向
 	CurrentNode string        `json:"current_node"`   // graph 节点名，断点恢复用
 
+	// JobProfile/CandProfile 是 setup 阶段的输入画像。
+	// 后续节点不要再直接解析原文；需要判断技能、年限、项目时应读这些结构化字段。
 	JobProfile  *JobProfile       `json:"job_profile,omitempty"`       // job_profile 节点产物，LLM 从 JD 文本抽取的岗位画像
 	CandProfile *CandidateProfile `json:"candidate_profile,omitempty"` // candidate_profile 节点产物，LLM 从简历文本抽取的候选人画像
 
@@ -81,6 +83,8 @@ type Session struct {
 
 	Report *Report `json:"report,omitempty"`
 
+	// CreatedAt/UpdatedAt 不只是展示字段。列表接口按 UpdatedAt 倒序，
+	// PG/Redis 恢复后也靠它判断用户最近一次操作。
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -135,10 +139,10 @@ type ResumeProject struct {
 //  1. 前端告诉用户为什么系统会这样问；
 //  2. 简历优化场景指出缺口、风险点和可追问证据。
 type ProfileAnalysis struct {
-	MatchScore          int                `json:"match_score"` // 0-100
-	Summary             string             `json:"summary"`
-	YearsGap            int                `json:"years_gap"` // candidate years - required years
-	MatchedRequirements []string           `json:"matched_requirements,omitempty"`
+	MatchScore          int                `json:"match_score"`                    // 0-100
+	Summary             string             `json:"summary"`                        // LLM 给的简短总结，可用于报告页透出
+	YearsGap            int                `json:"years_gap"`                      // candidate years - required years
+	MatchedRequirements []string           `json:"matched_requirements,omitempty"` // 与 JobProfile.KeySkills 交集，说明 JD 里哪些技能在简历里有体现
 	MissingRequirements []string           `json:"missing_requirements,omitempty"`
 	Strengths           []string           `json:"strengths,omitempty"`
 	RiskPoints          []string           `json:"risk_points,omitempty"`

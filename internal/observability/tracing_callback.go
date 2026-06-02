@@ -34,6 +34,8 @@ func (c *tracingGraphCallback) OnNodeStart(ctx context.Context, node string, ses
 	})
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// tracing 和 metrics 使用同一类 span key：session_id + node。
+	// 这是为了支持多会话并发；只按 node 记录会导致后结束的节点关闭错 span。
 	c.inflight[spanKey(sessionID, node)] = end
 }
 
@@ -53,6 +55,8 @@ func (c *tracingGraphCallback) complete(ctx context.Context, node string, sess *
 	delete(c.inflight, key)
 	c.mu.Unlock()
 	if end != nil {
+		// end 接收 err，由具体 tracer 决定如何标记 span 状态。
+		// 当前默认 NoopTracer 不做外部上报，但调用边界已经固定。
 		end(err)
 		return
 	}

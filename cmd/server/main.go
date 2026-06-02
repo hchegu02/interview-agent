@@ -45,6 +45,8 @@ func main() {
 	)
 
 	ctx := context.Background()
+	// 基础依赖只负责“外部资源”：Postgres、Redis 等。后面的业务服务只拿组合后的 deps，
+	// 避免在 main 里到处散落连接池和清理逻辑。
 	deps, cleanupDeps, err := buildAppDeps(ctx, cfg)
 	if err != nil {
 		logger.Error("app deps setup failed", "err", err)
@@ -52,6 +54,7 @@ func main() {
 	}
 	defer cleanupDeps()
 
+	// EventHub 是面试过程的事件出口：SSE、metrics 和后续审计都从这里拿节点状态。
 	events, cleanupEvents, err := buildInterviewEventHub(ctx, cfg)
 	if err != nil {
 		logger.Error("event hub setup failed", "err", err)
@@ -59,6 +62,8 @@ func main() {
 	}
 	defer cleanupEvents()
 
+	// Redis coordinator 只解决“同一个 session 被多个进程同时推进”的问题；
+	// 没有 Redis 时会退化成本进程内执行，接口层仍然保持同一套服务调用。
 	sessionCoordinator, err := buildRedisSessionCoordinator(ctx)
 	if err != nil {
 		logger.Error("session coordinator setup failed", "err", err)
@@ -67,12 +72,18 @@ func main() {
 
 	server := httpapi.NewServer(cfg)
 	server.SetEventHubMetrics(eventHubMetricsProvider(events))
+
+	// ProfileAnalyzer 是“开始面试前的 JD/简历解释”能力。
+	// 它和真正的面试 Graph 分开装配，避免用户只点分析时也创建 session。
 	profileAnalyzer, err := buildProfileAnalyzer(cfg)
 	if err != nil {
 		logger.Error("profile analyzer setup failed", "err", err)
 		os.Exit(1)
 	}
 	server.SetProfileAnalyzer(profileAnalyzer)
+
+	// 题库 Store 先接到 HTTP 查询/导入，再通过 retriever 接入面试 Graph；
+	// 这两个入口共享同一份题库数据，但职责不同：一个面向管理/预览，一个面向 RAG 检索。
 	questionBankStore, err := buildQuestionBankStore(deps)
 	if err != nil {
 		logger.Error("question bank setup failed", "err", err)
@@ -85,6 +96,7 @@ func main() {
 		os.Exit(1)
 	}
 	server.SetQuestionBankImportService(questionImportService)
+	// 导入任务可能在服务重启时停在 queued/committing 状态，这里异步恢复，避免启动路径被长任务阻塞。
 	go func() {
 		n, err := questionImportService.RecoverPendingJobs(context.Background())
 		if err != nil {
@@ -103,6 +115,8 @@ func main() {
 	}
 	defer cleanup()
 
+	// InterviewService 是 HTTP handler 和 Graph runner 之间的业务门面。
+	// handler 不直接调用 runner，也不直接写 store；所有会话状态变更都经过这里。
 	interviewService, serviceCleanup, err := buildInterviewService(ctx, cfg, deps, graphRunner.runner, events, sessionCoordinator)
 	if err != nil {
 		logger.Error("interview service setup failed", "err", err)

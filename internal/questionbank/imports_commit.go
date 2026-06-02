@@ -14,6 +14,8 @@ func (s *ImportService) Commit(ctx context.Context, jobID string) (ImportJob, er
 	if s == nil || s.imports == nil || s.writer == nil {
 		return ImportJob{}, errors.New("question bank import commit not configured")
 	}
+	// Commit 是从“人工审核后的暂存区”写入正式题库。这里先检查状态，
+	// 防止 queued/running 的任务被提前导入，也让重复提交保持幂等。
 	job, err := s.imports.GetJob(ctx, jobID)
 	if err != nil {
 		return ImportJob{}, err
@@ -31,6 +33,8 @@ func (s *ImportService) ReviewItems(ctx context.Context, jobID string, itemIDs [
 	if s == nil || s.imports == nil {
 		return ImportJob{}, nil, errors.New("question bank import review not configured")
 	}
+	// ReviewItems 只改审核状态，不写正式题库。真正写入发生在 Commit，
+	// 这样前端可以多次调整 accept/reject，再一次性提交。
 	job, err := s.imports.GetJob(ctx, jobID)
 	if err != nil {
 		return ImportJob{}, nil, err
@@ -108,6 +112,8 @@ func (s *ImportService) commitReadyJob(ctx context.Context, jobID string) (Impor
 	job.Status = ImportStatusCommitting
 	job, _ = s.imports.UpdateJob(ctx, job)
 
+	// 只导入“有效且未拒绝”的 item。无审核状态默认视为接受，
+	// 是为了兼容旧流程：没有前端逐条审核时，ready 任务仍可直接提交。
 	importItems, err := s.imports.ListItems(ctx, job.ID)
 	if err != nil {
 		return s.failJob(ctx, job, err)
@@ -145,6 +151,8 @@ func (s *ImportService) embedCommittedItems(ctx context.Context, items []Item) e
 	if !ok {
 		return nil
 	}
+	// 向量写入是提交后的增强步骤：题库 item 先 upsert 成功，再补 embedding。
+	// 如果 embedding 失败，整个 job 标记失败，避免出现“题库有题但检索不到”的隐性坏状态。
 	texts := make([]string, len(items))
 	for i, item := range items {
 		texts[i] = embedText(item)

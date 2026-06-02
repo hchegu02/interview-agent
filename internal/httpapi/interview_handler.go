@@ -18,6 +18,8 @@ type startInterviewRequest struct {
 	QuestionBankFilter *domain.QuestionBankFilter `json:"question_bank_filter,omitempty"`
 }
 
+// answerInterviewRequest 只接收“当前等待输入”的答案。
+// 答案具体写到主问题还是追问，由 InterviewService 根据 Session.CurrentNode 判断。
 type answerInterviewRequest struct {
 	SessionID string `json:"session_id" binding:"required"`
 	UserID    string `json:"user_id"`
@@ -35,6 +37,8 @@ func (s *Server) startInterview(c *gin.Context) {
 		return
 	}
 
+	// handler 不直接创建 Session。它只做 HTTP 协议层校验，
+	// 会话初始化、Graph 首轮推进、持久化和事件发布都交给 InterviewService。
 	sess, err := s.interview.Start(c.Request.Context(), req)
 	if err != nil {
 		writeInterviewError(c, err)
@@ -54,6 +58,7 @@ func (s *Server) answerInterview(c *gin.Context) {
 		return
 	}
 
+	// Answer 入口同样不碰底层 store，避免绕过 lease、snapshot 和单调 UpdatedAt 规则。
 	sess, err := s.interview.Answer(c.Request.Context(), req)
 	if err != nil {
 		writeInterviewError(c, err)
@@ -81,6 +86,7 @@ func (s *Server) listInterviewSessions(c *gin.Context) {
 		}
 		limit = n
 	}
+	// handler 先做“必须是正整数”的协议校验，再交给统一 limit 规则截断上限。
 	limit = normalizeSessionListLimit(limit)
 	sessions, err := s.interview.ListByUser(c.Request.Context(), userID, limit)
 	if err != nil {

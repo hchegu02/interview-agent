@@ -144,6 +144,8 @@ func run(ctx context.Context, opts options, stdout, stderr io.Writer) int {
 	if opts.K <= 0 {
 		opts.K = 10
 	}
+	// RAG 评估的流程故意保持线性：读 golden cases -> 构建检索器 -> 逐条评估 -> 写报告 -> 判断门槛。
+	// 这样 Makefile/CI 失败时，可以直接从输出定位是数据、检索还是质量门槛的问题。
 	cases, err := loadCases(opts.CasesPath)
 	if err != nil {
 		fmt.Fprintf(stderr, "ERROR: load cases: %v\n", err)
@@ -167,6 +169,8 @@ func run(ctx context.Context, opts options, stdout, stderr io.Writer) int {
 	defer cleanup()
 
 	result := evaluate(ctx, cases, opts.K, source, embedder, r)
+	// group gate 用来防止总体指标掩盖局部退化。例如总体 recall 合格，
+	// 但 redis 或 system-design 这一类问题全部检索失败，也应该让 CI 失败。
 	result.WorstGroups = worstGroups(result.Groups, groupGateOptions{
 		MinCases:      opts.MinGroupCases,
 		MinRecallAt5:  opts.MinGroupRecallAt5,
@@ -196,6 +200,8 @@ func run(ctx context.Context, opts options, stdout, stderr io.Writer) int {
 
 func thresholdFailures(s summary, opts options) []string {
 	var failures []string
+	// 全局门槛看整体质量，group 门槛看局部质量；两者都只在阈值 > 0 时启用。
+	// 这让本地调试可以临时关闭某个门槛，而 CI 使用 Makefile 中的硬阈值。
 	if opts.MinRecallAt5 > 0 && s.RecallAt5 < opts.MinRecallAt5 {
 		failures = append(failures, fmt.Sprintf("recall@5 %.3f below threshold %.3f", s.RecallAt5, opts.MinRecallAt5))
 	}
@@ -237,6 +243,7 @@ func loadCases(path string) ([]evalCase, error) {
 	for scanner.Scan() {
 		lineNo++
 		line := strings.TrimSpace(scanner.Text())
+		// JSONL 允许空行和 # 注释，方便维护 golden queries 时按主题分组。
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}

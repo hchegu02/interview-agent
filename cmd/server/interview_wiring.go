@@ -43,11 +43,14 @@ func firstNonNilCoordinator(coordinators []httpapi.SessionCoordinator) httpapi.S
 }
 
 func buildInterviewRunner(ctx context.Context, cfg *config.Config, deps appDeps, events httpapi.InterviewEventPublisher, metricsCallback graph.Callback, llmObserver func(llm.CallRecord), retrieverWrapper func(retriever.Retriever, string) retriever.Retriever) (interviewRunnerBundle, func(), error) {
+	// 这里是面试 Graph 的装配边界：模型、embedding、检索器、事件和指标都在这里接上。
+	// HTTP 层不直接知道这些实现细节，只拿到一个可 Invoke/Resume 的 runner。
 	model, breakerState, err := buildChatModel(cfg)
 	if err != nil {
 		return interviewRunnerBundle{}, nil, err
 	}
 	if llmObserver != nil {
+		// RecordingChatModel 是观测包装，不改变模型行为；它只把调用耗时、错误等信息回传给 metrics。
 		recordModel := llm.NewRecordingChatModel(model)
 		recordModel.SetObserver(llmObserver)
 		model = recordModel
@@ -63,6 +66,8 @@ func buildInterviewRunner(ctx context.Context, cfg *config.Config, deps appDeps,
 	if retrieverWrapper != nil {
 		r = retrieverWrapper(r, retrieverKind)
 	}
+	// callback 顺序有实际含义：先发布业务事件，再打 tracing，最后记录 metrics。
+	// 这样用户可见事件不会被指标处理失败拖住。
 	callbacks := []graph.Callback{
 		httpapi.NewInterviewGraphCallback(events),
 		observability.NewTracingGraphCallback(observability.NoopTracer{}),

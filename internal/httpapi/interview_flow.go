@@ -14,6 +14,8 @@ func (s *InterviewService) Start(ctx context.Context, req startInterviewRequest)
 	if s.runner == nil {
 		return nil, fmt.Errorf("%w: interview runner not configured", graph.ErrInvalidConfig)
 	}
+	// Start 只负责创建会话和推进首轮 Graph。真正的面试状态都写进 domain.Session，
+	// 这样内存存储、PG 存储和事件快照看到的是同一份数据结构。
 	id := req.SessionID
 	if id == "" {
 		s.mu.Lock()
@@ -43,6 +45,8 @@ func (s *InterviewService) Start(ctx context.Context, req startInterviewRequest)
 		s.publishEvent(ctx, interviewEventSessionFailed, sess, "", err.Error())
 		return nil, err
 	}
+	// 分布式锁只在 coordinator 存在时生效。拿锁后如果后续任一步失败，必须释放，
+	// 否则同一个 session 会被错误地卡成“正在处理”。
 	if s.coordinator != nil {
 		leaseAcquired = true
 	}
@@ -62,6 +66,8 @@ func (s *InterviewService) Start(ctx context.Context, req startInterviewRequest)
 		releaseOnFailure()
 		return nil, err
 	}
+	// saveSessionSnapshot 可能把 Graph 产生的快照写回 Session，所以需要再 Save 一次。
+	// 这里宁可多一次持久化，也不要让恢复流程读到半截状态。
 	if s.saveSessionSnapshot(ctx, sess) {
 		if err := s.store.Save(ctx, sess); err != nil {
 			s.publishEvent(ctx, interviewEventSessionFailed, sess, "", err.Error())
@@ -116,6 +122,8 @@ func (s *InterviewService) Answer(ctx context.Context, req answerInterviewReques
 		return nil, fmt.Errorf("%w: interview runner not configured", graph.ErrInvalidConfig)
 	}
 
+	// Answer 是“取会话 -> 填答案 -> Resume Graph -> 保存”的窄通道。
+	// 不在 handler 里改 Session，是为了保证所有入口都走同一套并发和持久化规则。
 	sess, err := s.getSessionForMutation(ctx, req.SessionID)
 	if err != nil {
 		return nil, err
@@ -164,6 +172,8 @@ func nextUpdatedAt(prev time.Time) time.Time {
 }
 
 func fillPendingAnswer(sess *domain.Session, answer string) error {
+	// CurrentNode 决定答案写入哪一层：主问题写 Round.Answer，追问写最后一个 FollowUp。
+	// 这里显式拒绝其他节点，防止前端重复提交把答案塞进错误位置。
 	switch sess.CurrentNode {
 	case "pick_next":
 		round := sess.CurrentRound()

@@ -12,6 +12,10 @@ import (
 
 var ErrSessionNotFound = errors.New("session not found")
 
+// SessionStore 是 HTTP 面试服务看到的会话存储边界。
+//
+// 实现可以是内存 map，也可以是 PG state_json；上层不关心具体介质。
+// 这里故意只暴露面试接口真正需要的方法，避免 handler 绕过 InterviewService 直接改状态。
 type SessionStore interface {
 	Save(ctx context.Context, sess *domain.Session) error
 	Get(ctx context.Context, id string) (*domain.Session, error)
@@ -20,6 +24,8 @@ type SessionStore interface {
 }
 
 const (
+	// 列表接口必须有上限。会话对象包含 rounds/report，单条 JSON 可能不小；
+	// 不限制 limit 会让一个用户的历史会话把 HTTP 响应和数据库查询拖垮。
 	defaultSessionListLimit = 20
 	maxSessionListLimit     = 100
 )
@@ -52,6 +58,8 @@ func (s *MemorySessionStore) Save(ctx context.Context, sess *domain.Session) err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// 内存实现保存的是指针，不做深拷贝；它只服务本地 demo/测试。
+	// 生产路径应使用 PG store，让进程重启和多实例场景都能恢复。
 	s.sessions[sess.ID] = sess
 	return nil
 }
@@ -66,6 +74,7 @@ func (s *MemorySessionStore) Get(ctx context.Context, id string) (*domain.Sessio
 	if !ok {
 		return nil, fmt.Errorf("%w: %q", ErrSessionNotFound, id)
 	}
+	// 读取时迁移旧快照，保证老版本 state_json 也能被新代码继续推进。
 	sess.MigrateLegacyState()
 	return sess, nil
 }
@@ -82,6 +91,7 @@ func (s *MemorySessionStore) ListByUser(ctx context.Context, userID string, limi
 		if sess.UserID != userID {
 			continue
 		}
+		// 列表接口也会触发迁移，否则用户点开历史会话前看到的摘要可能还是旧字段。
 		sess.MigrateLegacyState()
 		out = append(out, sess)
 	}
