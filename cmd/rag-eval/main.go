@@ -68,6 +68,8 @@ type summary struct {
 	BySkill      map[string]groupMetric `json:"by_skill,omitempty"`
 	ByTag        map[string]groupMetric `json:"by_tag,omitempty"`
 	Groups       map[string]groupMetric `json:"groups,omitempty"`
+	Stages       map[string]groupMetric `json:"stages,omitempty"`
+	StageDeltas  map[string]float64     `json:"stage_deltas,omitempty"`
 	WorstGroups  []groupFailure         `json:"worst_groups,omitempty"`
 	Cases        []caseResult           `json:"cases"`
 
@@ -223,6 +225,26 @@ func thresholdFailures(s summary, opts options) []string {
 			failure.Group, failure.Metric, failure.Value, failure.Threshold, failure.Cases))
 	}
 	return failures
+}
+
+func stageDeltas(s summary) map[string]float64 {
+	out := map[string]float64{}
+	vector, okVector := s.Stages["vector"]
+	rrf, okRRF := s.Stages["rrf"]
+	if okVector && okRRF {
+		out["rrf_vs_vector_recall_at_5"] = roundMetric(rrf.RecallAt5 - vector.RecallAt5)
+		out["rrf_vs_vector_mrr_at_k"] = roundMetric(rrf.MRRAtK - vector.MRRAtK)
+	}
+	rerank, okRerank := s.Stages["rerank"]
+	if okRRF && okRerank {
+		out["rerank_vs_rrf_recall_at_5"] = roundMetric(rerank.RecallAt5 - rrf.RecallAt5)
+		out["rerank_vs_rrf_mrr_at_k"] = roundMetric(rerank.MRRAtK - rrf.MRRAtK)
+	}
+	return out
+}
+
+func roundMetric(v float64) float64 {
+	return math.Round(v*1000) / 1000
 }
 
 func loadCases(path string) ([]evalCase, error) {

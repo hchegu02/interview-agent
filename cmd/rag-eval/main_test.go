@@ -124,6 +124,19 @@ func TestThresholdFailuresDisablesGroupGatesWithoutMinGroupCases(t *testing.T) {
 	}
 }
 
+func TestStageDeltaComputesImprovement(t *testing.T) {
+	s := summary{
+		Stages: map[string]groupMetric{
+			"vector": {RecallAt5: 0.70, MRRAtK: 0.80},
+			"rrf":    {RecallAt5: 0.76, MRRAtK: 0.85},
+		},
+	}
+	got := stageDeltas(s)
+	if got["rrf_vs_vector_recall_at_5"] != 0.06 {
+		t.Fatalf("delta = %.2f, want 0.06", got["rrf_vs_vector_recall_at_5"])
+	}
+}
+
 func TestSeedRetrieverUsesQueryTextForRanking(t *testing.T) {
 	ctx := context.Background()
 	e := embedding.NewMockEmbedder(64)
