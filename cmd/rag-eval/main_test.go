@@ -1,9 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"math"
+	"strings"
 	"testing"
 
 	"interview-agent/internal/embedding"
@@ -197,6 +199,37 @@ func TestStageThresholdFailuresUnsupportedMetric(t *testing.T) {
 	failures := stageThresholdFailures(s, map[string]float64{"rrf": 0.75}, "ndcg@k")
 	if len(failures) != 1 || failures[0] != "unsupported stage metric ndcg@k" {
 		t.Fatalf("failures = %+v", failures)
+	}
+}
+
+func TestRunRejectsInvalidStageThresholdFlag(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), options{MinStageRecallAt5: "rrf=NaN"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "ERROR: parse -min-stage-recall-at-5") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestRunAppliesStageThresholdGate(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), options{
+		CasesPath:         "../../testdata/rag/golden_queries.jsonl",
+		ConfigPath:        "../../config/config.yaml.example",
+		SeedPath:          "../../seeds/question_bank.json",
+		OutDir:            t.TempDir(),
+		K:                 10,
+		MinStageRecallAt5: "rrf=1.10",
+		MinStageMRRAtK:    "rrf=0.10",
+		MinGroupRecallAt5: 0,
+	}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1 stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "FAIL: stage rrf recall@5") {
+		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
 

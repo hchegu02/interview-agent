@@ -119,6 +119,9 @@ type options struct {
 	MinGroupRecallAt10 float64
 	MinGroupMRRAtK     float64
 	MinGroupNDCGAtK    float64
+
+	MinStageRecallAt5 string
+	MinStageMRRAtK    string
 }
 
 type pipelineSearcher interface {
@@ -146,6 +149,8 @@ func main() {
 	flag.Float64Var(&opts.MinGroupRecallAt10, "min-group-recall-at-10", 0, "fail when any eligible group recall@10 is below this threshold; 0 disables")
 	flag.Float64Var(&opts.MinGroupMRRAtK, "min-group-mrr-at-k", 0, "fail when any eligible group MRR@K is below this threshold; 0 disables")
 	flag.Float64Var(&opts.MinGroupNDCGAtK, "min-group-ndcg-at-k", 0, "fail when any eligible group nDCG@K is below this threshold; 0 disables")
+	flag.StringVar(&opts.MinStageRecallAt5, "min-stage-recall-at-5", "", "comma-separated stage recall@5 thresholds like vector=0.70,rrf=0.75; empty disables")
+	flag.StringVar(&opts.MinStageMRRAtK, "min-stage-mrr-at-k", "", "comma-separated stage MRR@K thresholds like rrf=0.88; empty disables")
 	flag.Parse()
 
 	code := run(context.Background(), opts, os.Stdout, os.Stderr)
@@ -155,6 +160,16 @@ func main() {
 func run(ctx context.Context, opts options, stdout, stderr io.Writer) int {
 	if opts.K <= 0 {
 		opts.K = 10
+	}
+	stageRecallAt5, err := parseStageThresholds(opts.MinStageRecallAt5)
+	if err != nil {
+		fmt.Fprintf(stderr, "ERROR: parse -min-stage-recall-at-5: %v\n", err)
+		return 2
+	}
+	stageMRRAtK, err := parseStageThresholds(opts.MinStageMRRAtK)
+	if err != nil {
+		fmt.Fprintf(stderr, "ERROR: parse -min-stage-mrr-at-k: %v\n", err)
+		return 2
 	}
 	cases, err := loadCases(opts.CasesPath)
 	if err != nil {
@@ -188,6 +203,8 @@ func run(ctx context.Context, opts options, stdout, stderr io.Writer) int {
 	})
 	result.groupGatesEvaluated = true
 	result.GateFailures = thresholdFailures(result, opts)
+	result.GateFailures = append(result.GateFailures, stageThresholdFailures(result, stageRecallAt5, "recall@5")...)
+	result.GateFailures = append(result.GateFailures, stageThresholdFailures(result, stageMRRAtK, "mrr@k")...)
 	if err := writeOutputs(opts.OutDir, result); err != nil {
 		fmt.Fprintf(stderr, "ERROR: write outputs: %v\n", err)
 		return 2
