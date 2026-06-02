@@ -78,3 +78,52 @@ type Candidate struct {
 type Retriever interface {
 	Retrieve(ctx context.Context, q Query) ([]Result, error)
 }
+
+const (
+	// StageVector 标识向量召回阶段。
+	StageVector = "vector"
+	// StageBM25 标识 BM25 / 文本召回阶段。
+	StageBM25 = "bm25"
+	// StageRule 标识规则补召回阶段。
+	StageRule = "rule"
+	// StageRRF 标识多路召回融合阶段。
+	StageRRF = "rrf"
+	// StageRerank 标识重排阶段。
+	StageRerank = "rerank"
+)
+
+// StageResult 是单个检索阶段产出的候选及其阶段证据。
+type StageResult struct {
+	Result
+	Stage      string
+	Rank       int
+	StageScore float64
+	Reason     string
+}
+
+// StageTrace 是一个检索阶段的诊断信息。
+type StageTrace struct {
+	Stage      string        `json:"stage"`
+	Count      int           `json:"count"`
+	DurationMS float64       `json:"duration_ms"`
+	Items      []ResultTrace `json:"items,omitempty"`
+	Error      string        `json:"error,omitempty"`
+}
+
+// ResultTrace 是单个结果在 trace 中的可序列化证据。
+type ResultTrace struct {
+	ID      string             `json:"id"`
+	Rank    int                `json:"rank"`
+	Score   float64            `json:"score"`
+	Stage   string             `json:"stage,omitempty"`
+	Reason  string             `json:"reason,omitempty"`
+	Sources map[string]float64 `json:"sources,omitempty"`
+}
+
+// RetrievalTrace 记录一次检索请求的阶段路径和最终结果。
+type RetrievalTrace struct {
+	Query           string        `json:"query"`
+	Stages          []StageTrace  `json:"stages"`
+	Final           []ResultTrace `json:"final"`
+	FallbackReasons []string      `json:"fallback_reasons,omitempty"`
+}

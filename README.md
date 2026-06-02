@@ -52,7 +52,7 @@ cmd/server
   +-- internal/domain        Session 聚合根、画像、题目、轮次、报告
   +-- internal/llm           mock/real ChatModel、限流、熔断、调用记录
   +-- internal/embedding     mock/real embedding
-  +-- internal/retriever     pgvector 检索与 fallback retriever
+  +-- internal/retriever     pgvector、BM25、规则召回、RRF 融合和 rerank
   +-- internal/questionbank  题库存储、导入、审核、commit
   +-- internal/parser        PDF/DOCX/TXT/Markdown 简历解析
   +-- internal/config        YAML + 环境变量配置
@@ -125,7 +125,7 @@ parse_jd
 | 会话恢复/租约 | 无跨实例恢复 | Redis snapshot + lease，冲突返回 HTTP 409 |
 | 事件总线 | 内存 hub | Redis Streams |
 | 题库 | `seeds/question_bank.json` 加载到内存 | PostgreSQL `question_bank` |
-| RAG 检索 | fallback retriever，明确记录降级 | pgvector |
+| RAG 检索 | seed 题库上的 vector + BM25 + rule + RRF + 本地 rerank pipeline | pgvector |
 | LLM | mock fixture | OpenAI-compatible real LLM + limiter + breaker |
 | Embedding | mock vector | OpenAI-compatible embedding |
 
@@ -204,6 +204,17 @@ mingw32-make load-test
 - `avg_latency_ms` / `p95_latency_ms`：离线检索耗时。
 
 `cmd/rag-eval` 支持可选全局质量门槛：`-min-recall-at-5`、`-min-recall-at-10`、`-min-mrr-at-k`、`-min-ndcg-at-k`。默认 0 表示只统计不拦截；显式设置后，低于门槛会在 `summary.json` 写入 `gate_failures` 并以非 0 退出。
+
+本地 seed 模式会跑完整的多路检索 pipeline：`vector`、`bm25`、`rule` 三路召回，经过 `rrf` 融合，再用确定性的本地 `rerank` 精排。`summary.json.stages` 会分别输出每个阶段的 Recall/MRR/nDCG，`summary.json.stage_deltas` 会记录 `rrf_vs_vector` 和 `rerank_vs_rrf` 的变化。阶段门槛 flags 为 `-min-stage-recall-at-5` 和 `-min-stage-mrr-at-k`，格式是逗号分隔的 `stage=threshold`，例如：
+
+```powershell
+go run ./cmd/rag-eval `
+  -cases testdata/rag/golden_queries.jsonl `
+  -config config/config.yaml.example `
+  -out tmp/eval/rag `
+  -min-stage-recall-at-5 vector=0.70,bm25=0.65,rule=0.60,rrf=0.75,rerank=0.70 `
+  -min-stage-mrr-at-k rrf=0.88,rerank=0.90
+```
 
 `summary.json.groups` 按 `skill:*` 和 `tag:*` 输出分组召回质量；分组质量门槛 flags 为 `-min-group-cases`、`-min-group-recall-at-5`、`-min-group-recall-at-10`、`-min-group-mrr-at-k`、`-min-group-ndcg-at-k`。`-min-group-cases` 为 0 时分组门槛不启用；设置为正数后，`worst_groups` 会列出达到该 case 数且低于分组阈值的组，避免小样本误伤。
 

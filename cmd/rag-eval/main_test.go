@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"math"
+	"strings"
 	"testing"
 
 	"interview-agent/internal/embedding"
@@ -124,6 +127,296 @@ func TestThresholdFailuresDisablesGroupGatesWithoutMinGroupCases(t *testing.T) {
 	}
 }
 
+func TestStageDeltaComputesImprovement(t *testing.T) {
+	s := summary{
+		Stages: map[string]groupMetric{
+			"vector": {RecallAt5: 0.70, MRRAtK: 0.80},
+			"rrf":    {RecallAt5: 0.76, MRRAtK: 0.85},
+		},
+	}
+	got := stageDeltas(s)
+	if got["rrf_vs_vector_recall_at_5"] != 0.06 {
+		t.Fatalf("delta = %.2f, want 0.06", got["rrf_vs_vector_recall_at_5"])
+	}
+}
+
+func TestParseStageThresholds(t *testing.T) {
+	got, err := parseStageThresholds("rrf=0.75,rerank=0.80")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["rrf"] != 0.75 || got["rerank"] != 0.80 {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestParseStageThresholdsEmptyInput(t *testing.T) {
+	got, err := parseStageThresholds(" ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %+v, want empty map", got)
+	}
+}
+
+func TestParseStageThresholdsRejectsInvalidInput(t *testing.T) {
+	for _, raw := range []string{"bad", "=0.75", "rrf=", "rrf=NaN", "rrf=+Inf"} {
+		t.Run(raw, func(t *testing.T) {
+			if _, err := parseStageThresholds(raw); err == nil {
+				t.Fatalf("parseStageThresholds(%q) returned nil error", raw)
+			}
+		})
+	}
+}
+
+func TestStageThresholdFailures(t *testing.T) {
+	s := summary{Stages: map[string]groupMetric{"rrf": {RecallAt5: 0.70}}}
+	failures := stageThresholdFailures(s, map[string]float64{"rrf": 0.75}, "recall@5")
+	if len(failures) != 1 {
+		t.Fatalf("failures = %+v, want one", failures)
+	}
+}
+
+func TestStageThresholdFailuresMissingStage(t *testing.T) {
+	s := summary{Stages: map[string]groupMetric{}}
+	failures := stageThresholdFailures(s, map[string]float64{"rrf": 0.75}, "recall@5")
+	if len(failures) != 1 || failures[0] != "stage rrf missing metric recall@5" {
+		t.Fatalf("failures = %+v", failures)
+	}
+}
+
+func TestStageThresholdFailuresMRRAtK(t *testing.T) {
+	s := summary{Stages: map[string]groupMetric{"rerank": {MRRAtK: 0.79}}}
+	failures := stageThresholdFailures(s, map[string]float64{"rerank": 0.80}, "mrr@k")
+	if len(failures) != 1 {
+		t.Fatalf("failures = %+v, want one", failures)
+	}
+}
+
+func TestStageThresholdFailuresUnsupportedMetric(t *testing.T) {
+	s := summary{Stages: map[string]groupMetric{"rrf": {RecallAt5: 1, MRRAtK: 1}}}
+	failures := stageThresholdFailures(s, map[string]float64{"rrf": 0.75}, "ndcg@k")
+	if len(failures) != 1 || failures[0] != "unsupported stage metric ndcg@k" {
+		t.Fatalf("failures = %+v", failures)
+	}
+}
+
+func TestRunRejectsInvalidStageThresholdFlag(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), options{MinStageRecallAt5: "rrf=NaN"}, &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "ERROR: parse -min-stage-recall-at-5") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestRunAppliesStageThresholdGate(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), options{
+		CasesPath:         "../../testdata/rag/golden_queries.jsonl",
+		ConfigPath:        "../../config/config.yaml.example",
+		SeedPath:          "../../seeds/question_bank.json",
+		OutDir:            t.TempDir(),
+		K:                 10,
+		MinStageRecallAt5: "rrf=1.10",
+		MinStageMRRAtK:    "rrf=0.10",
+		MinGroupRecallAt5: 0,
+	}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("exit code = %d, want 1 stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "FAIL: stage rrf recall@5") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+}
+
+func TestEvaluateCollectsPipelineStageMetrics(t *testing.T) {
+	ctx := context.Background()
+	embedder := embedding.NewMockEmbedder(8)
+	r := fakePipelineSearcher{
+		result: retriever.PipelineResult{
+			Results: []retriever.Result{{ID: "b"}, {ID: "a"}},
+			Trace: retriever.RetrievalTrace{
+				Stages: []retriever.StageTrace{
+					{
+						Stage: retriever.StageVector,
+						Items: []retriever.ResultTrace{{ID: "a", Rank: 1}},
+					},
+					{
+						Stage: retriever.StageBM25,
+						Items: []retriever.ResultTrace{{ID: "b", Rank: 1}},
+					},
+				},
+			},
+		},
+	}
+
+	got := evaluate(ctx, []evalCase{{
+		ID:          "case-1",
+		Query:       "Redis AOF",
+		Tags:        []string{"redis"},
+		RelevantIDs: []string{"b"},
+	}}, 5, "seed", embedder, r)
+
+	if got.RecallAt5 != 1 {
+		t.Fatalf("final recall@5 = %f, want 1", got.RecallAt5)
+	}
+	if got.Stages[retriever.StageVector].RecallAt5 != 0 {
+		t.Fatalf("vector recall@5 = %f, want 0", got.Stages[retriever.StageVector].RecallAt5)
+	}
+	if got.Stages[retriever.StageBM25].RecallAt5 != 1 {
+		t.Fatalf("bm25 recall@5 = %f, want 1", got.Stages[retriever.StageBM25].RecallAt5)
+	}
+	if got.Stages[retriever.StageRRF].RecallAt5 != 1 {
+		t.Fatalf("rrf recall@5 = %f, want 1", got.Stages[retriever.StageRRF].RecallAt5)
+	}
+	if got.StageDeltas["rrf_vs_vector_recall_at_5"] != 1 {
+		t.Fatalf("stage deltas = %+v, want rrf vector recall improvement", got.StageDeltas)
+	}
+}
+
+func TestEvaluateDoesNotDoubleCountExplicitRRFStage(t *testing.T) {
+	ctx := context.Background()
+	embedder := embedding.NewMockEmbedder(8)
+	r := fakePipelineSearcher{
+		result: retriever.PipelineResult{
+			RRFResults: []retriever.Result{{ID: "b"}, {ID: "a"}},
+			Results:    []retriever.Result{{ID: "a"}, {ID: "b"}},
+			Trace: retriever.RetrievalTrace{
+				Stages: []retriever.StageTrace{
+					{
+						Stage: retriever.StageRRF,
+						Items: []retriever.ResultTrace{{ID: "b", Rank: 1}, {ID: "a", Rank: 2}},
+					},
+					{
+						Stage: retriever.StageRerank,
+						Items: []retriever.ResultTrace{{ID: "a", Rank: 1}, {ID: "b", Rank: 2}},
+					},
+				},
+			},
+		},
+	}
+
+	got := evaluate(ctx, []evalCase{{
+		ID:          "case-1",
+		Query:       "Redis AOF",
+		RelevantIDs: []string{"a"},
+	}}, 5, "seed", embedder, r)
+
+	if got.Stages[retriever.StageRRF].CaseCount != 1 {
+		t.Fatalf("rrf stage cases = %d, want 1", got.Stages[retriever.StageRRF].CaseCount)
+	}
+	if got.Stages[retriever.StageRRF].MRRAtK != 0.5 {
+		t.Fatalf("rrf mrr = %f, want explicit trace order b,a", got.Stages[retriever.StageRRF].MRRAtK)
+	}
+	if got.Stages[retriever.StageRerank].MRRAtK != 1 {
+		t.Fatalf("rerank mrr = %f, want rerank trace order a,b", got.Stages[retriever.StageRerank].MRRAtK)
+	}
+}
+
+func TestEvaluateDoesNotCreateRRFStageWhenPipelineSearchFails(t *testing.T) {
+	ctx := context.Background()
+	embedder := embedding.NewMockEmbedder(8)
+	r := fakePipelineSearcher{
+		result: retriever.PipelineResult{
+			Trace: retriever.RetrievalTrace{
+				Stages: []retriever.StageTrace{{
+					Stage: retriever.StageVector,
+					Items: []retriever.ResultTrace{{ID: "a", Rank: 1}},
+				}},
+			},
+		},
+		err: errors.New("all stages failed"),
+	}
+
+	got := evaluate(ctx, []evalCase{{
+		ID:          "case-1",
+		Query:       "GMP",
+		RelevantIDs: []string{"a"},
+	}}, 5, "seed", embedder, r)
+
+	if got.ErrorCount != 1 {
+		t.Fatalf("error count = %d, want 1", got.ErrorCount)
+	}
+	if _, ok := got.Stages[retriever.StageRRF]; ok {
+		t.Fatalf("rrf stage should not be created when pipeline search fails: %+v", got.Stages)
+	}
+	if got.Stages[retriever.StageVector].RecallAt5 != 1 {
+		t.Fatalf("vector recall@5 = %f, want 1", got.Stages[retriever.StageVector].RecallAt5)
+	}
+}
+
+func TestEvaluateStageMetricsUseAllCasesAsDenominator(t *testing.T) {
+	ctx := context.Background()
+	embedder := embedding.NewMockEmbedder(8)
+	r := &scriptedPipelineSearcher{
+		results: []retriever.PipelineResult{
+			{
+				Results: []retriever.Result{{ID: "a"}},
+				Trace: retriever.RetrievalTrace{
+					Stages: []retriever.StageTrace{{
+						Stage: retriever.StageVector,
+						Items: []retriever.ResultTrace{{ID: "a", Rank: 1}},
+					}},
+				},
+			},
+			{
+				Results: []retriever.Result{{ID: "x"}},
+				Trace:   retriever.RetrievalTrace{},
+			},
+		},
+	}
+
+	got := evaluate(ctx, []evalCase{
+		{ID: "case-1", Query: "GMP", RelevantIDs: []string{"a"}},
+		{ID: "case-2", Query: "MVCC", RelevantIDs: []string{"b"}},
+	}, 5, "seed", embedder, r)
+
+	if got.Stages[retriever.StageVector].CaseCount != 2 {
+		t.Fatalf("vector stage cases = %d, want 2", got.Stages[retriever.StageVector].CaseCount)
+	}
+	if got.Stages[retriever.StageVector].RecallAt5 != 0.5 {
+		t.Fatalf("vector recall@5 = %f, want 0.5", got.Stages[retriever.StageVector].RecallAt5)
+	}
+}
+
+type fakePipelineSearcher struct {
+	result retriever.PipelineResult
+	err    error
+}
+
+func (f fakePipelineSearcher) Retrieve(context.Context, retriever.Query) ([]retriever.Result, error) {
+	return f.result.Results, f.err
+}
+
+func (f fakePipelineSearcher) Search(context.Context, retriever.Query) (retriever.PipelineResult, error) {
+	return f.result, f.err
+}
+
+type scriptedPipelineSearcher struct {
+	results []retriever.PipelineResult
+	idx     int
+}
+
+func (s *scriptedPipelineSearcher) Retrieve(context.Context, retriever.Query) ([]retriever.Result, error) {
+	if len(s.results) == 0 {
+		return nil, nil
+	}
+	return s.results[0].Results, nil
+}
+
+func (s *scriptedPipelineSearcher) Search(context.Context, retriever.Query) (retriever.PipelineResult, error) {
+	if s.idx >= len(s.results) {
+		return retriever.PipelineResult{}, nil
+	}
+	result := s.results[s.idx]
+	s.idx++
+	return result, nil
+}
+
 func TestSeedRetrieverUsesQueryTextForRanking(t *testing.T) {
 	ctx := context.Background()
 	e := embedding.NewMockEmbedder(64)
@@ -167,5 +460,58 @@ func TestSeedRetrieverUsesQueryTextForRanking(t *testing.T) {
 	}
 	if len(got) == 0 || got[0].ID != "redis-001" {
 		t.Fatalf("top result = %+v, want redis-001 first", got)
+	}
+}
+
+func TestSeedPipelineKeepsStrongLexicalMatchOnTop(t *testing.T) {
+	ctx := context.Background()
+	e := embedding.NewMockEmbedder(64)
+	seed, err := newSeedRetriever(ctx, []questionbank.Item{
+		{
+			ID:             "redis-001",
+			Content:        "Redis AOF 和 RDB 持久化差异是什么？AOF rewrite 期间新写入怎么处理？",
+			Tags:           []string{"redis", "redis_persistence"},
+			SkillCategory:  "redis",
+			Difficulty:     3,
+			ExpectedPoints: []string{"AOF", "RDB", "rewrite"},
+			Status:         "active",
+		},
+		{
+			ID:             "redis-006",
+			Content:        "Redis 6 多线程 IO 为什么只处理网络读写而不是并发执行命令？",
+			Tags:           []string{"redis", "performance"},
+			SkillCategory:  "redis",
+			Difficulty:     3,
+			ExpectedPoints: []string{"IO threads", "main thread"},
+			Status:         "active",
+		},
+	}, e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	docs := seedResults(seed.items)
+	pipeline := retriever.NewRetrievalPipeline(retriever.RetrievalPipelineDeps{
+		Vector:   seed,
+		BM25:     retriever.NewBM25Retriever(docs),
+		Rule:     retriever.NewRuleRetriever(docs),
+		Reranker: retriever.NewLexicalReranker(),
+	})
+	vecs, err := e.Embed(ctx, []string{"Redis AOF 和 RDB 持久化差异是什么？"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := pipeline.Retrieve(ctx, retriever.Query{
+		Text:           "Redis AOF 和 RDB 持久化差异是什么？",
+		QueryEmbedding: vecs[0],
+		Tags:           []string{"redis", "aof", "rdb", "persistence"},
+		Difficulty:     3,
+		K:              2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) == 0 || got[0].ID != "redis-001" {
+		t.Fatalf("pipeline top result = %+v, want redis-001 first", got)
 	}
 }
