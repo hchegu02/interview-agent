@@ -423,17 +423,25 @@ func evaluate(ctx context.Context, cases []evalCase, k int, source string, embed
 }
 
 func collectPipelineStageResults(out map[string][]caseResult, seen map[string]map[string]bool, caseKey string, base caseResult, result retriever.PipelineResult, k int, rrfExecuted bool) {
+	hasRRFStage := false
 	for _, stage := range result.Trace.Stages {
 		if stage.Stage == "" {
 			continue
 		}
+		if stage.Stage == retriever.StageRRF {
+			hasRRFStage = true
+		}
 		out[stage.Stage] = append(out[stage.Stage], scoreReturnedIDs(base, traceIDs(stage.Items), k))
 		markStageSeen(seen, stage.Stage, caseKey)
 	}
-	if !rrfExecuted {
+	if !rrfExecuted || hasRRFStage {
 		return
 	}
-	out[retriever.StageRRF] = append(out[retriever.StageRRF], scoreReturnedIDs(base, resultIDs(result.Results), k))
+	rrfResults := result.RRFResults
+	if len(rrfResults) == 0 {
+		rrfResults = result.Results
+	}
+	out[retriever.StageRRF] = append(out[retriever.StageRRF], scoreReturnedIDs(base, resultIDs(rrfResults), k))
 	markStageSeen(seen, retriever.StageRRF, caseKey)
 }
 
@@ -687,9 +695,10 @@ func buildRetriever(ctx context.Context, cfg *config.Config, seedPath string, em
 	}
 	docs := seedResults(items)
 	return retriever.NewRetrievalPipeline(retriever.RetrievalPipelineDeps{
-		Vector: r,
-		BM25:   retriever.NewBM25Retriever(docs),
-		Rule:   retriever.NewRuleRetriever(docs),
+		Vector:   r,
+		BM25:     retriever.NewBM25Retriever(docs),
+		Rule:     retriever.NewRuleRetriever(docs),
+		Reranker: retriever.NewLexicalReranker(),
 	}), func() {}, "seed", nil
 }
 

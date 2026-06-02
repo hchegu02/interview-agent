@@ -278,6 +278,45 @@ func TestEvaluateCollectsPipelineStageMetrics(t *testing.T) {
 	}
 }
 
+func TestEvaluateDoesNotDoubleCountExplicitRRFStage(t *testing.T) {
+	ctx := context.Background()
+	embedder := embedding.NewMockEmbedder(8)
+	r := fakePipelineSearcher{
+		result: retriever.PipelineResult{
+			RRFResults: []retriever.Result{{ID: "b"}, {ID: "a"}},
+			Results:    []retriever.Result{{ID: "a"}, {ID: "b"}},
+			Trace: retriever.RetrievalTrace{
+				Stages: []retriever.StageTrace{
+					{
+						Stage: retriever.StageRRF,
+						Items: []retriever.ResultTrace{{ID: "b", Rank: 1}, {ID: "a", Rank: 2}},
+					},
+					{
+						Stage: retriever.StageRerank,
+						Items: []retriever.ResultTrace{{ID: "a", Rank: 1}, {ID: "b", Rank: 2}},
+					},
+				},
+			},
+		},
+	}
+
+	got := evaluate(ctx, []evalCase{{
+		ID:          "case-1",
+		Query:       "Redis AOF",
+		RelevantIDs: []string{"a"},
+	}}, 5, "seed", embedder, r)
+
+	if got.Stages[retriever.StageRRF].CaseCount != 1 {
+		t.Fatalf("rrf stage cases = %d, want 1", got.Stages[retriever.StageRRF].CaseCount)
+	}
+	if got.Stages[retriever.StageRRF].MRRAtK != 0.5 {
+		t.Fatalf("rrf mrr = %f, want explicit trace order b,a", got.Stages[retriever.StageRRF].MRRAtK)
+	}
+	if got.Stages[retriever.StageRerank].MRRAtK != 1 {
+		t.Fatalf("rerank mrr = %f, want rerank trace order a,b", got.Stages[retriever.StageRerank].MRRAtK)
+	}
+}
+
 func TestEvaluateDoesNotCreateRRFStageWhenPipelineSearchFails(t *testing.T) {
 	ctx := context.Background()
 	embedder := embedding.NewMockEmbedder(8)
@@ -452,9 +491,10 @@ func TestSeedPipelineKeepsStrongLexicalMatchOnTop(t *testing.T) {
 	}
 	docs := seedResults(seed.items)
 	pipeline := retriever.NewRetrievalPipeline(retriever.RetrievalPipelineDeps{
-		Vector: seed,
-		BM25:   retriever.NewBM25Retriever(docs),
-		Rule:   retriever.NewRuleRetriever(docs),
+		Vector:   seed,
+		BM25:     retriever.NewBM25Retriever(docs),
+		Rule:     retriever.NewRuleRetriever(docs),
+		Reranker: retriever.NewLexicalReranker(),
 	})
 	vecs, err := e.Embed(ctx, []string{"Redis AOF 和 RDB 持久化差异是什么？"})
 	if err != nil {

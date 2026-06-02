@@ -9,19 +9,21 @@ import (
 )
 
 type RetrievalPipelineDeps struct {
-	Vector Retriever
-	BM25   Retriever
-	Rule   Retriever
+	Vector   Retriever
+	BM25     Retriever
+	Rule     Retriever
+	Reranker Reranker
 }
 
 type RetrievalPipeline struct {
-	vector Retriever
-	bm25   Retriever
-	rule   Retriever
+	vector   Retriever
+	bm25     Retriever
+	rule     Retriever
+	reranker Reranker
 }
 
 func NewRetrievalPipeline(deps RetrievalPipelineDeps) *RetrievalPipeline {
-	return &RetrievalPipeline{vector: deps.Vector, bm25: deps.BM25, rule: deps.Rule}
+	return &RetrievalPipeline{vector: deps.Vector, bm25: deps.BM25, rule: deps.Rule, reranker: deps.Reranker}
 }
 
 func (p *RetrievalPipeline) Retrieve(ctx context.Context, q Query) ([]Result, error) {
@@ -33,8 +35,9 @@ func (p *RetrievalPipeline) Retrieve(ctx context.Context, q Query) ([]Result, er
 }
 
 type PipelineResult struct {
-	Results []Result
-	Trace   RetrievalTrace
+	Results    []Result
+	RRFResults []Result
+	Trace      RetrievalTrace
 }
 
 func (p *RetrievalPipeline) Search(ctx context.Context, q Query) (PipelineResult, error) {
@@ -86,9 +89,41 @@ func (p *RetrievalPipeline) Search(ctx context.Context, q Query) (PipelineResult
 	if attempted > 0 && succeeded == 0 && failed > 0 {
 		return PipelineResult{Trace: trace}, fmt.Errorf("all attempted retrieval stages failed: %s", strings.Join(trace.FallbackReasons, "; "))
 	}
-	results := MergeRRF(all, q.K, 60)
-	for i, result := range results {
-		trace.Final = append(trace.Final, ResultTrace{ID: result.ID, Rank: i + 1, Score: result.Score, Stage: StageRRF})
+	rrfResults := MergeRRF(all, q.K, 60)
+	trace.Stages = append(trace.Stages, stageTraceFromResults(StageRRF, rrfResults, 0, ""))
+	results := rrfResults
+	finalStage := StageRRF
+	if p.reranker != nil {
+		start := time.Now()
+		reranked, err := p.reranker.Rerank(ctx, q, rrfResults)
+		st := stageTraceFromResults(StageRerank, reranked, float64(time.Since(start).Microseconds())/1000, "")
+		if err != nil {
+			st.Error = err.Error()
+			trace.Stages = append(trace.Stages, st)
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return PipelineResult{RRFResults: rrfResults, Trace: trace}, err
+			}
+			trace.FallbackReasons = append(trace.FallbackReasons, StageRerank+": "+err.Error())
+		} else {
+			results = reranked
+			finalStage = StageRerank
+			trace.Stages = append(trace.Stages, st)
+		}
 	}
-	return PipelineResult{Results: results, Trace: trace}, nil
+	for i, result := range results {
+		trace.Final = append(trace.Final, ResultTrace{ID: result.ID, Rank: i + 1, Score: result.Score, Stage: finalStage})
+	}
+	return PipelineResult{Results: results, RRFResults: rrfResults, Trace: trace}, nil
+}
+
+func stageTraceFromResults(stage string, results []Result, durationMS float64, err string) StageTrace {
+	st := StageTrace{Stage: stage, DurationMS: durationMS, Error: err}
+	for _, result := range results {
+		if result.ID == "" {
+			continue
+		}
+		st.Items = append(st.Items, ResultTrace{ID: result.ID, Rank: len(st.Items) + 1, Score: result.Score, Stage: stage})
+	}
+	st.Count = len(st.Items)
+	return st
 }

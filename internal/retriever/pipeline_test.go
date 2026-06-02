@@ -38,6 +38,14 @@ func (f fixedStageRetriever) Retrieve(ctx context.Context, q Query) ([]Result, e
 	return append([]Result(nil), f.results...), nil
 }
 
+type errorReranker struct {
+	err error
+}
+
+func (e errorReranker) Rerank(context.Context, Query, []Result) ([]Result, error) {
+	return nil, e.err
+}
+
 func TestRetrievalPipelineUsesRRFResults(t *testing.T) {
 	p := NewRetrievalPipeline(RetrievalPipelineDeps{
 		Vector: fixedStageRetriever{results: []Result{{ID: "a"}, {ID: "b"}}},
@@ -53,6 +61,27 @@ func TestRetrievalPipelineUsesRRFResults(t *testing.T) {
 	}
 }
 
+func TestRetrievalPipelineFallsBackToRRFWhenRerankerFails(t *testing.T) {
+	p := NewRetrievalPipeline(RetrievalPipelineDeps{
+		Vector:   fixedStageRetriever{results: []Result{{ID: "a"}, {ID: "b"}}},
+		BM25:     fixedStageRetriever{results: []Result{{ID: "b"}}},
+		Reranker: errorReranker{err: errors.New("reranker unavailable")},
+	})
+	got, err := p.Search(context.Background(), Query{Text: "go gmp", K: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Results) != 2 || got.Results[0].ID != "b" {
+		t.Fatalf("results = %+v, want RRF fallback results", got.Results)
+	}
+	if len(got.Trace.Final) == 0 || got.Trace.Final[0].Stage != StageRRF {
+		t.Fatalf("final trace = %+v, want RRF fallback stage", got.Trace.Final)
+	}
+	if len(got.Trace.FallbackReasons) != 1 || !strings.Contains(got.Trace.FallbackReasons[0], StageRerank) {
+		t.Fatalf("fallback reasons = %+v, want rerank fallback", got.Trace.FallbackReasons)
+	}
+}
+
 func TestRetrievalPipelineSearchReturnsTrace(t *testing.T) {
 	p := NewRetrievalPipeline(RetrievalPipelineDeps{
 		Vector: fixedStageRetriever{results: []Result{{ID: "a", Score: 0.9}}},
@@ -62,11 +91,47 @@ func TestRetrievalPipelineSearchReturnsTrace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Trace.Stages) != 2 {
-		t.Fatalf("stages = %+v, want vector and bm25", got.Trace.Stages)
+	if len(got.Trace.Stages) != 3 {
+		t.Fatalf("stages = %+v, want vector, bm25 and rrf", got.Trace.Stages)
+	}
+	if got.Trace.Stages[2].Stage != StageRRF {
+		t.Fatalf("last stage = %+v, want rrf", got.Trace.Stages[2])
 	}
 	if len(got.Trace.Final) != len(got.Results) {
 		t.Fatalf("final trace len = %d, results len = %d", len(got.Trace.Final), len(got.Results))
+	}
+}
+
+func TestRetrievalPipelineAppliesRerankerAfterRRF(t *testing.T) {
+	p := NewRetrievalPipeline(RetrievalPipelineDeps{
+		Vector:   fixedStageRetriever{results: []Result{{ID: "generic", Content: "Redis 缓存淘汰", Score: 0.9}}},
+		BM25:     fixedStageRetriever{results: []Result{{ID: "exact", Content: "Redis AOF rewrite 新写入处理", Score: 0.1}}},
+		Reranker: NewLexicalReranker(),
+	})
+	got, err := p.Search(context.Background(), Query{Text: "Redis AOF rewrite", K: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.RRFResults) != 2 {
+		t.Fatalf("rrf results = %+v, want pre-rerank evidence", got.RRFResults)
+	}
+	if len(got.Results) != 2 || got.Results[0].ID != "exact" {
+		t.Fatalf("results = %+v, want reranked exact match first", got.Results)
+	}
+	if len(got.Trace.Final) != 2 || got.Trace.Final[0].Stage != StageRerank {
+		t.Fatalf("final trace = %+v, want rerank final trace", got.Trace.Final)
+	}
+	foundRerank := false
+	for _, stage := range got.Trace.Stages {
+		if stage.Stage == StageRerank {
+			foundRerank = true
+			if len(stage.Items) != 2 || stage.Items[0].ID != "exact" {
+				t.Fatalf("rerank stage = %+v, want exact first", stage)
+			}
+		}
+	}
+	if !foundRerank {
+		t.Fatalf("trace stages = %+v, want rerank stage", got.Trace.Stages)
 	}
 }
 
@@ -159,8 +224,8 @@ func TestRetrievalPipelineSkipsEmptyIDsInTraceAndFinalResults(t *testing.T) {
 	if len(got.Results) != 1 || got.Results[0].ID != "a" {
 		t.Fatalf("results = %+v, want only non-empty ID", got.Results)
 	}
-	if len(got.Trace.Stages) != 1 {
-		t.Fatalf("stages = %+v, want one stage", got.Trace.Stages)
+	if len(got.Trace.Stages) != 2 {
+		t.Fatalf("stages = %+v, want vector and rrf stages", got.Trace.Stages)
 	}
 	stage := got.Trace.Stages[0]
 	if stage.Count != 1 {
@@ -168,6 +233,9 @@ func TestRetrievalPipelineSkipsEmptyIDsInTraceAndFinalResults(t *testing.T) {
 	}
 	if len(stage.Items) != 1 || stage.Items[0].ID != "a" {
 		t.Fatalf("stage items = %+v, want only non-empty ID", stage.Items)
+	}
+	if got.Trace.Stages[1].Stage != StageRRF || got.Trace.Stages[1].Count != 1 {
+		t.Fatalf("rrf stage = %+v, want valid rrf stage", got.Trace.Stages[1])
 	}
 	if len(got.Trace.Final) != 1 || got.Trace.Final[0].ID != "a" {
 		t.Fatalf("final trace = %+v, want only non-empty ID", got.Trace.Final)
