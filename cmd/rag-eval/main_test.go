@@ -137,6 +137,68 @@ func TestStageDeltaComputesImprovement(t *testing.T) {
 	}
 }
 
+func TestParseStageThresholds(t *testing.T) {
+	got, err := parseStageThresholds("rrf=0.75,rerank=0.80")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["rrf"] != 0.75 || got["rerank"] != 0.80 {
+		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestParseStageThresholdsEmptyInput(t *testing.T) {
+	got, err := parseStageThresholds(" ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %+v, want empty map", got)
+	}
+}
+
+func TestParseStageThresholdsRejectsInvalidInput(t *testing.T) {
+	for _, raw := range []string{"bad", "=0.75", "rrf=", "rrf=NaN", "rrf=+Inf"} {
+		t.Run(raw, func(t *testing.T) {
+			if _, err := parseStageThresholds(raw); err == nil {
+				t.Fatalf("parseStageThresholds(%q) returned nil error", raw)
+			}
+		})
+	}
+}
+
+func TestStageThresholdFailures(t *testing.T) {
+	s := summary{Stages: map[string]groupMetric{"rrf": {RecallAt5: 0.70}}}
+	failures := stageThresholdFailures(s, map[string]float64{"rrf": 0.75}, "recall@5")
+	if len(failures) != 1 {
+		t.Fatalf("failures = %+v, want one", failures)
+	}
+}
+
+func TestStageThresholdFailuresMissingStage(t *testing.T) {
+	s := summary{Stages: map[string]groupMetric{}}
+	failures := stageThresholdFailures(s, map[string]float64{"rrf": 0.75}, "recall@5")
+	if len(failures) != 1 || failures[0] != "stage rrf missing metric recall@5" {
+		t.Fatalf("failures = %+v", failures)
+	}
+}
+
+func TestStageThresholdFailuresMRRAtK(t *testing.T) {
+	s := summary{Stages: map[string]groupMetric{"rerank": {MRRAtK: 0.79}}}
+	failures := stageThresholdFailures(s, map[string]float64{"rerank": 0.80}, "mrr@k")
+	if len(failures) != 1 {
+		t.Fatalf("failures = %+v, want one", failures)
+	}
+}
+
+func TestStageThresholdFailuresUnsupportedMetric(t *testing.T) {
+	s := summary{Stages: map[string]groupMetric{"rrf": {RecallAt5: 1, MRRAtK: 1}}}
+	failures := stageThresholdFailures(s, map[string]float64{"rrf": 0.75}, "ndcg@k")
+	if len(failures) != 1 || failures[0] != "unsupported stage metric ndcg@k" {
+		t.Fatalf("failures = %+v", failures)
+	}
+}
+
 func TestSeedRetrieverUsesQueryTextForRanking(t *testing.T) {
 	ctx := context.Background()
 	e := embedding.NewMockEmbedder(64)

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -223,6 +224,59 @@ func thresholdFailures(s summary, opts options) []string {
 	for _, failure := range groupFailures {
 		failures = append(failures, fmt.Sprintf("group %s %s %.3f below threshold %.3f cases=%d",
 			failure.Group, failure.Metric, failure.Value, failure.Threshold, failure.Cases))
+	}
+	return failures
+}
+
+func parseStageThresholds(raw string) (map[string]float64, error) {
+	out := map[string]float64{}
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return out, nil
+	}
+	for _, part := range strings.Split(raw, ",") {
+		keyValue := strings.SplitN(strings.TrimSpace(part), "=", 2)
+		if len(keyValue) != 2 {
+			return nil, fmt.Errorf("invalid stage threshold %q", part)
+		}
+		stage := strings.TrimSpace(keyValue[0])
+		rawValue := strings.TrimSpace(keyValue[1])
+		if stage == "" || rawValue == "" {
+			return nil, fmt.Errorf("invalid stage threshold %q", part)
+		}
+		value, err := strconv.ParseFloat(rawValue, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid stage threshold %q: %w", part, err)
+		}
+		if math.IsNaN(value) || math.IsInf(value, 0) {
+			return nil, fmt.Errorf("invalid stage threshold %q: non-finite value", part)
+		}
+		out[stage] = value
+	}
+	return out, nil
+}
+
+func stageThresholdFailures(s summary, thresholds map[string]float64, metric string) []string {
+	var failures []string
+	if metric != "recall@5" && metric != "mrr@k" {
+		return []string{fmt.Sprintf("unsupported stage metric %s", metric)}
+	}
+	for stage, threshold := range thresholds {
+		got, ok := s.Stages[stage]
+		if !ok {
+			failures = append(failures, fmt.Sprintf("stage %s missing metric %s", stage, metric))
+			continue
+		}
+		var value float64
+		switch metric {
+		case "recall@5":
+			value = got.RecallAt5
+		case "mrr@k":
+			value = got.MRRAtK
+		}
+		if value < threshold {
+			failures = append(failures, fmt.Sprintf("stage %s %s %.3f below threshold %.3f", stage, metric, value, threshold))
+		}
 	}
 	return failures
 }
