@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"math"
 	"testing"
 
@@ -199,6 +200,151 @@ func TestStageThresholdFailuresUnsupportedMetric(t *testing.T) {
 	}
 }
 
+func TestEvaluateCollectsPipelineStageMetrics(t *testing.T) {
+	ctx := context.Background()
+	embedder := embedding.NewMockEmbedder(8)
+	r := fakePipelineSearcher{
+		result: retriever.PipelineResult{
+			Results: []retriever.Result{{ID: "b"}, {ID: "a"}},
+			Trace: retriever.RetrievalTrace{
+				Stages: []retriever.StageTrace{
+					{
+						Stage: retriever.StageVector,
+						Items: []retriever.ResultTrace{{ID: "a", Rank: 1}},
+					},
+					{
+						Stage: retriever.StageBM25,
+						Items: []retriever.ResultTrace{{ID: "b", Rank: 1}},
+					},
+				},
+			},
+		},
+	}
+
+	got := evaluate(ctx, []evalCase{{
+		ID:          "case-1",
+		Query:       "Redis AOF",
+		Tags:        []string{"redis"},
+		RelevantIDs: []string{"b"},
+	}}, 5, "seed", embedder, r)
+
+	if got.RecallAt5 != 1 {
+		t.Fatalf("final recall@5 = %f, want 1", got.RecallAt5)
+	}
+	if got.Stages[retriever.StageVector].RecallAt5 != 0 {
+		t.Fatalf("vector recall@5 = %f, want 0", got.Stages[retriever.StageVector].RecallAt5)
+	}
+	if got.Stages[retriever.StageBM25].RecallAt5 != 1 {
+		t.Fatalf("bm25 recall@5 = %f, want 1", got.Stages[retriever.StageBM25].RecallAt5)
+	}
+	if got.Stages[retriever.StageRRF].RecallAt5 != 1 {
+		t.Fatalf("rrf recall@5 = %f, want 1", got.Stages[retriever.StageRRF].RecallAt5)
+	}
+	if got.StageDeltas["rrf_vs_vector_recall_at_5"] != 1 {
+		t.Fatalf("stage deltas = %+v, want rrf vector recall improvement", got.StageDeltas)
+	}
+}
+
+func TestEvaluateDoesNotCreateRRFStageWhenPipelineSearchFails(t *testing.T) {
+	ctx := context.Background()
+	embedder := embedding.NewMockEmbedder(8)
+	r := fakePipelineSearcher{
+		result: retriever.PipelineResult{
+			Trace: retriever.RetrievalTrace{
+				Stages: []retriever.StageTrace{{
+					Stage: retriever.StageVector,
+					Items: []retriever.ResultTrace{{ID: "a", Rank: 1}},
+				}},
+			},
+		},
+		err: errors.New("all stages failed"),
+	}
+
+	got := evaluate(ctx, []evalCase{{
+		ID:          "case-1",
+		Query:       "GMP",
+		RelevantIDs: []string{"a"},
+	}}, 5, "seed", embedder, r)
+
+	if got.ErrorCount != 1 {
+		t.Fatalf("error count = %d, want 1", got.ErrorCount)
+	}
+	if _, ok := got.Stages[retriever.StageRRF]; ok {
+		t.Fatalf("rrf stage should not be created when pipeline search fails: %+v", got.Stages)
+	}
+	if got.Stages[retriever.StageVector].RecallAt5 != 1 {
+		t.Fatalf("vector recall@5 = %f, want 1", got.Stages[retriever.StageVector].RecallAt5)
+	}
+}
+
+func TestEvaluateStageMetricsUseAllCasesAsDenominator(t *testing.T) {
+	ctx := context.Background()
+	embedder := embedding.NewMockEmbedder(8)
+	r := &scriptedPipelineSearcher{
+		results: []retriever.PipelineResult{
+			{
+				Results: []retriever.Result{{ID: "a"}},
+				Trace: retriever.RetrievalTrace{
+					Stages: []retriever.StageTrace{{
+						Stage: retriever.StageVector,
+						Items: []retriever.ResultTrace{{ID: "a", Rank: 1}},
+					}},
+				},
+			},
+			{
+				Results: []retriever.Result{{ID: "x"}},
+				Trace:   retriever.RetrievalTrace{},
+			},
+		},
+	}
+
+	got := evaluate(ctx, []evalCase{
+		{ID: "case-1", Query: "GMP", RelevantIDs: []string{"a"}},
+		{ID: "case-2", Query: "MVCC", RelevantIDs: []string{"b"}},
+	}, 5, "seed", embedder, r)
+
+	if got.Stages[retriever.StageVector].CaseCount != 2 {
+		t.Fatalf("vector stage cases = %d, want 2", got.Stages[retriever.StageVector].CaseCount)
+	}
+	if got.Stages[retriever.StageVector].RecallAt5 != 0.5 {
+		t.Fatalf("vector recall@5 = %f, want 0.5", got.Stages[retriever.StageVector].RecallAt5)
+	}
+}
+
+type fakePipelineSearcher struct {
+	result retriever.PipelineResult
+	err    error
+}
+
+func (f fakePipelineSearcher) Retrieve(context.Context, retriever.Query) ([]retriever.Result, error) {
+	return f.result.Results, f.err
+}
+
+func (f fakePipelineSearcher) Search(context.Context, retriever.Query) (retriever.PipelineResult, error) {
+	return f.result, f.err
+}
+
+type scriptedPipelineSearcher struct {
+	results []retriever.PipelineResult
+	idx     int
+}
+
+func (s *scriptedPipelineSearcher) Retrieve(context.Context, retriever.Query) ([]retriever.Result, error) {
+	if len(s.results) == 0 {
+		return nil, nil
+	}
+	return s.results[0].Results, nil
+}
+
+func (s *scriptedPipelineSearcher) Search(context.Context, retriever.Query) (retriever.PipelineResult, error) {
+	if s.idx >= len(s.results) {
+		return retriever.PipelineResult{}, nil
+	}
+	result := s.results[s.idx]
+	s.idx++
+	return result, nil
+}
+
 func TestSeedRetrieverUsesQueryTextForRanking(t *testing.T) {
 	ctx := context.Background()
 	e := embedding.NewMockEmbedder(64)
@@ -242,5 +388,57 @@ func TestSeedRetrieverUsesQueryTextForRanking(t *testing.T) {
 	}
 	if len(got) == 0 || got[0].ID != "redis-001" {
 		t.Fatalf("top result = %+v, want redis-001 first", got)
+	}
+}
+
+func TestSeedPipelineKeepsStrongLexicalMatchOnTop(t *testing.T) {
+	ctx := context.Background()
+	e := embedding.NewMockEmbedder(64)
+	seed, err := newSeedRetriever(ctx, []questionbank.Item{
+		{
+			ID:             "redis-001",
+			Content:        "Redis AOF 和 RDB 持久化差异是什么？AOF rewrite 期间新写入怎么处理？",
+			Tags:           []string{"redis", "redis_persistence"},
+			SkillCategory:  "redis",
+			Difficulty:     3,
+			ExpectedPoints: []string{"AOF", "RDB", "rewrite"},
+			Status:         "active",
+		},
+		{
+			ID:             "redis-006",
+			Content:        "Redis 6 多线程 IO 为什么只处理网络读写而不是并发执行命令？",
+			Tags:           []string{"redis", "performance"},
+			SkillCategory:  "redis",
+			Difficulty:     3,
+			ExpectedPoints: []string{"IO threads", "main thread"},
+			Status:         "active",
+		},
+	}, e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	docs := seedResults(seed.items)
+	pipeline := retriever.NewRetrievalPipeline(retriever.RetrievalPipelineDeps{
+		Vector: seed,
+		BM25:   retriever.NewBM25Retriever(docs),
+		Rule:   retriever.NewRuleRetriever(docs),
+	})
+	vecs, err := e.Embed(ctx, []string{"Redis AOF 和 RDB 持久化差异是什么？"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := pipeline.Retrieve(ctx, retriever.Query{
+		Text:           "Redis AOF 和 RDB 持久化差异是什么？",
+		QueryEmbedding: vecs[0],
+		Tags:           []string{"redis", "aof", "rdb", "persistence"},
+		Difficulty:     3,
+		K:              2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) == 0 || got[0].ID != "redis-001" {
+		t.Fatalf("pipeline top result = %+v, want redis-001 first", got)
 	}
 }

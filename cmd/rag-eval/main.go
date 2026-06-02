@@ -121,6 +121,15 @@ type options struct {
 	MinGroupNDCGAtK    float64
 }
 
+type pipelineSearcher interface {
+	Search(context.Context, retriever.Query) (retriever.PipelineResult, error)
+}
+
+type stageCaseBase struct {
+	Key    string
+	Result caseResult
+}
+
 func main() {
 	opts := options{}
 	flag.StringVar(&opts.CasesPath, "cases", "testdata/rag/golden_queries.jsonl", "golden query JSONL path")
@@ -336,7 +345,11 @@ func loadCases(path string) ([]evalCase, error) {
 
 func evaluate(ctx context.Context, cases []evalCase, k int, source string, embedder embedding.Embedder, r retriever.Retriever) summary {
 	results := make([]caseResult, 0, len(cases))
+	stageResults := map[string][]caseResult{}
+	stageSeen := map[string]map[string]bool{}
+	stageCaseBases := make([]stageCaseBase, 0, len(cases))
 	for _, c := range cases {
+		caseKey := strconv.Itoa(len(stageCaseBases))
 		start := time.Now()
 		res := caseResult{
 			ID:          c.ID,
@@ -344,6 +357,7 @@ func evaluate(ctx context.Context, cases []evalCase, k int, source string, embed
 			Skill:       skillFromCase(c),
 			RelevantIDs: append([]string(nil), c.RelevantIDs...),
 		}
+		stageCaseBases = append(stageCaseBases, stageCaseBase{Key: caseKey, Result: res})
 		vectors, err := embedder.Embed(ctx, []string{c.Query})
 		if err != nil || len(vectors) != 1 {
 			res.Error = fmt.Sprintf("embed: %v", err)
@@ -352,33 +366,127 @@ func evaluate(ctx context.Context, cases []evalCase, k int, source string, embed
 			results = append(results, res)
 			continue
 		}
-		retrieved, err := r.Retrieve(ctx, retriever.Query{
+		query := retriever.Query{
 			Text:           c.Query,
 			QueryEmbedding: vectors[0],
 			Tags:           c.Tags,
 			Difficulty:     c.Difficulty,
 			K:              k,
-		})
+		}
+		var retrieved []retriever.Result
+		var retrieveErr error
+		if searcher, ok := r.(pipelineSearcher); ok {
+			pipelineResult, searchErr := searcher.Search(ctx, query)
+			collectPipelineStageResults(stageResults, stageSeen, caseKey, res, pipelineResult, k, searchErr == nil)
+			retrieved = pipelineResult.Results
+			retrieveErr = searchErr
+		} else {
+			retrieved, retrieveErr = r.Retrieve(ctx, query)
+		}
 		res.LatencyMS = millis(time.Since(start))
-		if err != nil {
-			res.Error = fmt.Sprintf("retrieve: %v", err)
+		if retrieveErr != nil {
+			res.Error = fmt.Sprintf("retrieve: %v", retrieveErr)
 			res.Fallback = true
 			results = append(results, res)
 			continue
 		}
-		for _, item := range retrieved {
-			res.ReturnedIDs = append(res.ReturnedIDs, item.ID)
-		}
-		res.Empty = len(res.ReturnedIDs) == 0
-		res.HitAt5 = hitAt(res.ReturnedIDs, c.RelevantIDs, 5)
-		res.HitAt10 = hitAt(res.ReturnedIDs, c.RelevantIDs, 10)
-		res.RecallAt5 = recallAt(res.ReturnedIDs, c.RelevantIDs, 5)
-		res.RecallAt10 = recallAt(res.ReturnedIDs, c.RelevantIDs, 10)
-		res.MRRAtK = mrrAt(res.ReturnedIDs, c.RelevantIDs, k)
-		res.NDCGAtK = ndcgAt(res.ReturnedIDs, c.RelevantIDs, k)
+		res = scoreReturnedIDs(res, resultIDs(retrieved), k)
 		results = append(results, res)
 	}
-	return aggregate(results, k, source)
+	out := aggregate(results, k, source)
+	if len(stageResults) > 0 {
+		fillMissingStageResults(stageResults, stageSeen, stageCaseBases, k)
+		out.Stages = map[string]groupMetric{}
+		for stage, stageCases := range stageResults {
+			out.Stages[stage] = aggregateStageMetric(stageCases)
+		}
+		out.StageDeltas = stageDeltas(out)
+	}
+	return out
+}
+
+func collectPipelineStageResults(out map[string][]caseResult, seen map[string]map[string]bool, caseKey string, base caseResult, result retriever.PipelineResult, k int, rrfExecuted bool) {
+	for _, stage := range result.Trace.Stages {
+		if stage.Stage == "" {
+			continue
+		}
+		out[stage.Stage] = append(out[stage.Stage], scoreReturnedIDs(base, traceIDs(stage.Items), k))
+		markStageSeen(seen, stage.Stage, caseKey)
+	}
+	if !rrfExecuted {
+		return
+	}
+	out[retriever.StageRRF] = append(out[retriever.StageRRF], scoreReturnedIDs(base, resultIDs(result.Results), k))
+	markStageSeen(seen, retriever.StageRRF, caseKey)
+}
+
+func fillMissingStageResults(out map[string][]caseResult, seen map[string]map[string]bool, cases []stageCaseBase, k int) {
+	for stage := range out {
+		for _, c := range cases {
+			if seen[stage][c.Key] {
+				continue
+			}
+			out[stage] = append(out[stage], scoreReturnedIDs(c.Result, nil, k))
+		}
+	}
+}
+
+func markStageSeen(seen map[string]map[string]bool, stage, caseKey string) {
+	if seen[stage] == nil {
+		seen[stage] = map[string]bool{}
+	}
+	seen[stage][caseKey] = true
+}
+
+func scoreReturnedIDs(base caseResult, ids []string, k int) caseResult {
+	base.ReturnedIDs = append([]string(nil), ids...)
+	base.Empty = len(base.ReturnedIDs) == 0
+	base.HitAt5 = hitAt(base.ReturnedIDs, base.RelevantIDs, 5)
+	base.HitAt10 = hitAt(base.ReturnedIDs, base.RelevantIDs, 10)
+	base.RecallAt5 = recallAt(base.ReturnedIDs, base.RelevantIDs, 5)
+	base.RecallAt10 = recallAt(base.ReturnedIDs, base.RelevantIDs, 10)
+	base.MRRAtK = mrrAt(base.ReturnedIDs, base.RelevantIDs, k)
+	base.NDCGAtK = ndcgAt(base.ReturnedIDs, base.RelevantIDs, k)
+	return base
+}
+
+func resultIDs(results []retriever.Result) []string {
+	out := make([]string, 0, len(results))
+	for _, item := range results {
+		if item.ID != "" {
+			out = append(out, item.ID)
+		}
+	}
+	return out
+}
+
+func traceIDs(items []retriever.ResultTrace) []string {
+	out := make([]string, 0, len(items))
+	for _, item := range items {
+		if item.ID != "" {
+			out = append(out, item.ID)
+		}
+	}
+	return out
+}
+
+func aggregateStageMetric(results []caseResult) groupMetric {
+	var out groupMetric
+	for _, r := range results {
+		out.CaseCount++
+		out.RecallAt5 += r.RecallAt5
+		out.RecallAt10 += r.RecallAt10
+		out.MRRAtK += r.MRRAtK
+		out.NDCGAtK += r.NDCGAtK
+	}
+	if out.CaseCount > 0 {
+		n := float64(out.CaseCount)
+		out.RecallAt5 /= n
+		out.RecallAt10 /= n
+		out.MRRAtK /= n
+		out.NDCGAtK /= n
+	}
+	return out
 }
 
 func aggregate(results []caseResult, k int, source string) summary {
@@ -557,7 +665,15 @@ func buildRetriever(ctx context.Context, cfg *config.Config, seedPath string, em
 		return nil, func() {}, "seed", err
 	}
 	r, err := newSeedRetriever(ctx, items, embedder)
-	return r, func() {}, "seed", err
+	if err != nil {
+		return nil, func() {}, "seed", err
+	}
+	docs := seedResults(items)
+	return retriever.NewRetrievalPipeline(retriever.RetrievalPipelineDeps{
+		Vector: r,
+		BM25:   retriever.NewBM25Retriever(docs),
+		Rule:   retriever.NewRuleRetriever(docs),
+	}), func() {}, "seed", nil
 }
 
 type seedRetriever struct {
@@ -581,6 +697,24 @@ func newSeedRetriever(ctx context.Context, items []questionbank.Item, e embeddin
 		return nil, fmt.Errorf("embedding count mismatch: got %d want %d", len(vectors), len(items))
 	}
 	return &seedRetriever{items: items, vectors: vectors, texts: texts, fusion: retriever.NewLinearFusion(0, 0, 0)}, nil
+}
+
+func seedResults(items []questionbank.Item) []retriever.Result {
+	out := make([]retriever.Result, 0, len(items))
+	for _, item := range items {
+		if item.Status != "" && item.Status != "active" {
+			continue
+		}
+		out = append(out, retriever.Result{
+			ID:             item.ID,
+			Content:        item.Content,
+			Tags:           append([]string(nil), item.Tags...),
+			Difficulty:     item.Difficulty,
+			Category:       item.SkillCategory,
+			ExpectedPoints: append([]string(nil), item.ExpectedPoints...),
+		})
+	}
+	return out
 }
 
 func (r *seedRetriever) Retrieve(_ context.Context, q retriever.Query) ([]retriever.Result, error) {
