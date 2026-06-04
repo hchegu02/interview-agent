@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"interview-agent/internal/agentkit"
 	"interview-agent/internal/domain"
 	"interview-agent/internal/graph"
 )
@@ -55,6 +56,33 @@ func TestEvaluate_Success(t *testing.T) {
 	}
 	if sess.PendingDecision != nil {
 		t.Errorf("PendingDecision should be cleared after eval")
+	}
+}
+
+func TestEvaluate_EmitsSkillHookEvents(t *testing.T) {
+	stub := &stubChatModel{responses: []string{
+		`{"question_id":"go-001","score":78,"strengths":["讲清 G/M/P 三者"],"weaknesses":["没提 work stealing"],"suggestion":"补充 work stealing 细节"}`,
+	}}
+	hook := agentkit.NewRecorderHook()
+	sess := buildEvalSession("G 是 goroutine, M 是线程, P 是 processor...", []string{"G/M/P", "work stealing"})
+	sess.ID = "sess-eval-hook"
+	node := NewEvaluateNode(stub, EvaluateOptions{Hook: hook})
+	if err := node(context.Background(), sess); err != nil {
+		t.Fatalf("node failed: %v", err)
+	}
+
+	events := hook.Events()
+	if len(events) != 2 {
+		t.Fatalf("events = %+v", events)
+	}
+	if events[0].Type != agentkit.HookBeforeSkill || events[1].Type != agentkit.HookAfterSkill {
+		t.Fatalf("event types = %+v", events)
+	}
+	if events[0].Name != "answer.evaluate" || events[1].Name != "answer.evaluate" {
+		t.Fatalf("event names = %+v", events)
+	}
+	if events[1].OutputSummary != "question_id=go-001 score=78" {
+		t.Fatalf("output summary = %q", events[1].OutputSummary)
 	}
 }
 

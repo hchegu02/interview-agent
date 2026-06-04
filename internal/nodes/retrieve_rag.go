@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
+	"interview-agent/internal/agentkit"
 	"interview-agent/internal/domain"
 	"interview-agent/internal/embedding"
 	"interview-agent/internal/graph"
@@ -68,6 +70,7 @@ type RetrieveRAGOptions struct {
 	TargetDifficulty int // 目标难度，默认 3，可被 GapStrategy 上调/下调
 	VectorCandidates int // SQL 召回 vector 候选数，默认 K*5
 	TagCandidates    int // SQL 召回 tag 候选数，默认 K*3
+	Hook             agentkit.Hook
 }
 
 // NewRetrieveRAGNode 构造 retrieve_rag 节点。
@@ -95,8 +98,35 @@ func NewRetrieveRAGNode(
 	if opts.TargetDifficulty < 1 || opts.TargetDifficulty > 5 {
 		opts.TargetDifficulty = 3
 	}
+	if opts.Hook == nil {
+		opts.Hook = agentkit.NoopHook{}
+	}
 
-	return func(ctx context.Context, sess *domain.Session) error {
+	return func(ctx context.Context, sess *domain.Session) (err error) {
+		start := time.Now()
+		_ = opts.Hook.HandleHook(ctx, agentkit.HookEvent{
+			Type:         agentkit.HookBeforeSkill,
+			SessionID:    sess.ID,
+			Name:         "question.retrieve",
+			InputSummary: "job profile, gap report and question bank filters",
+			Permission:   agentkit.PermissionReadOnly,
+		})
+		defer func() {
+			ev := agentkit.HookEvent{
+				Type:          agentkit.HookAfterSkill,
+				SessionID:     sess.ID,
+				Name:          "question.retrieve",
+				InputSummary:  "job profile, gap report and question bank filters",
+				OutputSummary: fmt.Sprintf("candidate_pool=%d", len(sess.CandidatePool)),
+				Latency:       time.Since(start),
+				Permission:    agentkit.PermissionReadOnly,
+			}
+			if err != nil {
+				ev.Error = err.Error()
+			}
+			_ = opts.Hook.HandleHook(ctx, ev)
+		}()
+
 		if sess.JobProfile == nil {
 			return fmt.Errorf("retrieve_rag: job_profile required: %w", graph.ErrPermanent)
 		}

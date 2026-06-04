@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
+	"interview-agent/internal/agentkit"
 	"interview-agent/internal/domain"
 	"interview-agent/internal/graph"
 	"interview-agent/internal/llm"
@@ -42,6 +44,7 @@ import (
 type EvaluateOptions struct {
 	Temperature float64 // 默认 0.2
 	MaxTokens   int     // 默认 600
+	Hook        agentkit.Hook
 }
 
 type evalShape struct {
@@ -72,10 +75,11 @@ func validateEvaluation(raw []byte) error {
 // NewEvaluateNode 构造 evaluate 节点。
 //
 // 节点契约:
-//   输入:  sess.CurrentRound() 必须存在且 Question 已填; Answer 可为空
-//   输出:  CurrentRound().Evaluation 被填; PendingDecision 清空
-//   返回:  nil(始终,失败走降级);
-//          ErrPermanent 仅当 CurrentRound() 为 nil(说明上游节点链路 bug)
+//
+//	输入:  sess.CurrentRound() 必须存在且 Question 已填; Answer 可为空
+//	输出:  CurrentRound().Evaluation 被填; PendingDecision 清空
+//	返回:  nil(始终,失败走降级);
+//	       ErrPermanent 仅当 CurrentRound() 为 nil(说明上游节点链路 bug)
 func NewEvaluateNode(model llm.ChatModel, opts EvaluateOptions) graph.NodeFunc {
 	if opts.Temperature == 0 {
 		opts.Temperature = 0.2
@@ -83,8 +87,39 @@ func NewEvaluateNode(model llm.ChatModel, opts EvaluateOptions) graph.NodeFunc {
 	if opts.MaxTokens == 0 {
 		opts.MaxTokens = 600
 	}
+	if opts.Hook == nil {
+		opts.Hook = agentkit.NoopHook{}
+	}
 
-	return func(ctx context.Context, sess *domain.Session) error {
+	return func(ctx context.Context, sess *domain.Session) (err error) {
+		start := time.Now()
+		_ = opts.Hook.HandleHook(ctx, agentkit.HookEvent{
+			Type:         agentkit.HookBeforeSkill,
+			SessionID:    sess.ID,
+			Name:         "answer.evaluate",
+			InputSummary: "current round question and answer",
+			Permission:   agentkit.PermissionWriteSession,
+		})
+		defer func() {
+			summary := "evaluation=missing"
+			if round := sess.CurrentRound(); round != nil && round.Evaluation != nil {
+				summary = fmt.Sprintf("question_id=%s score=%d", round.Evaluation.QuestionID, round.Evaluation.Score)
+			}
+			ev := agentkit.HookEvent{
+				Type:          agentkit.HookAfterSkill,
+				SessionID:     sess.ID,
+				Name:          "answer.evaluate",
+				InputSummary:  "current round question and answer",
+				OutputSummary: summary,
+				Latency:       time.Since(start),
+				Permission:    agentkit.PermissionWriteSession,
+			}
+			if err != nil {
+				ev.Error = err.Error()
+			}
+			_ = opts.Hook.HandleHook(ctx, ev)
+		}()
+
 		round := sess.CurrentRound()
 		if round == nil {
 			return fmt.Errorf("evaluate: no current round: %w", graph.ErrPermanent)

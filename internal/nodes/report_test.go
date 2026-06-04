@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"interview-agent/internal/agentkit"
 	"interview-agent/internal/domain"
 	"interview-agent/internal/graph"
 )
@@ -160,6 +161,29 @@ func TestReportNode_AggregatesSessionReport(t *testing.T) {
 	}
 	if got := sess.Report.DrillPlan[0].RecommendedQuestions; len(got) == 0 || got[0] == "缓存击穿怎么处理？" {
 		t.Errorf("recommended questions should include pool question with id, got %v", got)
+	}
+}
+
+func TestReportNode_EmitsSkillHookEvents(t *testing.T) {
+	sess := buildReportSession()
+	hook := agentkit.NewRecorderHook()
+	node := NewReportNodeWithHook(hook)
+
+	if err := node(context.Background(), sess); err != nil {
+		t.Fatalf("node failed: %v", err)
+	}
+	events := hook.Events()
+	if len(events) != 2 {
+		t.Fatalf("events = %+v", events)
+	}
+	if events[0].Type != agentkit.HookBeforeSkill || events[1].Type != agentkit.HookAfterSkill {
+		t.Fatalf("event types = %+v", events)
+	}
+	if events[0].Name != "report.generate" || events[1].Name != "report.generate" {
+		t.Fatalf("event names = %+v", events)
+	}
+	if events[1].OutputSummary == "report=missing" || events[1].OutputSummary == "" {
+		t.Fatalf("output summary = %q", events[1].OutputSummary)
 	}
 }
 

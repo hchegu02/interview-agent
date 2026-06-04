@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"interview-agent/internal/agentkit"
 	"interview-agent/internal/domain"
 	"interview-agent/internal/graph"
 	"interview-agent/internal/llm"
@@ -486,6 +487,41 @@ func TestRetrieveRAG_SavesRetrievalTraceWhenSearcherAvailable(t *testing.T) {
 	}
 	if sess.RetrievalTrace.Stages[0].Stage != retriever.StageRerank {
 		t.Fatalf("trace stage = %+v, want rerank", sess.RetrievalTrace.Stages[0])
+	}
+}
+
+func TestRetrieveRAG_EmitsSkillHookEvents(t *testing.T) {
+	embedder := &stubEmbedder{dim: 1024}
+	r := &fakePipelineRetriever{
+		searchResult: retriever.PipelineResult{
+			Results: []retriever.Result{{
+				ID:         "go-hook-001",
+				Content:    "Go GMP 调度",
+				Difficulty: 3,
+				Category:   "go",
+			}},
+		},
+	}
+	hook := agentkit.NewRecorderHook()
+	node := NewRetrieveRAGNode(embedder, r, RetrieveRAGOptions{TopK: 10, Hook: hook})
+
+	sess := buildRAGSession([]string{"go"}, []string{"go"})
+	sess.ID = "sess-hook"
+	if err := node(context.Background(), sess); err != nil {
+		t.Fatalf("node failed: %v", err)
+	}
+	events := hook.Events()
+	if len(events) != 2 {
+		t.Fatalf("events = %+v", events)
+	}
+	if events[0].Type != agentkit.HookBeforeSkill || events[1].Type != agentkit.HookAfterSkill {
+		t.Fatalf("event types = %+v", events)
+	}
+	if events[0].Name != "question.retrieve" || events[1].Name != "question.retrieve" {
+		t.Fatalf("event names = %+v", events)
+	}
+	if events[1].OutputSummary != "candidate_pool=1" {
+		t.Fatalf("output summary = %q", events[1].OutputSummary)
 	}
 }
 

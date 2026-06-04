@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
+	"interview-agent/internal/agentkit"
 	"interview-agent/internal/domain"
 	"interview-agent/internal/graph"
 )
@@ -15,7 +17,42 @@ import (
 // The report node deliberately avoids LLM calls: by the time the graph reaches
 // report, evaluations and working memory already contain the decision signals.
 func NewReportNode() graph.NodeFunc {
-	return func(ctx context.Context, sess *domain.Session) error {
+	return NewReportNodeWithHook(agentkit.NoopHook{})
+}
+
+func NewReportNodeWithHook(hook agentkit.Hook) graph.NodeFunc {
+	if hook == nil {
+		hook = agentkit.NoopHook{}
+	}
+	return func(ctx context.Context, sess *domain.Session) (err error) {
+		start := time.Now()
+		_ = hook.HandleHook(ctx, agentkit.HookEvent{
+			Type:         agentkit.HookBeforeSkill,
+			SessionID:    sess.ID,
+			Name:         "report.generate",
+			InputSummary: "session rounds and working memory",
+			Permission:   agentkit.PermissionWriteReport,
+		})
+		defer func() {
+			summary := "report=missing"
+			if sess.Report != nil {
+				summary = fmt.Sprintf("overall_score=%d drill_plan=%d", sess.Report.OverallScore, len(sess.Report.DrillPlan))
+			}
+			ev := agentkit.HookEvent{
+				Type:          agentkit.HookAfterSkill,
+				SessionID:     sess.ID,
+				Name:          "report.generate",
+				InputSummary:  "session rounds and working memory",
+				OutputSummary: summary,
+				Latency:       time.Since(start),
+				Permission:    agentkit.PermissionWriteReport,
+			}
+			if err != nil {
+				ev.Error = err.Error()
+			}
+			_ = hook.HandleHook(ctx, ev)
+		}()
+
 		if err := ctx.Err(); err != nil {
 			return err
 		}
