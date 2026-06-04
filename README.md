@@ -291,6 +291,14 @@ mock 报告评估：
 go run ./cmd/eval -suite testdata/eval -mode mock -out tmp/eval/mock
 ```
 
+Agent 输出验证：
+
+```powershell
+go run ./cmd/agent-verify -session tmp/session.json
+```
+
+`agent-verify` 会检查 session 中的 report 完整性、retrieval trace 和可选 tool hook 事件。存在验证失败时返回非 0，适合作为后续 CI gate 的基础。
+
 生成的 `tmp/eval/*` 是临时评估输出，可在验证后删除。
 
 ## 目录说明
@@ -302,6 +310,7 @@ go run ./cmd/eval -suite testdata/eval -mode mock -out tmp/eval/mock
 | `cmd/rag-eval` | RAG 离线评估 |
 | `cmd/questionbank-lint` | 题库质量检查 |
 | `cmd/eval` | mock/real 报告评估 |
+| `cmd/agent-verify` | Agent 输出验证门禁 |
 | `internal/domain` | 领域模型和 Session 聚合根 |
 | `internal/graph` | 通用 Graph runner |
 | `internal/graphs` | 面试 Graph 装配 |
