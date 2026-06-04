@@ -1,0 +1,69 @@
+{
+  "id": "agent-verify-pass",
+  "rounds": [
+    {
+      "round_id": "r1",
+      "question": {
+        "id": "go-001",
+        "content": "讲一下 Go 的 GMP 调度模型。",
+        "tags": ["go", "concurrency"],
+        "difficulty": 3,
+        "source": "rag-go-001",
+        "skill_category": "go",
+        "expected_points": ["G/M/P 定义", "本地队列", "work stealing"]
+      },
+      "answer": "G 是 goroutine，M 是线程，P 负责调度上下文和本地队列。任务不均衡时会通过 work stealing 做负载均衡。",
+      "evaluation": {
+        "question_id": "go-001",
+        "score": 82,
+        "strengths": ["覆盖 G/M/P 和 work stealing"],
+        "weaknesses": ["项目排障案例不足"],
+        "suggestion": "补充线上 goroutine 堆积或调度延迟的排查案例"
+      }
+    }
+  ],
+  "retrieval_trace": {
+    "query": "go concurrency",
+    "final": [
+      {
+        "id": "go-001",
+        "rank": 1,
+        "score": 0.92,
+        "stage": "rerank",
+        "reason": "matches go concurrency"
+      }
+    ]
+  },
+  "report": {
+    "session_id": "agent-verify-pass",
+    "overall_score": 82,
+    "skill_breakdown": {
+      "go": 82
+    },
+    "transcript_analysis": {
+      "rounds_analyzed": 1,
+      "average_answer_chars": 74,
+      "dimensions": [
+        {
+          "name": "技术相关性",
+          "score": 82,
+          "evidence": ["回答覆盖 G/M/P 和 work stealing"],
+          "advice": "继续补充项目级排障证据"
+        }
+      ],
+      "patterns": ["回答结构清晰"]
+    },
+    "drill_plan": [
+      {
+        "practice_order": 1,
+        "skill": "go",
+        "reason": "补充并发排障案例",
+        "target_score": 90,
+        "recommended_question_ids": ["go-001"]
+      }
+    ],
+    "highlights": ["Go 并发基础较稳"],
+    "improvements": ["补充线上排障指标和案例"],
+    "next_steps": ["复盘 Go 调度与 goroutine 堆积问题"]
+  }
+}

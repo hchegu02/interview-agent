@@ -48,5 +48,8 @@ jobs:
       - name: Mock eval
         run: go run ./cmd/eval -suite testdata/eval -mode mock -out tmp/eval/mock
 
+      - name: Agent verify
+        run: go run ./cmd/agent-verify -session testdata/agent_verify/pass_session.json
+
       - name: Whitespace check
         run: git diff --check
