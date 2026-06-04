@@ -142,6 +142,17 @@ Redis snapshot 写入失败不会中断主流程，会记录到 `WorkingMemory.D
 5. 人工 review 后调用 commit，写入题库 store。
 6. real embedding 模式下写入 embedding 字段，供 pgvector 检索。
 
+### Agent Tooling 设计
+
+项目保留现有 Interview Graph 作为执行编排层，并新增轻量 Agent Tooling 抽象：
+
+- Skill Registry：描述 JD 分析、简历解析、题库检索、答案评估和报告生成等可复用能力。
+- Hooks：在关键节点执行前后记录输入摘要、输出摘要、耗时和错误，用于审计、观测和验证。
+- Tool Registry / MCP Client：统一工具调用边界，处理权限、超时、结构化错误和调用审计。
+- Verification Loop：检查结构化输出、检索 trace、工具调用和报告完整性，配合 RAG eval、questionbank lint 和 mock eval 防止质量退化。
+
+这不是通用 Coding Agent 平台，也不实现完整 OpenClaw Gateway 或容器 Sandbox；它是围绕模拟面试业务收口的 Agent 工程能力层。
+
 ### 代码阅读路线
 
 如果你只是想理解项目，不建议从前端或某个节点文件随机看起。按下面顺序读，能最快建立完整心智模型：
