@@ -10,7 +10,7 @@ func (ReportCompletenessVerifier) VerifyReport(sess *domain.Session) []Failure {
 	}
 	rep := sess.Report
 	failures := []Failure{}
-	if len(rep.SkillBreakdown) == 0 {
+	if len(sess.Rounds) > 0 && len(rep.SkillBreakdown) == 0 {
 		failures = append(failures, Failure{Code: "report_skill_breakdown_missing", Message: "report skill breakdown is missing", Target: "report.skill_breakdown"})
 	}
 	if rep.TranscriptAnalysis == nil || len(rep.TranscriptAnalysis.Dimensions) == 0 {

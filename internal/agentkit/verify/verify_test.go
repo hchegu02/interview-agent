@@ -32,6 +32,26 @@ func TestReportCompletenessVerifier(t *testing.T) {
 	}
 }
 
+func TestReportCompletenessVerifierAllowsEmptySkillBreakdownWithoutRounds(t *testing.T) {
+	v := ReportCompletenessVerifier{}
+	sess := &domain.Session{
+		ID: "s1",
+		Report: &domain.Report{
+			SessionID: "s1",
+			TranscriptAnalysis: &domain.TranscriptAnalysis{
+				Dimensions: []domain.TranscriptDimension{{Name: "样本量", Score: 0}},
+			},
+			DrillPlan:    []domain.DrillPlanItem{{Skill: "综合表达", Reason: "no rounds"}},
+			Improvements: []string{"先完成一轮有效答题"},
+			NextSteps:    []string{"继续模拟训练"},
+		},
+	}
+	failures := v.VerifyReport(sess)
+	if len(failures) != 0 {
+		t.Fatalf("empty-round report failures = %+v", failures)
+	}
+}
+
 func TestRetrievalTraceVerifier(t *testing.T) {
 	v := RetrievalTraceVerifier{}
 	if failures := v.VerifyRetrieval(&domain.Session{ID: "s1"}); len(failures) == 0 {

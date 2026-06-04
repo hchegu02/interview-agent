@@ -112,12 +112,18 @@ func NewRetrieveRAGNode(
 			Permission:   agentkit.PermissionReadOnly,
 		})
 		defer func() {
+			outputSummary := fmt.Sprintf("candidate_pool=%d", len(sess.CandidatePool))
+			if sess.WorkingMemory != nil {
+				if reason := strings.TrimSpace(sess.WorkingMemory.DegradedReasons["rag"]); reason != "" {
+					outputSummary += " degraded=rag:" + reason
+				}
+			}
 			ev := agentkit.HookEvent{
 				Type:          agentkit.HookAfterSkill,
 				SessionID:     sess.ID,
 				Name:          "question.retrieve",
 				InputSummary:  "job profile, gap report and question bank filters",
-				OutputSummary: fmt.Sprintf("candidate_pool=%d", len(sess.CandidatePool)),
+				OutputSummary: outputSummary,
 				Latency:       time.Since(start),
 				Permission:    agentkit.PermissionReadOnly,
 			}

@@ -525,6 +525,25 @@ func TestRetrieveRAG_EmitsSkillHookEvents(t *testing.T) {
 	}
 }
 
+func TestRetrieveRAG_HookRecordsDegradedFallback(t *testing.T) {
+	embedder := &stubEmbedder{dim: 1024, err: errors.New("embed boom")}
+	r := newFakeRetriever(nil, nil)
+	hook := agentkit.NewRecorderHook()
+	node := NewRetrieveRAGNode(embedder, r, RetrieveRAGOptions{TopK: 10, Hook: hook})
+
+	sess := buildRAGSession([]string{"go"}, []string{"go"})
+	if err := node(context.Background(), sess); err != nil {
+		t.Fatalf("node failed: %v", err)
+	}
+	events := hook.Events()
+	if len(events) != 2 {
+		t.Fatalf("events = %+v", events)
+	}
+	if !strings.Contains(events[1].OutputSummary, "degraded=rag:embed failed") {
+		t.Fatalf("output summary should record degraded fallback, got %q", events[1].OutputSummary)
+	}
+}
+
 func TestRetrieveRAG_PassesQuestionBankFilterToRetriever(t *testing.T) {
 	embedder := &stubEmbedder{dim: 1024}
 	r := newFakeRetriever([]string{"redis-001"}, nil)

@@ -149,7 +149,7 @@ Redis snapshot 写入失败不会中断主流程，会记录到 `WorkingMemory.D
 - Skill Registry：描述 JD 分析、简历解析、题库检索、答案评估和报告生成等可复用能力。
 - Hooks：在关键节点执行前后记录输入摘要、输出摘要、耗时和错误，用于审计、观测和验证。
 - Tool Registry / MCP Client：统一工具调用边界，处理权限、超时、结构化错误和调用审计。
-- Verification Loop：检查结构化输出、检索 trace、工具调用和报告完整性，配合 RAG eval、questionbank lint 和 mock eval 防止质量退化。
+- Verification Loop：提供结构化输出、检索 trace、工具调用和报告完整性的 verifier 原语；后续可接入 RAG eval、questionbank lint 和 mock eval 形成质量门禁。
 
 这不是通用 Coding Agent 平台，也不实现完整 OpenClaw Gateway 或容器 Sandbox；它是围绕模拟面试业务收口的 Agent 工程能力层。
 
