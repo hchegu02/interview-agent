@@ -88,6 +88,48 @@ query embedding
 
 检索失败不会直接中断面试。系统会回退到 fallback 题，并在 `WorkingMemory.DegradedReasons["rag"]` 和 hook event 中记录降级原因。
 
+### HTTP rerank 服务约定
+
+默认 `rerank.mode=lexical`，不依赖外部服务。启用 HTTP reranker 时，先启动你自己的本地 rerank 服务，再配置：
+
+```powershell
+$env:INTERVIEW_RERANK_MODE="http"
+$env:INTERVIEW_RERANK_ENDPOINT="http://127.0.0.1:9000/rerank"
+```
+
+请求格式：
+
+```json
+{
+  "query": "Redis AOF rewrite",
+  "candidates": [
+    {
+      "id": "redis-001",
+      "content": "Redis AOF rewrite 期间新写入怎么处理？",
+      "tags": ["redis_persistence"],
+      "category": "redis",
+      "difficulty": 3,
+      "expected_points": ["AOF rewrite"]
+    }
+  ]
+}
+```
+
+响应格式：
+
+```json
+{
+  "scores": [
+    {
+      "id": "redis-001",
+      "score": 0.92
+    }
+  ]
+}
+```
+
+服务必须为每个 candidate id 返回一个 score。HTTP 非 2xx、超时、响应缺少候选分数或 JSON 格式错误都会让 reranker 返回错误，现有 RAG pipeline 会记录 rerank fallback 并回退到 RRF 结果。
+
 ## Agent Tooling
 
 项目保留 Interview Graph 作为业务执行主线，并增加轻量 Agent Tooling 层：
