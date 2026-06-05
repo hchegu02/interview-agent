@@ -1,10 +1,10 @@
-## 为什么
+## Why
 
 当前 README 已经覆盖项目能力、启动方式和验证命令，但缺少一份稳定的 Software Design Document。前端页面流、后端 API、Session 状态、Agent Graph、RAG、SSE、降级和验证体系散落在 README、历史变更文档和代码中，不利于面试讲解、后续维护和工程交接。
 
 新增前端和后端两份 SDD，把当前实现按职责边界收敛成正式设计文档，明确页面状态、接口协作、后端模块、关键数据流和非目标。
 
-## 变更内容
+## What Changes
 
 - 新增前端软件设计文档 `docs/SDD-Frontend.md`。
 - 新增后端软件设计文档 `docs/SDD-Backend.md`。

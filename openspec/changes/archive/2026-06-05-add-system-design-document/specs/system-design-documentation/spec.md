@@ -2,7 +2,7 @@
 
 ### Requirement: 维护当前前端系统设计文档
 
-项目必须维护一份前端 Software Design Document，用于描述当前已经实现的 Web 工作台架构，并避免声称尚未实现的能力。
+项目 MUST 维护一份前端 Software Design Document，用于描述当前已经实现的 Web 工作台架构，并避免声称尚未实现的能力。
 
 #### Scenario: 读者查看当前前端系统设计
 
@@ -18,7 +18,7 @@
 
 ### Requirement: 维护当前后端系统设计文档
 
-项目必须维护一份后端 Software Design Document，用于描述当前已经实现的 Go 服务端架构，并避免声称尚未实现的能力。
+项目 MUST 维护一份后端 Software Design Document，用于描述当前已经实现的 Go 服务端架构，并避免声称尚未实现的能力。
 
 #### Scenario: 读者查看当前后端系统设计
 
