@@ -65,6 +65,8 @@ temp/
 /docs/*
 !/docs/SDD-Frontend.md
 !/docs/SDD-Backend.md
+!/docs/ai/
+!/docs/ai/*.md
 
 # Demo CLI artifacts
 tmp/demos/
