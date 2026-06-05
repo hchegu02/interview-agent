@@ -16,6 +16,7 @@ type interviewResponse struct {
 	JobProfile       *domain.JobProfile       `json:"job_profile,omitempty"`
 	CandidateProfile *domain.CandidateProfile `json:"candidate_profile,omitempty"`
 	ProfileAnalysis  *domain.ProfileAnalysis  `json:"profile_analysis,omitempty"`
+	RetrievalTrace   *domain.RetrievalTrace   `json:"retrieval_trace,omitempty"`
 	Question         *interviewQuestion       `json:"question,omitempty"`
 	Rounds           []interviewRound         `json:"rounds,omitempty"`
 	Report           *domain.Report           `json:"report,omitempty"`
@@ -74,12 +75,62 @@ func buildInterviewResponse(sess *domain.Session) interviewResponse {
 		JobProfile:       cloneJobProfile(sess.JobProfile),
 		CandidateProfile: cloneCandidateProfile(sess.CandProfile),
 		ProfileAnalysis:  cloneProfileAnalysis(sess.ProfileAnalysis),
+		RetrievalTrace:   cloneRetrievalTrace(sess.RetrievalTrace),
 		Question:         buildInterviewQuestion(currentQuestion(sess), false),
 		Rounds:           buildInterviewRounds(sess, mode),
 		Report:           cloneReport(sess.Report),
 		CreatedAt:        sess.CreatedAt,
 		UpdatedAt:        sess.UpdatedAt,
 	}
+}
+
+func cloneRetrievalTrace(trace *domain.RetrievalTrace) *domain.RetrievalTrace {
+	if trace == nil {
+		return nil
+	}
+	out := &domain.RetrievalTrace{
+		Query:           trace.Query,
+		FallbackReasons: append([]string(nil), trace.FallbackReasons...),
+		Final:           cloneRetrievalResultTrace(trace.Final),
+	}
+	if len(trace.Stages) > 0 {
+		out.Stages = make([]domain.RetrievalStageTrace, 0, len(trace.Stages))
+		for _, stage := range trace.Stages {
+			out.Stages = append(out.Stages, domain.RetrievalStageTrace{
+				Stage:      stage.Stage,
+				Count:      stage.Count,
+				DurationMS: stage.DurationMS,
+				Items:      cloneRetrievalResultTrace(stage.Items),
+				Error:      stage.Error,
+			})
+		}
+	}
+	return out
+}
+
+func cloneRetrievalResultTrace(items []domain.RetrievalResultTrace) []domain.RetrievalResultTrace {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]domain.RetrievalResultTrace, 0, len(items))
+	for _, item := range items {
+		sources := map[string]float64(nil)
+		if item.Sources != nil {
+			sources = make(map[string]float64, len(item.Sources))
+			for key, value := range item.Sources {
+				sources[key] = value
+			}
+		}
+		out = append(out, domain.RetrievalResultTrace{
+			ID:      item.ID,
+			Rank:    item.Rank,
+			Score:   item.Score,
+			Stage:   item.Stage,
+			Reason:  item.Reason,
+			Sources: sources,
+		})
+	}
+	return out
 }
 
 func currentQuestion(sess *domain.Session) *domain.Question {

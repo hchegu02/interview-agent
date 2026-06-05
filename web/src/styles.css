@@ -508,6 +508,7 @@ h3 {
 .control-panel,
 .profile-analysis,
 .transcript-analysis,
+.retrieval-trace,
 .drill-plan,
 .report-summary section,
 .round-review,
@@ -983,6 +984,7 @@ h3 {
 }
 
 .transcript-analysis,
+.retrieval-trace,
 .drill-plan,
 .round-review {
   margin-bottom: 18px;
@@ -1012,6 +1014,71 @@ h3 {
 .pattern-list span {
   color: #92400e;
   background: #fef3c7;
+}
+
+.trace-fallbacks,
+.trace-stage-grid,
+.trace-final {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.trace-fallbacks {
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.trace-fallbacks span {
+  padding: 5px 8px;
+  color: #7c2d12;
+  background: #ffedd5;
+  border: 1px solid #fed7aa;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.trace-stage-grid {
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.trace-stage,
+.trace-final article {
+  padding: 12px;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.trace-stage strong,
+.trace-stage span,
+.trace-stage em,
+.trace-final strong,
+.trace-final span,
+.trace-final p {
+  display: block;
+}
+
+.trace-stage span,
+.trace-stage em,
+.trace-final span,
+.trace-final p {
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.trace-stage em {
+  margin-top: 6px;
+  color: var(--red);
+  font-style: normal;
+  font-weight: 800;
+}
+
+.trace-final article > div {
+  display: flex;
+  gap: 10px;
+  justify-content: space-between;
 }
 
 .drill-card {

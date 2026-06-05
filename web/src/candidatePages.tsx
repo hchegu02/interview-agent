@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { apiClient } from "./apiClient";
 import { analysisSummary, draftScopeSummary, normalizeQuestionBankFilter, normalizeResumeSections } from "./draftStore";
 import { clamp, formatYearsGap, modeLabel, shouldShowCurrent } from "./interviewView";
-import { drillPlanSummary } from "./reportView";
+import { drillPlanSummary, retrievalTraceSummary } from "./reportView";
 import { routes, type Route } from "./routes";
 import { EmptyPage, PageHeader, Select } from "./sharedView";
 import type {
@@ -12,6 +12,7 @@ import type {
   InterviewQuestion,
   InterviewRound,
   ProfileAnalysis,
+  RetrievalTrace,
   Session,
   TranscriptAnalysis,
   QuestionFacets,
@@ -213,6 +214,7 @@ export function ReportPage({ session, startDrill, jumpQuestion }: {
       </div>
       <ProfileAnalysisPanel analysis={session.profile_analysis} />
       <TranscriptPanel analysis={report.transcript_analysis} />
+      <RetrievalTracePanel trace={session.retrieval_trace} />
       <DrillPlanPanel plan={report.drill_plan || []} startDrill={startDrill} jumpQuestion={jumpQuestion} />
       <div className="report-summary">
         <ListSection title="亮点" items={report.highlights} />
@@ -306,9 +308,64 @@ function TranscriptPanel({ analysis }: { analysis?: TranscriptAnalysis }) {
   return <section className="transcript-analysis"><div className="analysis-head"><div><p className="eyebrow">回答诊断</p><h2>{analysis.rounds_analyzed} 轮有效答题 · 平均 {analysis.average_answer_chars} 字</h2></div></div><div className="dimension-grid">{analysis.dimensions.map((d) => <article className="dimension-card" key={d.name}><div className="dimension-head"><strong>{d.name}</strong><span>{d.score}</span></div><div className="meter"><i style={{ width: `${clamp(d.score, 0, 100)}%` }} /></div>{d.evidence?.map((item) => <p key={item}>{item}</p>)}{d.advice && <em>{d.advice}</em>}</article>)}</div>{!!analysis.patterns?.length && <div className="pattern-list">{analysis.patterns.map((p) => <span key={p}>{p}</span>)}</div>}</section>;
 }
 
+function RetrievalTracePanel({ trace }: { trace?: RetrievalTrace }) {
+  if (!trace) return null;
+  return (
+    <section className="retrieval-trace">
+      <div className="analysis-head">
+        <div>
+          <p className="eyebrow">检索链路</p>
+          <h2>{retrievalTraceSummary(trace)}</h2>
+          <p>{trace.query || "未记录查询词"}</p>
+        </div>
+      </div>
+      {!!trace.fallback_reasons?.length && (
+        <div className="trace-fallbacks">
+          {trace.fallback_reasons.map((reason) => <span key={reason}>{reason}</span>)}
+        </div>
+      )}
+      {!!trace.stages?.length && (
+        <div className="trace-stage-grid">
+          {trace.stages.map((stage) => (
+            <article className="trace-stage" key={stage.stage}>
+              <strong>{stage.stage}</strong>
+              <span>{stage.count} 条 · {formatTraceDuration(stage.duration_ms)}</span>
+              {stage.error && <em>{stage.error}</em>}
+            </article>
+          ))}
+        </div>
+      )}
+      {!!trace.final?.length && (
+        <div className="trace-final">
+          {trace.final.slice(0, 5).map((item) => (
+            <article key={`${item.rank}-${item.id}`}>
+              <div>
+                <strong>#{item.rank} {item.id}</strong>
+                <span>{item.stage || "final"} · {formatTraceScore(item.score)}</span>
+              </div>
+              {item.reason && <p>{item.reason}</p>}
+              {!!item.sources && <p>{Object.entries(item.sources).map(([name, rank]) => `${name}:${rank}`).join(" / ")}</p>}
+            </article>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function DrillPlanPanel({ plan, startDrill, jumpQuestion }: { plan: DrillPlanItem[]; startDrill: (plan: DrillPlanItem[]) => void; jumpQuestion: (id: string) => void }) {
   if (!plan.length) return null;
   return <section className="drill-plan"><div className="analysis-head"><div><p className="eyebrow">训练计划</p><h2>下一轮按弱项顺序练，不再泛刷题。</h2><p>{drillPlanSummary(plan)}</p></div><button className="secondary drill-start" onClick={() => startDrill(plan)}>按此计划训练</button></div><div className="drill-list">{plan.map((item) => <article className="drill-card" key={`${item.practice_order}-${item.skill}`}><div className="drill-order">{item.practice_order}</div><div><div className="drill-head"><strong>{item.skill || "综合表达"}</strong><span>目标 {item.target_score || 75} 分</span></div><p>{item.reason}</p><div className="recommended-question-ids">{item.recommended_question_ids?.map((id) => <button key={id} onClick={() => jumpQuestion(id)}>题库题 {id}</button>)}</div><ul>{item.recommended_questions?.map((q) => <li key={q}>{q}</li>)}</ul></div></article>)}</div></section>;
+}
+
+function formatTraceDuration(ms: number): string {
+  if (!Number.isFinite(ms) || ms < 0) return "耗时未知";
+  return `${Math.round(ms)}ms`;
+}
+
+function formatTraceScore(score: number): string {
+  if (!Number.isFinite(score)) return "score -";
+  return `score ${score.toFixed(3)}`;
 }
 
 function ListSection({ title, items }: { title: string; items?: string[] }) {

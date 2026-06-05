@@ -96,6 +96,7 @@ export type Session = {
   job_profile?: JobProfile;
   candidate_profile?: CandidateProfile;
   profile_analysis?: ProfileAnalysis;
+  retrieval_trace?: RetrievalTrace;
   question_bank_filter?: QuestionBankFilter;
   question?: InterviewQuestion;
   rounds?: InterviewRound[];
@@ -152,6 +153,30 @@ export type Report = {
   highlights: string[];
   improvements: string[];
   next_steps: string[];
+};
+
+export type RetrievalTrace = {
+  query: string;
+  stages?: RetrievalStageTrace[];
+  final?: RetrievalResultTrace[];
+  fallback_reasons?: string[];
+};
+
+export type RetrievalStageTrace = {
+  stage: string;
+  count: number;
+  duration_ms: number;
+  items?: RetrievalResultTrace[];
+  error?: string;
+};
+
+export type RetrievalResultTrace = {
+  id: string;
+  rank: number;
+  score: number;
+  stage?: string;
+  reason?: string;
+  sources?: Record<string, number>;
 };
 
 export type TranscriptAnalysis = {

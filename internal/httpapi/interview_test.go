@@ -815,6 +815,48 @@ func TestInterviewResponse_ExamHidesFeedbackBeforeCompletion(t *testing.T) {
 	}
 }
 
+func TestInterviewResponse_IncludesRetrievalTraceCopy(t *testing.T) {
+	now := time.Now()
+	sess := &domain.Session{
+		ID:        "trace-response",
+		Mode:      "exam",
+		Status:    domain.StatusCompleted,
+		CreatedAt: now,
+		UpdatedAt: now,
+		RetrievalTrace: &domain.RetrievalTrace{
+			Query:           "redis aof",
+			FallbackReasons: []string{"rerank fallback"},
+			Stages: []domain.RetrievalStageTrace{{
+				Stage:      "rerank",
+				Count:      1,
+				DurationMS: 3.5,
+				Items: []domain.RetrievalResultTrace{{
+					ID:      "redis-001",
+					Rank:    1,
+					Score:   0.92,
+					Stage:   "rerank",
+					Reason:  "matched query",
+					Sources: map[string]float64{"rrf": 0.8},
+				}},
+			}},
+			Final: []domain.RetrievalResultTrace{{ID: "redis-001", Rank: 1, Score: 0.92}},
+		},
+	}
+
+	got := buildInterviewResponse(sess)
+	if got.RetrievalTrace == nil {
+		t.Fatal("retrieval trace should be included")
+	}
+	if got.RetrievalTrace.Query != "redis aof" || got.RetrievalTrace.Stages[0].Items[0].ID != "redis-001" {
+		t.Fatalf("retrieval trace = %+v", got.RetrievalTrace)
+	}
+
+	sess.RetrievalTrace.Stages[0].Items[0].Sources["rrf"] = 0.1
+	if got.RetrievalTrace.Stages[0].Items[0].Sources["rrf"] != 0.8 {
+		t.Fatalf("retrieval trace should be deep copied: %+v", got.RetrievalTrace.Stages[0].Items[0].Sources)
+	}
+}
+
 func TestInterviewAnswer_UserMismatch(t *testing.T) {
 	svc := NewInterviewService(fakeInterviewRunner{})
 	server := NewServerWithInterview(&config.Config{}, svc)
