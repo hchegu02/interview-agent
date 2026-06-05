@@ -306,12 +306,12 @@ npm --prefix web run build
 
 当前暂停依赖 `ErrSuspended + Session.CurrentNode`。这个设计简单，但只知道“停在哪个节点”，不知道“为什么停、等待什么输入、要给前端展示什么 payload”。
 
-建议新增：
+第一步已落地结构化断点字段：
 
 ```go
 type Suspension struct {
     Node      string         `json:"node"`
-    Reason    string         `json:"reason"`
+    Reason    string         `json:"reason,omitempty"`
     Awaiting  string         `json:"awaiting"` // answer | approval | tool_review
     Payload   map[string]any `json:"payload,omitempty"`
     CreatedAt time.Time      `json:"created_at"`
@@ -322,8 +322,14 @@ type Suspension struct {
 
 - 保留 `CurrentNode`，避免破坏老 Session。
 - 新逻辑同时写 `Session.Suspension`。
-- HTTP 响应和 SSE 可以展示 `Suspension.Payload`。
+- HTTP 响应已返回可选 `suspension`，前端类型已对齐；SSE 事件复用同一响应结构。
 - `Resume` 优先读取 `Suspension.Node`，没有则回退 `CurrentNode`。
+
+当前边界：
+
+- 默认暂停类型先使用 `answer`，人工确认、工具审批和题目确认后续按节点语义写入。
+- `Payload` 当前只做 HTTP 响应层 map 拷贝；如果后续放入嵌套结构，需要补深层 clone 或改成明确 schema。
+- `CurrentNode` 仍是兼容字段，不能立即删除，否则会破坏旧 Session 恢复。
 
 收益：
 

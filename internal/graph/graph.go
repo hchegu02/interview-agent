@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
 	"interview-agent/internal/domain"
 
@@ -165,17 +166,20 @@ func (r *Runnable) Invoke(ctx context.Context, sess *domain.Session) error {
 //   - 暂停节点未注册 → ErrNodeNotFound
 func (r *Runnable) Resume(ctx context.Context, sess *domain.Session) error {
 	sess.MigrateLegacyState()
-	if sess.CurrentNode == "" {
+	current := suspendedNode(sess)
+	if current == "" {
 		return fmt.Errorf("%w: resume requires sess.CurrentNode", ErrInvalidConfig)
 	}
-	if _, ok := r.g.nodes[sess.CurrentNode]; !ok {
-		return fmt.Errorf("%w: suspended node %q not in graph", ErrNodeNotFound, sess.CurrentNode)
+	if _, ok := r.g.nodes[current]; !ok {
+		return fmt.Errorf("%w: suspended node %q not in graph", ErrNodeNotFound, current)
 	}
 	// 从暂停节点的下游开始；当作"刚执行完该节点"的状态
-	next := r.nextFrontier(sess, []string{sess.CurrentNode})
+	next := r.nextFrontier(sess, []string{current})
 	if len(next) == 0 {
+		sess.Suspension = nil
 		return nil
 	}
+	sess.Suspension = nil
 	return r.run(ctx, sess, next)
 }
 
@@ -208,6 +212,7 @@ func (r *Runnable) run(ctx context.Context, sess *domain.Session, frontier []str
 		if err := r.executeBatch(ctx, sess, frontier); err != nil {
 			if errors.Is(err, ErrSuspended) {
 				// 暂停：节点已把自己名字写到 sess.CurrentNode，正常返回让调用方决定
+				ensureSuspension(sess, sess.CurrentNode)
 				return nil
 			}
 			return err
@@ -216,6 +221,28 @@ func (r *Runnable) run(ctx context.Context, sess *domain.Session, frontier []str
 		frontier = r.nextFrontier(sess, frontier)
 	}
 	return nil
+}
+
+func suspendedNode(sess *domain.Session) string {
+	if sess.Suspension != nil && sess.Suspension.Node != "" {
+		return sess.Suspension.Node
+	}
+	return sess.CurrentNode
+}
+
+func ensureSuspension(sess *domain.Session, node string) {
+	if sess.Suspension == nil {
+		sess.Suspension = &domain.Suspension{}
+	}
+	if sess.Suspension.Node == "" {
+		sess.Suspension.Node = node
+	}
+	if sess.Suspension.Awaiting == "" {
+		sess.Suspension.Awaiting = domain.SuspensionAwaitingAnswer
+	}
+	if sess.Suspension.CreatedAt.IsZero() {
+		sess.Suspension.CreatedAt = time.Now().UTC()
+	}
 }
 
 // executeBatch 把当前 frontier 用 errgroup 并发执行。

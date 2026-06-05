@@ -27,6 +27,15 @@ const (
 	StatusFailed    SessionStatus = "failed"    // 不可恢复错误
 )
 
+// SuspensionAwaiting 表示 Graph 暂停后正在等待哪类外部输入。
+type SuspensionAwaiting string
+
+const (
+	SuspensionAwaitingAnswer     SuspensionAwaiting = "answer"
+	SuspensionAwaitingApproval   SuspensionAwaiting = "approval"
+	SuspensionAwaitingToolReview SuspensionAwaiting = "tool_review"
+)
+
 // Validate 检查状态是否合法。
 func (s SessionStatus) Validate() error {
 	switch s {
@@ -35,6 +44,16 @@ func (s SessionStatus) Validate() error {
 	default:
 		return fmt.Errorf("invalid session status: %q", s)
 	}
+}
+
+// Suspension 是 Graph 暂停等待外部输入时的结构化断点信息。
+// CurrentNode 仍保留作兼容字段；新逻辑优先读写 Suspension。
+type Suspension struct {
+	Node      string                 `json:"node"`
+	Reason    string                 `json:"reason,omitempty"`
+	Awaiting  SuspensionAwaiting     `json:"awaiting"`
+	Payload   map[string]interface{} `json:"payload,omitempty"`
+	CreatedAt time.Time              `json:"created_at"`
 }
 
 // Session 是一次面试会话的聚合根。
@@ -51,6 +70,7 @@ type Session struct {
 	Mode        string        `json:"mode,omitempty"` // exam | practice，前端业务模式
 	Status      SessionStatus `json:"status"`         // session 当前状态，控制流程走向
 	CurrentNode string        `json:"current_node"`   // graph 节点名，断点恢复用
+	Suspension  *Suspension   `json:"suspension,omitempty"`
 
 	// JobProfile/CandProfile 是 setup 阶段的输入画像。
 	// 后续节点不要再直接解析原文；需要判断技能、年限、项目时应读这些结构化字段。

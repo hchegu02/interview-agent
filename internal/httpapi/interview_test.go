@@ -857,6 +857,37 @@ func TestInterviewResponse_IncludesRetrievalTraceCopy(t *testing.T) {
 	}
 }
 
+func TestInterviewResponse_IncludesSuspensionCopy(t *testing.T) {
+	now := time.Now()
+	sess := &domain.Session{
+		ID:        "suspension-response",
+		Mode:      "exam",
+		Status:    domain.StatusRunning,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Suspension: &domain.Suspension{
+			Node:      "pick_next",
+			Reason:    "waiting for answer",
+			Awaiting:  domain.SuspensionAwaitingAnswer,
+			Payload:   map[string]interface{}{"round_id": "r1"},
+			CreatedAt: now,
+		},
+	}
+
+	got := buildInterviewResponse(sess)
+	if got.Suspension == nil {
+		t.Fatal("suspension should be included")
+	}
+	if got.Suspension.Node != "pick_next" || got.Suspension.Awaiting != domain.SuspensionAwaitingAnswer {
+		t.Fatalf("suspension = %+v", got.Suspension)
+	}
+
+	sess.Suspension.Payload["round_id"] = "changed"
+	if got.Suspension.Payload["round_id"] != "r1" {
+		t.Fatalf("suspension payload should be copied: %+v", got.Suspension.Payload)
+	}
+}
+
 func TestInterviewAnswer_UserMismatch(t *testing.T) {
 	svc := NewInterviewService(fakeInterviewRunner{})
 	server := NewServerWithInterview(&config.Config{}, svc)

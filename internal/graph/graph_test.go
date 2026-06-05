@@ -482,6 +482,18 @@ func TestGraph_Suspend(t *testing.T) {
 	if sess.CurrentNode != "pick_next" {
 		t.Errorf("CurrentNode = %q, want pick_next", sess.CurrentNode)
 	}
+	if sess.Suspension == nil {
+		t.Fatal("Suspension should be set")
+	}
+	if sess.Suspension.Node != "pick_next" {
+		t.Errorf("Suspension.Node = %q, want pick_next", sess.Suspension.Node)
+	}
+	if sess.Suspension.Awaiting != domain.SuspensionAwaitingAnswer {
+		t.Errorf("Suspension.Awaiting = %q, want %q", sess.Suspension.Awaiting, domain.SuspensionAwaitingAnswer)
+	}
+	if sess.Suspension.CreatedAt.IsZero() {
+		t.Error("Suspension.CreatedAt should be set")
+	}
 	if len(trace) != 1 || trace[0] != "pick_next" {
 		t.Errorf("downstream should not run, got trace=%v", trace)
 	}
@@ -519,13 +531,52 @@ func TestGraph_Resume(t *testing.T) {
 	if err := rn.Invoke(context.Background(), sess); err != nil {
 		t.Fatal(err)
 	}
+	if sess.Suspension == nil {
+		t.Fatal("invoke should record suspension")
+	}
 	if err := rn.Resume(context.Background(), sess); err != nil {
 		t.Fatalf("resume failed: %v", err)
+	}
+	if sess.Suspension != nil {
+		t.Fatalf("resume should clear stale suspension: %+v", sess.Suspension)
 	}
 	if calls != 1 {
 		t.Errorf("pick_next should run once; got %d", calls)
 	}
 	want := []string{"pick_next", "evaluate", "report"}
+	if len(trace) != len(want) {
+		t.Fatalf("trace=%v, want %v", trace, want)
+	}
+	for i, n := range want {
+		if trace[i] != n {
+			t.Errorf("trace[%d]=%q, want %q", i, trace[i], n)
+		}
+	}
+}
+
+// TestGraph_Resume_LegacyCurrentNodeOnly 验证老 Session 只有 CurrentNode 时仍可恢复。
+func TestGraph_Resume_LegacyCurrentNodeOnly(t *testing.T) {
+	var trace []string
+	var mu sync.Mutex
+
+	g := New("legacy-resume").
+		AddNode("pick_next", recorder(&trace, &mu, "pick_next")).
+		AddNode("evaluate", recorder(&trace, &mu, "evaluate")).
+		AddNode("report", recorder(&trace, &mu, "report")).
+		Entry("pick_next").
+		AddEdge("pick_next", "evaluate").
+		AddEdge("evaluate", "report").
+		AddEdge("report", EndNode)
+
+	rn, err := g.Compile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := &domain.Session{CurrentNode: "pick_next"}
+	if err := rn.Resume(context.Background(), sess); err != nil {
+		t.Fatalf("resume failed: %v", err)
+	}
+	want := []string{"evaluate", "report"}
 	if len(trace) != len(want) {
 		t.Fatalf("trace=%v, want %v", trace, want)
 	}

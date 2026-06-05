@@ -17,6 +17,7 @@ type interviewResponse struct {
 	CandidateProfile *domain.CandidateProfile `json:"candidate_profile,omitempty"`
 	ProfileAnalysis  *domain.ProfileAnalysis  `json:"profile_analysis,omitempty"`
 	RetrievalTrace   *domain.RetrievalTrace   `json:"retrieval_trace,omitempty"`
+	Suspension       *domain.Suspension       `json:"suspension,omitempty"`
 	Question         *interviewQuestion       `json:"question,omitempty"`
 	Rounds           []interviewRound         `json:"rounds,omitempty"`
 	Report           *domain.Report           `json:"report,omitempty"`
@@ -76,11 +77,32 @@ func buildInterviewResponse(sess *domain.Session) interviewResponse {
 		CandidateProfile: cloneCandidateProfile(sess.CandProfile),
 		ProfileAnalysis:  cloneProfileAnalysis(sess.ProfileAnalysis),
 		RetrievalTrace:   cloneRetrievalTrace(sess.RetrievalTrace),
+		Suspension:       cloneSuspension(sess.Suspension),
 		Question:         buildInterviewQuestion(currentQuestion(sess), false),
 		Rounds:           buildInterviewRounds(sess, mode),
 		Report:           cloneReport(sess.Report),
 		CreatedAt:        sess.CreatedAt,
 		UpdatedAt:        sess.UpdatedAt,
+	}
+}
+
+func cloneSuspension(suspension *domain.Suspension) *domain.Suspension {
+	if suspension == nil {
+		return nil
+	}
+	payload := map[string]interface{}(nil)
+	if suspension.Payload != nil {
+		payload = make(map[string]interface{}, len(suspension.Payload))
+		for key, value := range suspension.Payload {
+			payload[key] = value
+		}
+	}
+	return &domain.Suspension{
+		Node:      suspension.Node,
+		Reason:    suspension.Reason,
+		Awaiting:  suspension.Awaiting,
+		Payload:   payload,
+		CreatedAt: suspension.CreatedAt,
 	}
 }
 

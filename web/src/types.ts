@@ -97,12 +97,21 @@ export type Session = {
   candidate_profile?: CandidateProfile;
   profile_analysis?: ProfileAnalysis;
   retrieval_trace?: RetrievalTrace;
+  suspension?: Suspension;
   question_bank_filter?: QuestionBankFilter;
   question?: InterviewQuestion;
   rounds?: InterviewRound[];
   report?: Report;
   created_at: string;
   updated_at: string;
+};
+
+export type Suspension = {
+  node: string;
+  reason?: string;
+  awaiting: "answer" | "approval" | "tool_review" | string;
+  payload?: Record<string, unknown>;
+  created_at: string;
 };
 
 export type ProgressStep = {
