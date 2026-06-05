@@ -32,6 +32,9 @@ func TestLoad_DefaultsMockMode(t *testing.T) {
 	if cfg.Server.MaxStreams != 100 {
 		t.Errorf("expected max streams default 100, got %d", cfg.Server.MaxStreams)
 	}
+	if cfg.Rerank.Mode != "lexical" {
+		t.Errorf("expected rerank mode lexical by default, got %s", cfg.Rerank.Mode)
+	}
 }
 
 func TestLoad_RealModeRequiresAPIKey(t *testing.T) {
@@ -121,6 +124,31 @@ func TestLoad_InvalidEmbeddingDimensionFails(t *testing.T) {
 	_, err := Load("")
 	if err == nil {
 		t.Fatal("expected invalid embedding dimension error")
+	}
+}
+
+func TestLoad_RerankEnvOverrides(t *testing.T) {
+	t.Setenv("INTERVIEW_RERANK_MODE", "http")
+	t.Setenv("INTERVIEW_RERANK_ENDPOINT", "http://127.0.0.1:9000/rerank")
+
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Rerank.Mode != "http" {
+		t.Fatalf("rerank mode = %q", cfg.Rerank.Mode)
+	}
+	if cfg.Rerank.Endpoint != "http://127.0.0.1:9000/rerank" {
+		t.Fatalf("rerank endpoint = %q", cfg.Rerank.Endpoint)
+	}
+}
+
+func TestValidate_HTTPRerankRequiresEndpoint(t *testing.T) {
+	cfg := defaults()
+	cfg.Rerank.Mode = "http"
+	cfg.Rerank.Endpoint = ""
+	if err := cfg.validate(); err == nil {
+		t.Fatal("expected http rerank without endpoint to fail")
 	}
 }
 

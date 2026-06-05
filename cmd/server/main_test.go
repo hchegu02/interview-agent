@@ -193,7 +193,11 @@ func TestBuildRetrievalPipelineUsesQuestionBankStoreForLocalStages(t *testing.T)
 		},
 	})
 
-	got, err := buildRetrievalPipeline(context.Background(), vector, store)
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	got, err := buildRetrievalPipeline(context.Background(), cfg, vector, store)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -215,6 +219,47 @@ func TestBuildRetrievalPipelineUsesQuestionBankStoreForLocalStages(t *testing.T)
 	}
 	if !foundBM25 {
 		t.Fatalf("trace stages = %+v, want BM25 candidates from question bank store", result.Trace.Stages)
+	}
+}
+
+func TestBuildRetrievalPipelineUsesHTTPRerankerWhenConfigured(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"scores":[{"id":"bm25","score":0.95},{"id":"vector","score":0.10}]}`))
+	}))
+	defer server.Close()
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.Rerank.Mode = "http"
+	cfg.Rerank.Endpoint = server.URL
+
+	vector := fixedServerRetriever{results: []retriever.Result{{ID: "vector", Content: "Go runtime", Score: 0.9}}}
+	store := questionbank.NewMemoryStore([]questionbank.Item{
+		{
+			ID:            "bm25",
+			Content:       "Redis AOF rewrite 期间新写入怎么处理？",
+			SkillCategory: "redis",
+			Difficulty:    3,
+			Status:        "active",
+		},
+	})
+
+	got, err := buildRetrievalPipeline(context.Background(), cfg, vector, store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	searcher := got.(interface {
+		Search(context.Context, retriever.Query) (retriever.PipelineResult, error)
+	})
+	result, err := searcher.Search(context.Background(), retriever.Query{Text: "Redis AOF rewrite", K: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Results) < 2 || result.Results[0].ID != "bm25" {
+		t.Fatalf("results = %+v, want http reranker to promote bm25", result.Results)
 	}
 }
 

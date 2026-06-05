@@ -18,6 +18,7 @@ type Config struct {
 	Redis     RedisConfig     `yaml:"redis"`
 	LLM       LLMConfig       `yaml:"llm"`
 	Embedding EmbeddingConfig `yaml:"embedding"`
+	Rerank    RerankConfig    `yaml:"rerank"`
 	RateLimit RateLimitConfig `yaml:"rate_limit"`
 
 	// 敏感字段：yaml:"-" 防止序列化时泄漏；Load 会按规则单独注入。
@@ -76,6 +77,12 @@ type EmbeddingConfig struct {
 	Model     string        `yaml:"model"`
 	Dimension int           `yaml:"dimension"`
 	Timeout   time.Duration `yaml:"timeout"`
+}
+
+type RerankConfig struct {
+	Mode     string        `yaml:"mode"` // lexical | http
+	Endpoint string        `yaml:"endpoint"`
+	Timeout  time.Duration `yaml:"timeout"`
 }
 
 type RateLimitConfig struct {
@@ -140,6 +147,12 @@ func Load(path string) (*Config, error) {
 			return nil, fmt.Errorf("invalid INTERVIEW_EMBEDDING_DIMENSION %q: %w", v, err)
 		}
 		cfg.Embedding.Dimension = n
+	}
+	if v := os.Getenv("INTERVIEW_RERANK_MODE"); v != "" {
+		cfg.Rerank.Mode = v
+	}
+	if v := os.Getenv("INTERVIEW_RERANK_ENDPOINT"); v != "" {
+		cfg.Rerank.Endpoint = v
 	}
 	if v := os.Getenv("INTERVIEW_RATELIMIT_BACKEND"); v != "" {
 		cfg.RateLimit.Backend = v
@@ -208,6 +221,10 @@ func defaults() *Config {
 			Dimension: 1024,
 			Timeout:   10 * time.Second,
 		},
+		Rerank: RerankConfig{
+			Mode:    "lexical",
+			Timeout: 5 * time.Second,
+		},
 		RateLimit: RateLimitConfig{
 			Backend:      "local",
 			PerUserQPS:   0.5,
@@ -241,6 +258,15 @@ func (c *Config) validate() error {
 	}
 	if c.Embedding.Dimension <= 0 {
 		return fmt.Errorf("invalid embedding.dimension %d (must be positive)", c.Embedding.Dimension)
+	}
+	if c.Rerank.Mode != "lexical" && c.Rerank.Mode != "http" {
+		return fmt.Errorf("invalid rerank.mode %q (must be lexical|http)", c.Rerank.Mode)
+	}
+	if c.Rerank.Mode == "http" && c.Rerank.Endpoint == "" {
+		return fmt.Errorf("rerank.mode is http but rerank.endpoint is empty")
+	}
+	if c.Rerank.Timeout <= 0 {
+		return fmt.Errorf("invalid rerank.timeout %v (must be > 0)", c.Rerank.Timeout)
 	}
 	if c.RateLimit.Backend != "local" && c.RateLimit.Backend != "redis_lua" {
 		return fmt.Errorf("invalid rate_limit.backend %q", c.RateLimit.Backend)

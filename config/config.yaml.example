@@ -36,6 +36,11 @@ embedding:
   dimension: 1024           # 必须与 migrations/001_init.up.sql question_bank.embedding vector(1024) 一致
   timeout: 10s
 
+rerank:
+  mode: lexical             # lexical | http
+  endpoint: ""              # http 模式下填写本地 rerank 服务地址，例如 http://127.0.0.1:9000/rerank
+  timeout: 5s
+
 rate_limit:
   backend: local            # local | redis_lua（多实例部署用 redis_lua）
   per_user_qps: 0.5         # LLM 调用昂贵，单用户 2s 一次

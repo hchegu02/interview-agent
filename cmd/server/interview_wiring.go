@@ -141,15 +141,19 @@ func buildRetriever(ctx context.Context, cfg *config.Config, deps appDeps) (retr
 		return fallbackRetriever{}, func() {}, "fallback", nil
 	}
 	vector := retriever.NewPGVectorRetriever(deps.PGPool, nil)
-	pipeline, err := buildRetrievalPipeline(ctx, vector, questionbank.NewPGStore(deps.PGPool))
+	pipeline, err := buildRetrievalPipeline(ctx, cfg, vector, questionbank.NewPGStore(deps.PGPool))
 	if err != nil {
 		return nil, func() {}, "pgvector_pipeline", err
 	}
 	return pipeline, func() {}, "pgvector_pipeline", nil
 }
 
-func buildRetrievalPipeline(ctx context.Context, vector retriever.Retriever, store questionbank.Store) (retriever.Retriever, error) {
+func buildRetrievalPipeline(ctx context.Context, cfg *config.Config, vector retriever.Retriever, store questionbank.Store) (retriever.Retriever, error) {
 	docs, err := loadRetrieverDocs(ctx, store)
+	if err != nil {
+		return nil, err
+	}
+	reranker, err := buildReranker(cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -157,8 +161,19 @@ func buildRetrievalPipeline(ctx context.Context, vector retriever.Retriever, sto
 		Vector:   vector,
 		BM25:     retriever.NewBM25Retriever(docs),
 		Rule:     retriever.NewRuleRetriever(docs),
-		Reranker: retriever.NewLexicalReranker(),
+		Reranker: reranker,
 	}), nil
+}
+
+func buildReranker(cfg *config.Config) (retriever.Reranker, error) {
+	switch cfg.Rerank.Mode {
+	case "lexical":
+		return retriever.NewLexicalReranker(), nil
+	case "http":
+		return retriever.NewHTTPReranker(cfg.Rerank.Endpoint, cfg.Rerank.Timeout), nil
+	default:
+		return nil, fmt.Errorf("unsupported rerank mode %q", cfg.Rerank.Mode)
+	}
 }
 
 func loadRetrieverDocs(ctx context.Context, store questionbank.Store) ([]retriever.Result, error) {

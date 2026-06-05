@@ -10,7 +10,7 @@ Interview Agent 面向求职面试训练场景：用户输入岗位 JD 和简历
 
 - **Agent Graph 编排**：将 JD 解析、简历分析、匹配分析、RAG 召回、出题、评估、追问、记忆更新和报告生成拆成独立节点，支持暂停和恢复。
 - **个性化出题**：根据 JD 技能、简历项目、能力缺口和题库过滤条件构造检索 query，生成候选题池。
-- **多路 RAG 检索**：支持 pgvector、BM25、规则召回、RRF 融合和本地 rerank，并保留 retrieval trace。
+- **多路 RAG 检索**：支持 pgvector、BM25、规则召回、RRF 融合、lexical/http rerank，并保留 retrieval trace。
 - **多轮面试闭环**：支持主题题、追问、答案评分、critic、refine、reflection 和最终报告。
 - **会话与流式交互**：提供 REST API、SSE 事件流、历史会话查询和前端页面。
 - **存储与恢复**：本地默认内存模式；配置 PostgreSQL 后持久化 session 和题库；配置 Redis 后启用 Streams、snapshot 和 lease。
@@ -84,7 +84,7 @@ query embedding
 | 题库 | `seeds/question_bank.json` | PostgreSQL `question_bank` |
 | 向量召回 | mock embedding + seed retriever | PostgreSQL + pgvector |
 | BM25 / rule | seed 题库构建 | 启动时从 PG active 题库构建 |
-| rerank | 本地 lexical reranker | 本地 lexical reranker |
+| rerank | 本地 lexical reranker | `rerank.mode=lexical|http`，http 模式调用本地 rerank 服务 |
 
 检索失败不会直接中断面试。系统会回退到 fallback 题，并在 `WorkingMemory.DegradedReasons["rag"]` 和 hook event 中记录降级原因。
 
@@ -235,6 +235,8 @@ config/config.yaml.example
 | `INTERVIEW_LLM_BASE_URL` | OpenAI-compatible LLM base URL |
 | `INTERVIEW_EMBEDDING_API_KEY` | real embedding 模式使用的 API key |
 | `INTERVIEW_EMBEDDING_BASE_URL` | OpenAI-compatible embedding base URL |
+| `INTERVIEW_RERANK_MODE` | rerank 模式：`lexical` 或 `http` |
+| `INTERVIEW_RERANK_ENDPOINT` | HTTP rerank 服务地址 |
 
 不要把 `.env`、token、API key 或私有配置提交到 Git。
 
@@ -330,7 +332,7 @@ go run ./cmd/agent-verify -session tmp/session.json
 
 - MCP 当前是 client adapter 抽象和测试替身，没有接入真实生产 MCP Server。
 - Verification 当前是 verifier 原语，尚未接入独立 CI gate。
-- rerank 当前是本地 lexical reranker，不是本地深度学习 rerank 模型。
+- rerank 默认是本地 lexical reranker；HTTP 模式只负责调用本地 rerank 服务，模型服务本身需单独部署。
 - PG 模式下 BM25/rule 本地阶段在服务启动时从 active 题库加载，题库运行时变更后的热刷新仍需后续完善。
 - OTel tracing 后端和真实业务规模压测报告仍未完成。
 
