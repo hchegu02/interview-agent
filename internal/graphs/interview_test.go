@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"interview-agent/internal/domain"
+	"interview-agent/internal/graph"
 	"interview-agent/internal/llm"
 	"interview-agent/internal/retriever"
 )
@@ -67,11 +68,13 @@ func TestBuildInterviewGraph_InvokeRunsSetupAndSuspendsAtPickNext(t *testing.T) 
 		`{"next_question_id":"q1","reasoning":"先验证 Go 基础"}`,
 	}}
 	ret := &stubRetriever{}
+	rec := graph.NewMemoryCheckpointRecorder(50)
 
 	r, err := BuildInterviewGraph(Deps{
-		Model:     model,
-		Embedder:  stubEmbedder{},
-		Retriever: ret,
+		Model:              model,
+		Embedder:           stubEmbedder{},
+		Retriever:          ret,
+		CheckpointRecorder: rec,
 	})
 	if err != nil {
 		t.Fatalf("build graph: %v", err)
@@ -118,5 +121,8 @@ func TestBuildInterviewGraph_InvokeRunsSetupAndSuspendsAtPickNext(t *testing.T) 
 	}
 	if ret.last.K == 0 {
 		t.Fatalf("retriever was not called: %+v", ret.last)
+	}
+	if len(rec.Snapshot()) == 0 {
+		t.Fatal("checkpoint recorder was not wired into interview graph")
 	}
 }

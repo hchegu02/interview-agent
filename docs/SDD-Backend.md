@@ -400,11 +400,13 @@ type GraphCheckpoint struct {
 当前实现：
 
 - 新增 `CheckpointRecorder`，通过 `Graph.WithCheckpointRecorder` 可选注入。
+- `internal/graphs.BuildInterviewGraph` 通过 `Deps.CheckpointRecorder` 透传 recorder，业务 Interview Graph 可按需启用。
 - 新增 `MemoryCheckpointRecorder`，使用 ring buffer 只保留最近 N 条。
 - `Runnable.run` 记录 `frontier_before`、`frontier_after`、`frontier_error` 和 `suspended`。
 - `Resume` 记录 `resume_from`，其中 `Node` 是恢复来源，`Frontier` 是下一轮 frontier。
 - 线性 frontier 记录 `node_before`、`node_after`、`node_error`。
 - 并发 frontier 只记录 batch 级 checkpoint，不伪造节点级快照。
+- 并发 frontier 中，runner 不在节点 goroutine 内写 `CurrentNode`；节点返回 suspend 时由主协程统一写入暂停节点。
 
 当前边界：
 
@@ -412,7 +414,9 @@ type GraphCheckpoint struct {
 - 不实现 time travel、回滚或 UI。
 - 不改变 HTTP API、SSE、Session JSON 和 `NodeFunc`。
 - snapshot 使用 `json.Marshal(Session)`，只适合 debug / test / degraded 场景，不建议默认生产开启。
-- 并发 frontier 中如果出现 suspend，checkpoint 不把 `sess.CurrentNode` 当精确归因；这一点要等 13.1.4 并发写保护继续收口。
+- recorder 调用有短超时保护；runner 会吞掉 recorder panic，并避免慢 recorder 长时间阻塞业务 Graph。
+- 自定义 recorder 必须快速返回并尊重 `context.Context`；runner 无法强制终止完全忽略 `ctx` 的 recorder。
+- 并发 frontier 的 checkpoint 不做节点级归因；Session 仍要求并发节点只写 disjoint 字段，这一点要等 13.1.4 并发写保护继续收口。
 
 收益：
 
@@ -422,7 +426,7 @@ type GraphCheckpoint struct {
 
 #### 13.1.4 并发写保护
 
-当前 frontier 可以并发执行多个节点，但依赖节点作者遵守“并发节点写 disjoint 字段”的约定。这个约定需要变成可检查的结构。
+当前 frontier 可以并发执行多个节点。runner 已避免在并发节点 goroutine 内写 `CurrentNode`，但业务节点本身仍依赖“并发节点写 disjoint 字段”的约定。这个约定需要变成可检查的结构。
 
 建议扩展节点注册信息：
 

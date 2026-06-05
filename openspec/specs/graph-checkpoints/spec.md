@@ -1,7 +1,8 @@
 # graph-checkpoints Specification
 
 ## Purpose
-TBD - created by archiving change add-graph-checkpoints. Update Purpose after archive.
+
+定义 Graph 执行检查点能力，用于记录 runner 在启动、恢复、暂停、失败和 frontier 推进过程中的轻量状态快照，支撑排障、回归验证和后续 agent-verify 细粒度检查。
 ## Requirements
 ### Requirement: 记录轻量 Graph checkpoint
 
@@ -45,3 +46,9 @@ TBD - created by archiving change add-graph-checkpoints. Update Purpose after ar
 - **AND** HTTP API 响应结构不应改变
 - **AND** Session JSON 不应因为 checkpoint 增加字段
 
+#### Scenario: checkpoint recorder 不应拖垮业务执行
+
+- **WHEN** checkpoint recorder panic 或响应过慢
+- **THEN** Graph 业务执行不应因此失败
+- **AND** 慢 recorder 不应长时间阻塞 Graph runner
+- **AND** 自定义 recorder 应尊重调用方传入的 `context.Context`

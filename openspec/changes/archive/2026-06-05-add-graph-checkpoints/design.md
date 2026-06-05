@@ -130,5 +130,5 @@ func (r *MemoryCheckpointRecorder) Snapshot() []GraphCheckpoint
 
 - JSON snapshot 可能较大：第一版只通过可选 recorder 启用，不默认生产开启。
 - 并发 frontier 无法做节点级精确归因：明确降级为 batch 级记录，避免假精确。
-- Recorder 不能影响业务流程：记录失败只能体现在 checkpoint error 或被忽略，不能让 Graph 失败。
+- Recorder 不能影响业务流程：runner 会隔离 recorder panic，并用短超时限制慢 recorder 对 Graph 延迟的影响。自定义 recorder 仍必须尊重 `context.Context`，否则 runner 无法强制终止该 recorder 的后台执行。Checkpoint 仍建议只在 debug、测试和验证场景开启。
 - 如果后续要落 PG，需要单独 OpenSpec 设计表结构、清理策略和开关。

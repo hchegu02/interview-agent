@@ -13,6 +13,8 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+const checkpointRecorderTimeout = 100 * time.Millisecond
+
 // Graph 是声明式的节点 + 边集合。
 // 使用流式 API 构造，最后 Compile() 得到可执行的 Runnable。
 //
@@ -142,6 +144,27 @@ type Runnable struct {
 	g *Graph
 }
 
+type nodeExecutionError struct {
+	node string
+	err  error
+}
+
+func (e nodeExecutionError) Error() string {
+	return e.err.Error()
+}
+
+func (e nodeExecutionError) Unwrap() error {
+	return e.err
+}
+
+func executionErrorNode(err error) string {
+	var nodeErr nodeExecutionError
+	if errors.As(err, &nodeErr) {
+		return nodeErr.node
+	}
+	return ""
+}
+
 // Invoke 执行图，传入的 Session 会被节点函数读写。
 //
 // 执行模型（frontier-based）：
@@ -206,8 +229,8 @@ func (r *Runnable) Resume(ctx context.Context, sess *domain.Session) error {
 //   - 与 errgroup 天然契合
 //   - 状态简单，断点恢复时只需要记当前 frontier
 //
-// 节点返回 ErrSuspended 时正常返回 nil，sess.CurrentNode 已被 executeNode
-// 写到暂停的那个节点；调用方调 Resume 继续。
+// 节点返回 ErrSuspended 时正常返回 nil，runner 会把暂停节点写入
+// sess.CurrentNode / sess.Suspension；调用方调 Resume 继续。
 func (r *Runnable) run(ctx context.Context, sess *domain.Session, frontier []string) error {
 	g := r.g
 	steps := 0
@@ -222,13 +245,19 @@ func (r *Runnable) run(ctx context.Context, sess *domain.Session, frontier []str
 		r.recordCheckpoint(ctx, steps, CheckpointFrontierBefore, frontier, "", "", sess)
 		if err := r.executeBatch(ctx, sess, frontier, steps); err != nil {
 			if errors.Is(err, ErrSuspended) {
-				// 暂停：节点已把自己名字写到 sess.CurrentNode，正常返回让调用方决定
-				ensureSuspension(sess, sess.CurrentNode)
-				node := sess.CurrentNode
-				if len(frontier) > 1 {
-					node = ""
+				// 暂停：并发 frontier 中不能让节点 goroutine 直接写 CurrentNode。
+				// executeBatch 把出错节点带回主协程后，这里统一写程序计数器。
+				node := executionErrorNode(err)
+				if node == "" {
+					node = sess.CurrentNode
 				}
-				r.recordCheckpoint(ctx, steps, CheckpointSuspended, frontier, node, err.Error(), sess)
+				sess.CurrentNode = node
+				ensureSuspension(sess, node)
+				checkpointNode := node
+				if len(frontier) > 1 {
+					checkpointNode = ""
+				}
+				r.recordCheckpoint(ctx, steps, CheckpointSuspended, frontier, checkpointNode, err.Error(), sess)
 				return nil
 			}
 			r.recordCheckpoint(ctx, steps, CheckpointFrontierError, frontier, "", err.Error(), sess)
@@ -267,30 +296,32 @@ func ensureSuspension(sess *domain.Session, node string) {
 // frontier 长度为 1 时跳过 errgroup 开销直接调用。
 func (r *Runnable) executeBatch(ctx context.Context, sess *domain.Session, nodes []string, step int) error {
 	if len(nodes) == 1 {
-		return r.executeNode(ctx, sess, nodes[0], step, true)
+		return r.executeNode(ctx, sess, nodes[0], step, true, true)
 	}
 
 	eg, ectx := errgroup.WithContext(ctx)
 	for _, name := range nodes {
 		name := name // 闭包捕获
 		eg.Go(func() error {
-			return r.executeNode(ectx, sess, name, step, false)
+			if err := r.executeNode(ectx, sess, name, step, false, false); err != nil {
+				return nodeExecutionError{node: name, err: err}
+			}
+			return nil
 		})
 	}
 	return eg.Wait()
 }
 
 // executeNode 执行单个节点，前后调用 callback。
-func (r *Runnable) executeNode(ctx context.Context, sess *domain.Session, name string, step int, checkpointNode bool) error {
+func (r *Runnable) executeNode(ctx context.Context, sess *domain.Session, name string, step int, checkpointNode, writeCurrentNode bool) error {
 	g := r.g
 	fn, ok := g.nodes[name]
 	if !ok {
 		return fmt.Errorf("%w: %q", ErrNodeNotFound, name)
 	}
-	// 注意：并发节点之间会同时写 CurrentNode，但这是字符串赋值，
-	// 不会造成数据损坏；只是断点恢复时拿到的可能是"任意一个"。
-	// 对幂等节点不影响正确性。Stage 3 持久化时会更仔细地建模。
-	sess.CurrentNode = name
+	if writeCurrentNode {
+		sess.CurrentNode = name
+	}
 
 	if checkpointNode {
 		r.recordCheckpoint(ctx, step, CheckpointNodeBefore, []string{name}, name, "", sess)
@@ -330,7 +361,7 @@ func (r *Runnable) recordCheckpoint(ctx context.Context, step int, phase Checkpo
 			errMsg = fmt.Sprintf("%s; snapshot: %v", errMsg, err)
 		}
 	}
-	r.g.recorder.RecordCheckpoint(ctx, GraphCheckpoint{
+	r.callCheckpointRecorder(ctx, GraphCheckpoint{
 		Step:      step,
 		SessionID: sess.ID,
 		Graph:     r.g.name,
@@ -341,6 +372,25 @@ func (r *Runnable) recordCheckpoint(ctx context.Context, step int, phase Checkpo
 		Snapshot:  snapshot,
 		CreatedAt: time.Now().UTC(),
 	})
+}
+
+func (r *Runnable) callCheckpointRecorder(ctx context.Context, checkpoint GraphCheckpoint) {
+	recordCtx, cancel := context.WithTimeout(ctx, checkpointRecorderTimeout)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer func() {
+			_ = recover()
+		}()
+		r.g.recorder.RecordCheckpoint(recordCtx, checkpoint)
+	}()
+
+	select {
+	case <-done:
+	case <-recordCtx.Done():
+	}
 }
 
 // nextFrontier 根据当前已执行节点计算下一轮 frontier。

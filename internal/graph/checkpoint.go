@@ -35,6 +35,8 @@ type GraphCheckpoint struct {
 }
 
 // CheckpointRecorder 接收 Graph runner 产生的 checkpoint。
+// 实现应快速返回并尊重 ctx；runner 会限制等待时间并隔离 panic，
+// 但无法强制终止一个完全忽略 ctx 的 recorder。
 type CheckpointRecorder interface {
 	RecordCheckpoint(ctx context.Context, checkpoint GraphCheckpoint)
 }

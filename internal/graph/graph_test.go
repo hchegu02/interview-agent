@@ -24,6 +24,21 @@ func recorder(trace *[]string, mu *sync.Mutex, name string) NodeFunc {
 	}
 }
 
+type panicCheckpointRecorder struct{}
+
+func (panicCheckpointRecorder) RecordCheckpoint(ctx context.Context, checkpoint GraphCheckpoint) {
+	panic("checkpoint recorder failed")
+}
+
+type blockingCheckpointRecorder struct{}
+
+func (blockingCheckpointRecorder) RecordCheckpoint(ctx context.Context, checkpoint GraphCheckpoint) {
+	select {
+	case <-time.After(5 * checkpointRecorderTimeout):
+	case <-ctx.Done():
+	}
+}
+
 // =============== 1. 线性 ===============
 
 func TestGraph_Linear(t *testing.T) {
@@ -96,6 +111,102 @@ func TestGraph_CheckpointsLinearNodeSnapshots(t *testing.T) {
 		if checkpoints[i].Seq <= checkpoints[i-1].Seq {
 			t.Fatalf("checkpoint seq should increase: %+v", checkpoints)
 		}
+	}
+}
+
+func TestGraph_CheckpointsNodeAndFrontierError(t *testing.T) {
+	rec := NewMemoryCheckpointRecorder(20)
+	boom := errors.New("boom")
+	g := New("checkpoint-error").
+		AddNode("a", func(ctx context.Context, sess *domain.Session) error {
+			sess.UserID = "before-error"
+			return boom
+		}).
+		Entry("a").
+		AddEdge("a", EndNode).
+		WithCheckpointRecorder(rec)
+
+	r, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if err := r.Invoke(context.Background(), &domain.Session{ID: "s-error"}); !errors.Is(err, boom) {
+		t.Fatalf("invoke error = %v, want boom", err)
+	}
+
+	checkpoints := rec.Snapshot()
+	nodeErr := findCheckpoint(checkpoints, CheckpointNodeError, "a")
+	if nodeErr == nil {
+		t.Fatalf("missing node_error checkpoint: %+v", checkpoints)
+	}
+	if !strings.Contains(nodeErr.Error, "boom") {
+		t.Fatalf("node_error Error = %q, want boom", nodeErr.Error)
+	}
+	if !strings.Contains(string(nodeErr.Snapshot), "before-error") {
+		t.Fatalf("node_error snapshot should include mutation before failure: %s", string(nodeErr.Snapshot))
+	}
+	frontierErr := findCheckpoint(checkpoints, CheckpointFrontierError, "")
+	if frontierErr == nil {
+		t.Fatalf("missing frontier_error checkpoint: %+v", checkpoints)
+	}
+	if !strings.Contains(frontierErr.Error, "boom") {
+		t.Fatalf("frontier_error Error = %q, want boom", frontierErr.Error)
+	}
+}
+
+func TestGraph_CheckpointRecorderPanicDoesNotFailGraph(t *testing.T) {
+	g := New("checkpoint-panic").
+		AddNode("a", func(ctx context.Context, sess *domain.Session) error {
+			sess.UserID = "ran"
+			return nil
+		}).
+		Entry("a").
+		AddEdge("a", EndNode).
+		WithCheckpointRecorder(panicCheckpointRecorder{})
+
+	r, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	sess := &domain.Session{}
+	if err := r.Invoke(context.Background(), sess); err != nil {
+		t.Fatalf("invoke should ignore checkpoint recorder panic: %v", err)
+	}
+	if sess.UserID != "ran" {
+		t.Fatalf("node did not run: %+v", sess)
+	}
+}
+
+func TestGraph_CheckpointRecorderTimeoutDoesNotBlockGraph(t *testing.T) {
+	g := New("checkpoint-timeout").
+		AddNode("a", func(ctx context.Context, sess *domain.Session) error {
+			sess.UserID = "ran"
+			return nil
+		}).
+		Entry("a").
+		AddEdge("a", EndNode).
+		WithCheckpointRecorder(blockingCheckpointRecorder{})
+
+	r, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	sess := &domain.Session{}
+	done := make(chan error, 1)
+	go func() {
+		done <- r.Invoke(context.Background(), sess)
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("invoke should ignore slow checkpoint recorder: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("invoke timed out; checkpoint recorder should not block graph")
+	}
+	if sess.UserID != "ran" {
+		t.Fatalf("node did not run: %+v", sess)
 	}
 }
 
@@ -747,8 +858,15 @@ func TestGraph_CheckpointsParallelSuspendDoesNotClaimNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := rn.Invoke(context.Background(), &domain.Session{ID: "parallel-suspend"}); err != nil {
+	sess := &domain.Session{ID: "parallel-suspend"}
+	if err := rn.Invoke(context.Background(), sess); err != nil {
 		t.Fatalf("invoke: %v", err)
+	}
+	if sess.CurrentNode != "a" {
+		t.Fatalf("CurrentNode = %q, want suspended node a", sess.CurrentNode)
+	}
+	if sess.Suspension == nil || sess.Suspension.Node != "a" {
+		t.Fatalf("Suspension = %+v, want node a", sess.Suspension)
 	}
 	suspended := findCheckpoint(rec.Snapshot(), CheckpointSuspended, "")
 	if suspended == nil {

@@ -24,10 +24,11 @@ const (
 
 // Deps contains the external services needed by the interview graph.
 type Deps struct {
-	Model     llm.ChatModel
-	Embedder  embedding.Embedder
-	Retriever retriever.Retriever
-	Callbacks []graph.Callback
+	Model              llm.ChatModel
+	Embedder           embedding.Embedder
+	Retriever          retriever.Retriever
+	Callbacks          []graph.Callback
+	CheckpointRecorder graph.CheckpointRecorder
 }
 
 // BuildInterviewGraph wires setup nodes and the agent loop into one Runnable.
@@ -75,6 +76,9 @@ func BuildInterviewGraph(deps Deps) (*graph.Runnable, error) {
 
 	if len(deps.Callbacks) > 0 {
 		g.WithCallbacks(deps.Callbacks...)
+	}
+	if deps.CheckpointRecorder != nil {
+		g.WithCheckpointRecorder(deps.CheckpointRecorder)
 	}
 	return g.Compile()
 }
