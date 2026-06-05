@@ -1,5 +1,5 @@
 workflow: full
-phase: verify
+phase: archive
 build_mode: subagent-driven-development
 isolation: branch
 verify_mode: direct
@@ -8,9 +8,9 @@ design_doc: docs/superpowers/specs/2026-06-05-structured-suspension-design.md
 plan: docs/superpowers/plans/2026-06-05-structured-suspension.md
 verify_result: passed
 verification_report: null
-branch_status: pending
+branch_status: merged
 created_at: 2026-06-05
 verified_at: 2026-06-05
-archived: false
-handoff_context: openspec/changes/add-structured-suspension/.comet/handoff/design-context.json
+archived: true
+handoff_context: openspec/changes/archive/2026-06-05-add-structured-suspension/.comet/handoff/design-context.json
 handoff_hash: 2a7612510c78781f5c19a6f29aab2e40cf742bd64ffcabbb247a470249c2e5f9
