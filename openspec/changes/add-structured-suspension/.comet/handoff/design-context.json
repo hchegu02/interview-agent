@@ -1,0 +1,14 @@
+{
+  "change": "add-structured-suspension",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "2a7612510c78781f5c19a6f29aab2e40cf742bd64ffcabbb247a470249c2e5f9",
+  "files": [
+    { "path": "openspec/changes/add-structured-suspension/proposal.md", "sha256": "ce27b649ec16b2740d0718386d98cb960ecfbcc42da614b7737c2572b6069408" },
+    { "path": "openspec/changes/add-structured-suspension/design.md", "sha256": "aed60b3430bcf0330e60be5f3d8f7b035cdc8314724ebb64eaf2c1b9e3aa05cc" },
+    { "path": "openspec/changes/add-structured-suspension/tasks.md", "sha256": "d22d93f7cb19b8eed98a78b5532e397da9624d7b9134bbc3e6989796c5e3fcd5" },
+    { "path": "openspec/changes/add-structured-suspension/specs/structured-session-suspension/spec.md", "sha256": "f3fb2727925c0058bfa8a7a6d6479ff6caad6b4821cc44c54dbf9c31e929a3a5" }
+  ]
+}
