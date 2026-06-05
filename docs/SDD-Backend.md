@@ -535,19 +535,15 @@ POST /api/agent/message
 
 目标：把单次面试报告沉淀为长期用户画像。
 
-当前 `WorkingMemory` 适合当前 Session。后续可以新增长期记忆模块：
+当前 `WorkingMemory` 适合当前 Session。长期记忆基础层已落地，用于承载跨 Session 的用户画像，但第一版尚未自动接入 Interview Graph、数据库或 HTTP API。
 
 ```text
 internal/memory
   memory.go
-  short_term.go
-  long_term.go
-  store.go
-  postgres_store.go
-  inmem_store.go
+  memory_test.go
 ```
 
-建议结构：
+已落地结构：
 
 ```go
 type UserMemory struct {
@@ -567,16 +563,31 @@ type Weakness struct {
 }
 ```
 
-接口边界：
+已落地接口边界：
 
 ```go
-type MemoryStore interface {
+type Store interface {
     GetUserMemory(ctx context.Context, userID string) (*UserMemory, error)
     UpsertUserMemory(ctx context.Context, memory *UserMemory) error
 }
 ```
 
-长期记忆应影响后续题目权重和复习建议，但不能覆盖 Session 内已经发生的事实。
+当前实现：
+
+- `MemoryStore` 是线程安全内存实现，读写时做 defensive copy，避免外部引用污染内部状态。
+- `BuildUpdateFromSession` 从 `domain.Session.Report` 提取 highlights、improvements、skill breakdown、next steps 和 drill plan，生成 `UserMemoryUpdate`。
+- `ApplyUpdate` 将一次面试报告增量合并到 `UserMemory`，字符串集合去重保序，weakness 按主题和证据去重，同名技能分数用新旧均值保守更新，`UpdatedAt` 不接受零值或旧时间回退。
+- 缺少 `user_id`、Session 或 Report 时返回结构化错误，不生成残缺画像。
+
+当前边界：
+
+- 不修改输入 `Session`、`Report` 或 `WorkingMemory`。
+- 不自动写入数据库或缓存。
+- 不新增 HTTP API。
+- 不改变现有 Interview Graph 流程。
+- 不使用 LLM 总结长期画像。
+
+长期记忆后续应影响题目权重和复习建议，但不能覆盖 Session 内已经发生的事实。
 
 ### 13.4 第三阶段：动态难度
 
