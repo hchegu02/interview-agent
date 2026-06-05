@@ -16,6 +16,7 @@ import (
 
 	"interview-agent/internal/config"
 	"interview-agent/internal/domain"
+	"interview-agent/internal/memory"
 )
 
 type fakeInterviewRunner struct{}
@@ -54,6 +55,82 @@ func (fakeInterviewRunner) Resume(ctx context.Context, sess *domain.Session) err
 		NextSteps:      []string{"继续练习并发题"},
 	}
 	return nil
+}
+
+type missingReportRunner struct{}
+
+func (missingReportRunner) Invoke(ctx context.Context, sess *domain.Session) error {
+	return fakeInterviewRunner{}.Invoke(ctx, sess)
+}
+
+func (missingReportRunner) Resume(ctx context.Context, sess *domain.Session) error {
+	if round := sess.CurrentRound(); round != nil {
+		round.CompletedAt = time.Now()
+	}
+	sess.Status = domain.StatusCompleted
+	sess.Report = nil
+	return nil
+}
+
+type failingMemoryStore struct{}
+
+func (failingMemoryStore) GetUserMemory(ctx context.Context, userID string) (*memory.UserMemory, error) {
+	return nil, memory.ErrUserMemoryNotFound
+}
+
+func (failingMemoryStore) UpsertUserMemory(ctx context.Context, memory *memory.UserMemory) error {
+	return errors.New("memory store failed")
+}
+
+type delayingMemoryStore struct {
+	mu       sync.Mutex
+	gets     int
+	memory   *memory.UserMemory
+	firstHit chan struct{}
+}
+
+func newDelayingMemoryStore() *delayingMemoryStore {
+	return &delayingMemoryStore{firstHit: make(chan struct{}, 1)}
+}
+
+func (s *delayingMemoryStore) GetUserMemory(ctx context.Context, userID string) (*memory.UserMemory, error) {
+	s.mu.Lock()
+	s.gets++
+	isFirst := s.gets == 1 && s.memory == nil
+	if isFirst {
+		s.firstHit <- struct{}{}
+		s.mu.Unlock()
+		time.Sleep(50 * time.Millisecond)
+		return nil, memory.ErrUserMemoryNotFound
+	}
+	mem := cloneTestUserMemory(s.memory)
+	s.mu.Unlock()
+	if mem == nil {
+		return nil, memory.ErrUserMemoryNotFound
+	}
+	return mem, nil
+}
+
+func (s *delayingMemoryStore) UpsertUserMemory(ctx context.Context, mem *memory.UserMemory) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.memory = cloneTestUserMemory(mem)
+	return nil
+}
+
+func cloneTestUserMemory(in *memory.UserMemory) *memory.UserMemory {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	out.Strengths = append([]string(nil), in.Strengths...)
+	out.Weaknesses = append([]memory.Weakness(nil), in.Weaknesses...)
+	out.LastAdvice = append([]string(nil), in.LastAdvice...)
+	out.SkillScores = map[string]float64{}
+	for k, v := range in.SkillScores {
+		out.SkillScores[k] = v
+	}
+	return &out
 }
 
 type fakeSessionCoordinator struct {
@@ -738,6 +815,148 @@ func TestInterviewAnswer_ReturnsReport(t *testing.T) {
 	}
 	if got.Question != nil {
 		t.Fatalf("question should be empty after completed report, got %+v", got.Question)
+	}
+}
+
+func TestInterviewService_AnswerPersistsLongTermMemory(t *testing.T) {
+	memStore := memory.NewMemoryStore()
+	svc := NewInterviewService(fakeInterviewRunner{})
+	svc.SetMemoryStore(memStore)
+	server := NewServerWithInterview(&config.Config{}, svc)
+	router := server.Router()
+
+	startBody := bytes.NewBufferString(`{"session_id":"memory-s1","user_id":"u-memory","jd_text":"jd","resume_text":"resume"}`)
+	startReq := httptest.NewRequest(http.MethodPost, "/api/interview/start", startBody)
+	startReq.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(httptest.NewRecorder(), startReq)
+
+	answerBody := bytes.NewBufferString(`{"session_id":"memory-s1","user_id":"u-memory","answer":"G 是 goroutine"}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/interview/answer", answerBody)
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	got, err := memStore.GetUserMemory(context.Background(), "u-memory")
+	if err != nil {
+		t.Fatalf("get user memory: %v", err)
+	}
+	if got.SkillScores["go"] != 80 {
+		t.Fatalf("skill scores = %+v, want go=80", got.SkillScores)
+	}
+	if len(got.Strengths) == 0 || got.Strengths[0] != "Go 基础清楚" {
+		t.Fatalf("strengths = %+v", got.Strengths)
+	}
+}
+
+func TestInterviewService_AnswerSkipsLongTermMemoryWhenReportMissing(t *testing.T) {
+	memStore := memory.NewMemoryStore()
+	svc := NewInterviewService(missingReportRunner{})
+	svc.SetMemoryStore(memStore)
+
+	sess := &domain.Session{
+		ID:          "memory-no-report",
+		UserID:      "u-memory",
+		Status:      domain.StatusRunning,
+		CurrentNode: "pick_next",
+		CreatedAt:   time.Now(),
+		UpdatedAt:   time.Now(),
+		Rounds: []domain.AnswerRound{{
+			RoundID:  "r1",
+			Question: domain.Question{ID: "q1", Content: "讲一下 Go", Tags: []string{"go"}},
+		}},
+	}
+	if err := svc.store.Save(context.Background(), sess); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+
+	got, err := svc.Answer(context.Background(), answerInterviewRequest{
+		SessionID: "memory-no-report",
+		UserID:    "u-memory",
+		Answer:    "answer",
+	})
+	if err != nil {
+		t.Fatalf("answer: %v", err)
+	}
+	if got.Status != domain.StatusCompleted || got.Report != nil {
+		t.Fatalf("session = %+v, want completed without report", got)
+	}
+	if _, err := memStore.GetUserMemory(context.Background(), "u-memory"); !errors.Is(err, memory.ErrUserMemoryNotFound) {
+		t.Fatalf("memory error = %v, want not found", err)
+	}
+}
+
+func TestInterviewService_AnswerIgnoresLongTermMemoryStoreFailure(t *testing.T) {
+	svc := NewInterviewService(fakeInterviewRunner{})
+	svc.SetMemoryStore(failingMemoryStore{})
+	server := NewServerWithInterview(&config.Config{}, svc)
+	router := server.Router()
+
+	startBody := bytes.NewBufferString(`{"session_id":"memory-fail","user_id":"u-memory","jd_text":"jd","resume_text":"resume"}`)
+	startReq := httptest.NewRequest(http.MethodPost, "/api/interview/start", startBody)
+	startReq.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(httptest.NewRecorder(), startReq)
+
+	answerBody := bytes.NewBufferString(`{"session_id":"memory-fail","user_id":"u-memory","answer":"G 是 goroutine"}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/interview/answer", answerBody)
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var got interviewResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.Status != string(domain.StatusCompleted) || got.Report == nil {
+		t.Fatalf("response = %+v, want completed report", got)
+	}
+}
+
+func TestInterviewService_LongTermMemoryMergeIsSerialized(t *testing.T) {
+	memStore := newDelayingMemoryStore()
+	svc := NewInterviewService(fakeInterviewRunner{})
+	svc.SetMemoryStore(memStore)
+	sessA := &domain.Session{
+		ID:     "memory-concurrent-a",
+		UserID: "u-memory",
+		Report: &domain.Report{
+			Highlights:     []string{"Go 基础清楚"},
+			SkillBreakdown: map[string]int{"go": 80},
+		},
+	}
+	sessB := &domain.Session{
+		ID:     "memory-concurrent-b",
+		UserID: "u-memory",
+		Report: &domain.Report{
+			Highlights:     []string{"Redis 排障清楚"},
+			SkillBreakdown: map[string]int{"redis": 70},
+		},
+	}
+
+	errs := make(chan error, 2)
+	go func() { errs <- svc.persistLongTermMemory(context.Background(), sessA) }()
+	<-memStore.firstHit
+	go func() { errs <- svc.persistLongTermMemory(context.Background(), sessB) }()
+
+	for i := 0; i < 2; i++ {
+		if err := <-errs; err != nil {
+			t.Fatalf("persist memory: %v", err)
+		}
+	}
+	got, err := memStore.GetUserMemory(context.Background(), "u-memory")
+	if err != nil {
+		t.Fatalf("get memory: %v", err)
+	}
+	if got.SkillScores["go"] != 80 || got.SkillScores["redis"] != 70 {
+		t.Fatalf("skill scores = %+v, want both updates", got.SkillScores)
+	}
+	if len(got.Strengths) != 2 {
+		t.Fatalf("strengths = %+v, want both updates", got.Strengths)
 	}
 }
 

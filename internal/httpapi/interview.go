@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"interview-agent/internal/domain"
+	"interview-agent/internal/memory"
 )
 
 const (
@@ -45,12 +46,18 @@ type InterviewService struct {
 	runner      interviewRunner
 	store       SessionStore
 	events      InterviewEventHub
+	memoryStore memory.Store
 	coordinator SessionCoordinator
 	ownerID     string
 	leaseTTL    time.Duration
 	snapshotTTL time.Duration
+	memoryMu    sync.Mutex
 	mu          sync.Mutex
 	nextID      int
+}
+
+func (s *InterviewService) SetMemoryStore(store memory.Store) {
+	s.memoryStore = store
 }
 
 func NewInterviewService(runner interviewRunner) *InterviewService {

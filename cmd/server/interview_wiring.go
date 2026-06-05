@@ -13,6 +13,7 @@ import (
 	"interview-agent/internal/graphs"
 	"interview-agent/internal/httpapi"
 	"interview-agent/internal/llm"
+	"interview-agent/internal/memory"
 	"interview-agent/internal/nodes"
 	"interview-agent/internal/observability"
 	"interview-agent/internal/questionbank"
@@ -23,10 +24,14 @@ func buildInterviewService(ctx context.Context, cfg *config.Config, deps appDeps
 	coordinator := firstNonNilCoordinator(coordinators)
 	ownerID := hostnameOwnerID()
 	if deps.PGPool == nil {
-		return httpapi.NewInterviewServiceWithStoreEventsAndCoordinator(runner, httpapi.NewMemorySessionStore(), events, coordinator, ownerID), func() {}, nil
+		service := httpapi.NewInterviewServiceWithStoreEventsAndCoordinator(runner, httpapi.NewMemorySessionStore(), events, coordinator, ownerID)
+		service.SetMemoryStore(memory.NewMemoryStore())
+		return service, func() {}, nil
 	}
 	store := httpapi.NewPGSessionStore(deps.PGPool, 24*time.Hour)
-	return httpapi.NewInterviewServiceWithStoreEventsAndCoordinator(runner, store, events, coordinator, ownerID), func() {}, nil
+	service := httpapi.NewInterviewServiceWithStoreEventsAndCoordinator(runner, store, events, coordinator, ownerID)
+	service.SetMemoryStore(memory.NewMemoryStore())
+	return service, func() {}, nil
 }
 
 func firstNonNilCoordinator(coordinators []httpapi.SessionCoordinator) httpapi.SessionCoordinator {

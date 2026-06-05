@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -152,6 +153,17 @@ func TestBuildInterviewService_NoPostgresUsesMemoryStore(t *testing.T) {
 	if svc == nil {
 		t.Fatal("expected service")
 	}
+	if !interviewServiceMemoryStoreConfigured(svc) {
+		t.Fatal("expected long-term memory store to be configured")
+	}
+}
+
+func interviewServiceMemoryStoreConfigured(svc *httpapi.InterviewService) bool {
+	if svc == nil {
+		return false
+	}
+	field := reflect.ValueOf(svc).Elem().FieldByName("memoryStore")
+	return field.IsValid() && !field.IsNil()
 }
 
 func TestBuildQuestionBankStore_NoPostgresLoadsSeed(t *testing.T) {

@@ -577,15 +577,18 @@ type Store interface {
 - `MemoryStore` 是线程安全内存实现，读写时做 defensive copy，避免外部引用污染内部状态。
 - `BuildUpdateFromSession` 从 `domain.Session.Report` 提取 highlights、improvements、skill breakdown、next steps 和 drill plan，生成 `UserMemoryUpdate`。
 - `ApplyUpdate` 将一次面试报告增量合并到 `UserMemory`，字符串集合去重保序，weakness 按主题和证据去重，同名技能分数用新旧均值保守更新，`UpdatedAt` 不接受零值或旧时间回退。
+- `InterviewService.Answer` 在 Session 完成并保存后，会把 Report 非阻塞沉淀到长期记忆 Store；服务层串行化 `Get -> Apply -> Upsert`，避免当前进程内并发完成同一用户多场面试时丢更新。
+- `cmd/server` 默认注入内存长期记忆 Store，用于本地演示和测试闭环。
 - 缺少 `user_id`、Session 或 Report 时返回结构化错误，不生成残缺画像。
 
 当前边界：
 
 - 不修改输入 `Session`、`Report` 或 `WorkingMemory`。
-- 不自动写入数据库或缓存。
+- 不自动写入数据库或缓存，当前只用进程内 Store。
 - 不新增 HTTP API。
 - 不改变现有 Interview Graph 流程。
 - 不使用 LLM 总结长期画像。
+- 长期记忆写入失败不阻断面试完成响应。
 
 长期记忆后续应影响题目权重和复习建议，但不能覆盖 Session 内已经发生的事实。
 

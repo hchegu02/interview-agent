@@ -153,6 +153,7 @@ func (s *InterviewService) Answer(ctx context.Context, req answerInterviewReques
 		}
 	}
 	if sess.Status == domain.StatusCompleted {
+		_ = s.persistLongTermMemory(ctx, sess)
 		_ = s.releaseSessionLease(ctx, sess.ID)
 	}
 	eventType := interviewEventSessionUpdated
