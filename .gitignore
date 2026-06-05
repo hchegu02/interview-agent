@@ -61,6 +61,10 @@ temp/
 
 # Local documentation handoff and notes
 /docs/
+!/docs/
+/docs/*
+!/docs/SDD-Frontend.md
+!/docs/SDD-Backend.md
 
 # Demo CLI artifacts
 tmp/demos/
