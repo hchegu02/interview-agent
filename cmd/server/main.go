@@ -20,6 +20,7 @@ import (
 	"syscall"
 	"time"
 
+	"interview-agent/internal/agent"
 	"interview-agent/internal/config"
 	"interview-agent/internal/httpapi"
 	"interview-agent/internal/observability"
@@ -72,6 +73,7 @@ func main() {
 
 	server := httpapi.NewServer(cfg)
 	server.SetEventHubMetrics(eventHubMetricsProvider(events))
+	server.SetAgentService(agent.NewDefaultService())
 
 	// ProfileAnalyzer 是“开始面试前的 JD/简历解释”能力。
 	// 它和真正的面试 Graph 分开装配，避免用户只点分析时也创建 session。

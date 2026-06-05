@@ -486,45 +486,50 @@ UserMemory
 
 ### 13.2 第一阶段：Intent Router + Skill
 
-目标：在固定 Interview Graph 之外，增加用户意图路由和专项 skill 能力，让系统从“单一模拟面试流程”扩展为“面试训练 Agent”。
+目标：在固定 Interview Graph 之外，增加用户意图路由和专项 skill 能力，让系统从“单一模拟面试流程”扩展为“面试训练 Agent”。第一版规则 Router + Skill Registry 已落地，作为后续 LLM Router 和更多 Skill 的稳定入口。
 
-建议能力：
+已落地能力：
 
 ```text
-interview.start
-interview.answer
 skill.quiz
 skill.explain
 skill.project_polish
-skill.tech_compare
+interview.start
 chat
 ```
 
-建议目录：
+已落地目录：
 
 ```text
 internal/agent
-  router.go
-  intent.go
-  message.go
+  agent.go
 
 internal/skills
-  registry.go
-  quiz.go
-  explain.go
-  project_polish.go
-  tech_compare.go
+  skills.go
 ```
 
-第一版建议使用规则 Router，不急着做 LLM intent classifier。Router 只负责分流，Skill 负责专项能力，Graph 继续负责正式面试主流程。
+当前实现：
 
-可能新增接口：
+- `RuleRouter` 根据关键词输出 `intent`、`skill`、`confidence` 和 `reason`。
+- `Skill Registry` 注册并执行 `quiz`、`explain`、`project_polish`。
+- `AgentService` 统一处理消息，skill 请求执行对应 skill。
+- `interview.start` 只返回引导结果，不绕过 `/api/interview/start` 自动创建 session。
+- `cmd/server` 默认注入规则 AgentService。
+
+新增接口：
 
 ```text
 POST /api/agent/message
 ```
 
-接口必须返回结构化 intent、skill、confidence、reason 和结果，便于前端展示和后续验证。
+接口返回结构化 intent、skill、confidence、reason 和 result，便于前端展示和后续验证。
+
+当前边界：
+
+- 不使用 LLM intent classifier。
+- 不实现运行时 sub-agent。
+- 不写数据库，不改变现有 Interview Graph。
+- 不把用户消息作为工具调用权限来源。
 
 ### 13.3 第二阶段：Long-term Memory
 

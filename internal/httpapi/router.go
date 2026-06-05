@@ -6,6 +6,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"interview-agent/internal/agent"
 	"interview-agent/internal/config"
 	"interview-agent/internal/domain"
 	"interview-agent/internal/parser"
@@ -15,6 +16,7 @@ import (
 // Server 持有所有依赖。阶段 0 只放骨架，后续阶段往里加 service。
 type Server struct {
 	cfg             *config.Config
+	agent           *agent.Service
 	interview       *InterviewService
 	documentParser  parser.DocumentParser
 	questionBank    questionbank.Store
@@ -35,6 +37,10 @@ func NewServer(cfg *config.Config) *Server {
 
 func NewServerWithInterview(cfg *config.Config, interview *InterviewService) *Server {
 	return &Server{cfg: cfg, interview: interview, documentParser: parser.NewDispatcher(), metricsRecorder: newMetricsRecorder()}
+}
+
+func (s *Server) SetAgentService(service *agent.Service) {
+	s.agent = service
 }
 
 // SetBreakerState 让入口装配阶段在构造完 Server 后注入熔断器状态查询函数。
@@ -73,6 +79,7 @@ func (s *Server) Router() *gin.Engine {
 	api := r.Group("/api")
 	{
 		api.GET("/ping", s.ping)
+		api.POST("/agent/message", s.agentMessage)
 		api.POST("/documents/parse-resume", s.parseResumeDocument)
 		api.POST("/profile/analyze", s.analyzeProfile)
 		api.POST("/question-bank/imports", s.createQuestionBankImport)
