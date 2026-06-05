@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -48,6 +49,53 @@ func TestGraph_Linear(t *testing.T) {
 	got := fmt.Sprint(trace)
 	if got != "[a b c]" {
 		t.Errorf("trace = %s, want [a b c]", got)
+	}
+}
+
+func TestGraph_CheckpointsLinearNodeSnapshots(t *testing.T) {
+	rec := NewMemoryCheckpointRecorder(20)
+	g := New("checkpoint-linear").
+		AddNode("a", func(ctx context.Context, sess *domain.Session) error {
+			sess.UserID = "after-a"
+			return nil
+		}).
+		AddNode("b", func(ctx context.Context, sess *domain.Session) error {
+			sess.Mode = "practice"
+			return nil
+		}).
+		Entry("a").
+		AddEdge("a", "b").
+		AddEdge("b", EndNode).
+		WithCheckpointRecorder(rec)
+
+	r, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if err := r.Invoke(context.Background(), &domain.Session{ID: "s-checkpoint"}); err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+
+	checkpoints := rec.Snapshot()
+	assertCheckpointPhase(t, checkpoints, CheckpointFrontierBefore, "")
+	beforeA := findCheckpoint(checkpoints, CheckpointNodeBefore, "a")
+	afterA := findCheckpoint(checkpoints, CheckpointNodeAfter, "a")
+	if beforeA == nil || afterA == nil {
+		t.Fatalf("missing node checkpoints: %+v", checkpoints)
+	}
+	if strings.Contains(string(beforeA.Snapshot), "after-a") {
+		t.Fatalf("node_before should capture state before mutation: %s", string(beforeA.Snapshot))
+	}
+	if !strings.Contains(string(afterA.Snapshot), "after-a") {
+		t.Fatalf("node_after should capture state after mutation: %s", string(afterA.Snapshot))
+	}
+	if checkpoints[0].Seq == 0 {
+		t.Fatalf("checkpoint seq should be assigned: %+v", checkpoints[0])
+	}
+	for i := 1; i < len(checkpoints); i++ {
+		if checkpoints[i].Seq <= checkpoints[i-1].Seq {
+			t.Fatalf("checkpoint seq should increase: %+v", checkpoints)
+		}
 	}
 }
 
@@ -118,6 +166,51 @@ func TestGraph_ParallelFanOut(t *testing.T) {
 	}
 	if !gotA || !gotB {
 		t.Errorf("expected both a and b in middle, got %v", trace)
+	}
+}
+
+func TestGraph_CheckpointsParallelFrontierIsBatchOnly(t *testing.T) {
+	rec := NewMemoryCheckpointRecorder(20)
+	var trace []string
+	var mu sync.Mutex
+
+	g := New("checkpoint-parallel").
+		AddNode("__START__", recorder(&trace, &mu, "start")).
+		AddNode("a", recorder(&trace, &mu, "a")).
+		AddNode("b", recorder(&trace, &mu, "b")).
+		AddNode("c", recorder(&trace, &mu, "c")).
+		Entry("__START__").
+		AddEdge("__START__", "a").
+		AddEdge("__START__", "b").
+		AddEdge("a", "c").
+		AddEdge("b", "c").
+		AddEdge("c", EndNode).
+		WithCheckpointRecorder(rec)
+
+	r, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if err := r.Invoke(context.Background(), &domain.Session{}); err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+
+	checkpoints := rec.Snapshot()
+	var parallelBefore *GraphCheckpoint
+	for i := range checkpoints {
+		cp := &checkpoints[i]
+		if cp.Phase == CheckpointFrontierBefore && len(cp.Frontier) == 2 {
+			parallelBefore = cp
+			break
+		}
+	}
+	if parallelBefore == nil {
+		t.Fatalf("missing parallel frontier checkpoint: %+v", checkpoints)
+	}
+	for _, cp := range checkpoints {
+		if (cp.Node == "a" || cp.Node == "b") && (cp.Phase == CheckpointNodeBefore || cp.Phase == CheckpointNodeAfter) {
+			t.Fatalf("parallel node checkpoint should not be recorded: %+v", cp)
+		}
 	}
 }
 
@@ -554,6 +647,118 @@ func TestGraph_Resume(t *testing.T) {
 	}
 }
 
+func TestGraph_CheckpointsSuspendAndResume(t *testing.T) {
+	rec := NewMemoryCheckpointRecorder(30)
+	var trace []string
+	var mu sync.Mutex
+
+	g := New("checkpoint-resume").
+		AddNode("pick_next", func(ctx context.Context, sess *domain.Session) error {
+			mu.Lock()
+			trace = append(trace, "pick_next")
+			mu.Unlock()
+			return ErrSuspended
+		}).
+		AddNode("evaluate", recorder(&trace, &mu, "evaluate")).
+		AddNode("report", recorder(&trace, &mu, "report")).
+		Entry("pick_next").
+		AddEdge("pick_next", "evaluate").
+		AddEdge("evaluate", "report").
+		AddEdge("report", EndNode).
+		WithCheckpointRecorder(rec)
+
+	rn, err := g.Compile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := &domain.Session{ID: "resume-checkpoint"}
+	if err := rn.Invoke(context.Background(), sess); err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	suspended := findCheckpoint(rec.Snapshot(), CheckpointSuspended, "pick_next")
+	if suspended == nil {
+		t.Fatalf("missing suspended checkpoint: %+v", rec.Snapshot())
+	}
+	if !strings.Contains(string(suspended.Snapshot), `"suspension"`) {
+		t.Fatalf("suspended snapshot should include suspension: %s", string(suspended.Snapshot))
+	}
+
+	if err := rn.Resume(context.Background(), sess); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	resume := findCheckpoint(rec.Snapshot(), CheckpointResumeFrom, "pick_next")
+	if resume == nil {
+		t.Fatalf("missing resume_from checkpoint: %+v", rec.Snapshot())
+	}
+	if len(resume.Frontier) != 1 || resume.Frontier[0] != "evaluate" {
+		t.Fatalf("resume frontier = %+v, want [evaluate]", resume.Frontier)
+	}
+}
+
+func TestGraph_CheckpointsResumeWithNoNextFrontier(t *testing.T) {
+	rec := NewMemoryCheckpointRecorder(10)
+	g := New("checkpoint-resume-end").
+		AddNode("done", func(ctx context.Context, sess *domain.Session) error { return nil }).
+		Entry("done").
+		AddEdge("done", EndNode).
+		WithCheckpointRecorder(rec)
+
+	rn, err := g.Compile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess := &domain.Session{
+		ID:          "resume-end",
+		CurrentNode: "done",
+		Suspension:  &domain.Suspension{Node: "done", Awaiting: domain.SuspensionAwaitingAnswer},
+	}
+	if err := rn.Resume(context.Background(), sess); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	resume := findCheckpoint(rec.Snapshot(), CheckpointResumeFrom, "done")
+	if resume == nil {
+		t.Fatalf("missing resume_from checkpoint: %+v", rec.Snapshot())
+	}
+	if len(resume.Frontier) != 0 {
+		t.Fatalf("resume next frontier = %+v, want empty", resume.Frontier)
+	}
+	if sess.Suspension != nil {
+		t.Fatalf("resume should clear suspension: %+v", sess.Suspension)
+	}
+}
+
+func TestGraph_CheckpointsParallelSuspendDoesNotClaimNode(t *testing.T) {
+	rec := NewMemoryCheckpointRecorder(20)
+	g := New("checkpoint-parallel-suspend").
+		AddNode("__START__", func(ctx context.Context, sess *domain.Session) error { return nil }).
+		AddNode("a", func(ctx context.Context, sess *domain.Session) error {
+			return ErrSuspended
+		}).
+		AddNode("b", func(ctx context.Context, sess *domain.Session) error {
+			sess.UserID = "b-ran"
+			return nil
+		}).
+		Entry("__START__").
+		AddEdge("__START__", "a").
+		AddEdge("__START__", "b").
+		WithCheckpointRecorder(rec)
+
+	rn, err := g.Compile()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rn.Invoke(context.Background(), &domain.Session{ID: "parallel-suspend"}); err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	suspended := findCheckpoint(rec.Snapshot(), CheckpointSuspended, "")
+	if suspended == nil {
+		t.Fatalf("missing batch suspended checkpoint without node claim: %+v", rec.Snapshot())
+	}
+	if len(suspended.Frontier) != 2 {
+		t.Fatalf("suspended frontier = %+v, want two nodes", suspended.Frontier)
+	}
+}
+
 // TestGraph_Resume_LegacyCurrentNodeOnly 验证老 Session 只有 CurrentNode 时仍可恢复。
 func TestGraph_Resume_LegacyCurrentNodeOnly(t *testing.T) {
 	var trace []string
@@ -584,6 +789,22 @@ func TestGraph_Resume_LegacyCurrentNodeOnly(t *testing.T) {
 		if trace[i] != n {
 			t.Errorf("trace[%d]=%q, want %q", i, trace[i], n)
 		}
+	}
+}
+
+func findCheckpoint(checkpoints []GraphCheckpoint, phase CheckpointPhase, node string) *GraphCheckpoint {
+	for i := range checkpoints {
+		if checkpoints[i].Phase == phase && checkpoints[i].Node == node {
+			return &checkpoints[i]
+		}
+	}
+	return nil
+}
+
+func assertCheckpointPhase(t *testing.T, checkpoints []GraphCheckpoint, phase CheckpointPhase, node string) {
+	t.Helper()
+	if findCheckpoint(checkpoints, phase, node) == nil {
+		t.Fatalf("missing checkpoint phase=%s node=%s: %+v", phase, node, checkpoints)
 	}
 }
 

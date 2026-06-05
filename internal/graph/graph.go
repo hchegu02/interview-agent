@@ -2,6 +2,7 @@ package graph
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -37,6 +38,7 @@ type Graph struct {
 	entry     string
 	maxSteps  int
 	callbacks []Callback
+	recorder  CheckpointRecorder
 }
 
 // New 创建一个空图。name 用于日志和错误信息。
@@ -84,6 +86,13 @@ func (g *Graph) MaxSteps(n int) *Graph {
 // WithCallbacks 注册回调。多个回调按注册顺序执行。
 func (g *Graph) WithCallbacks(cbs ...Callback) *Graph {
 	g.callbacks = append(g.callbacks, cbs...)
+	return g
+}
+
+// WithCheckpointRecorder 注册可选 checkpoint recorder。
+// recorder 只用于调试和验证，不应改变 Graph 业务结果。
+func (g *Graph) WithCheckpointRecorder(recorder CheckpointRecorder) *Graph {
+	g.recorder = recorder
 	return g
 }
 
@@ -175,6 +184,7 @@ func (r *Runnable) Resume(ctx context.Context, sess *domain.Session) error {
 	}
 	// 从暂停节点的下游开始；当作"刚执行完该节点"的状态
 	next := r.nextFrontier(sess, []string{current})
+	r.recordCheckpoint(ctx, 0, CheckpointResumeFrom, next, current, "", sess)
 	if len(next) == 0 {
 		sess.Suspension = nil
 		return nil
@@ -209,14 +219,22 @@ func (r *Runnable) run(ctx context.Context, sess *domain.Session, frontier []str
 				ErrMaxStepsExceeded, g.maxSteps, g.name, frontier)
 		}
 
-		if err := r.executeBatch(ctx, sess, frontier); err != nil {
+		r.recordCheckpoint(ctx, steps, CheckpointFrontierBefore, frontier, "", "", sess)
+		if err := r.executeBatch(ctx, sess, frontier, steps); err != nil {
 			if errors.Is(err, ErrSuspended) {
 				// 暂停：节点已把自己名字写到 sess.CurrentNode，正常返回让调用方决定
 				ensureSuspension(sess, sess.CurrentNode)
+				node := sess.CurrentNode
+				if len(frontier) > 1 {
+					node = ""
+				}
+				r.recordCheckpoint(ctx, steps, CheckpointSuspended, frontier, node, err.Error(), sess)
 				return nil
 			}
+			r.recordCheckpoint(ctx, steps, CheckpointFrontierError, frontier, "", err.Error(), sess)
 			return err
 		}
+		r.recordCheckpoint(ctx, steps, CheckpointFrontierAfter, frontier, "", "", sess)
 
 		frontier = r.nextFrontier(sess, frontier)
 	}
@@ -247,23 +265,23 @@ func ensureSuspension(sess *domain.Session, node string) {
 
 // executeBatch 把当前 frontier 用 errgroup 并发执行。
 // frontier 长度为 1 时跳过 errgroup 开销直接调用。
-func (r *Runnable) executeBatch(ctx context.Context, sess *domain.Session, nodes []string) error {
+func (r *Runnable) executeBatch(ctx context.Context, sess *domain.Session, nodes []string, step int) error {
 	if len(nodes) == 1 {
-		return r.executeNode(ctx, sess, nodes[0])
+		return r.executeNode(ctx, sess, nodes[0], step, true)
 	}
 
 	eg, ectx := errgroup.WithContext(ctx)
 	for _, name := range nodes {
 		name := name // 闭包捕获
 		eg.Go(func() error {
-			return r.executeNode(ectx, sess, name)
+			return r.executeNode(ectx, sess, name, step, false)
 		})
 	}
 	return eg.Wait()
 }
 
 // executeNode 执行单个节点，前后调用 callback。
-func (r *Runnable) executeNode(ctx context.Context, sess *domain.Session, name string) error {
+func (r *Runnable) executeNode(ctx context.Context, sess *domain.Session, name string, step int, checkpointNode bool) error {
 	g := r.g
 	fn, ok := g.nodes[name]
 	if !ok {
@@ -274,6 +292,9 @@ func (r *Runnable) executeNode(ctx context.Context, sess *domain.Session, name s
 	// 对幂等节点不影响正确性。Stage 3 持久化时会更仔细地建模。
 	sess.CurrentNode = name
 
+	if checkpointNode {
+		r.recordCheckpoint(ctx, step, CheckpointNodeBefore, []string{name}, name, "", sess)
+	}
 	for _, cb := range g.callbacks {
 		cb.OnNodeStart(ctx, name, sess)
 	}
@@ -285,7 +306,41 @@ func (r *Runnable) executeNode(ctx context.Context, sess *domain.Session, name s
 			cb.OnNodeEnd(ctx, name, sess)
 		}
 	}
+	if checkpointNode {
+		if err != nil {
+			if !errors.Is(err, ErrSuspended) {
+				r.recordCheckpoint(ctx, step, CheckpointNodeError, []string{name}, name, err.Error(), sess)
+			}
+		} else {
+			r.recordCheckpoint(ctx, step, CheckpointNodeAfter, []string{name}, name, "", sess)
+		}
+	}
 	return err
+}
+
+func (r *Runnable) recordCheckpoint(ctx context.Context, step int, phase CheckpointPhase, frontier []string, node, errMsg string, sess *domain.Session) {
+	if r == nil || r.g == nil || r.g.recorder == nil {
+		return
+	}
+	snapshot, err := json.Marshal(sess)
+	if err != nil {
+		if errMsg == "" {
+			errMsg = fmt.Sprintf("snapshot: %v", err)
+		} else {
+			errMsg = fmt.Sprintf("%s; snapshot: %v", errMsg, err)
+		}
+	}
+	r.g.recorder.RecordCheckpoint(ctx, GraphCheckpoint{
+		Step:      step,
+		SessionID: sess.ID,
+		Graph:     r.g.name,
+		Phase:     phase,
+		Frontier:  append([]string(nil), frontier...),
+		Node:      node,
+		Error:     errMsg,
+		Snapshot:  snapshot,
+		CreatedAt: time.Now().UTC(),
+	})
 }
 
 // nextFrontier 根据当前已执行节点计算下一轮 frontier。

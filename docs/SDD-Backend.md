@@ -378,27 +378,41 @@ type StatePatch struct {
 
 #### 13.1.3 轻量 Graph Checkpoint
 
-当前持久化主要是保存完整 Session。排障时能看到最终状态，但很难回看每一步 Graph 执行前后的状态变化。
+当前持久化主要是保存完整 Session。排障时能看到最终状态，但很难回看每一步 Graph 执行前后的状态变化。第一版轻量 checkpoint 已在 `internal/graph` 落地，用 runner 级 recorder 记录执行证据，不改变业务节点签名。
 
-建议新增轻量 checkpoint，不做完整 time travel UI：
+已落地模型：
 
 ```go
 type GraphCheckpoint struct {
+    Seq       int64
     SessionID string
     Step      int
+    Graph     string
+    Phase     CheckpointPhase
     Frontier  []string
     Node      string
+    Error     string
     Snapshot  []byte
     CreatedAt time.Time
 }
 ```
 
-落地策略：
+当前实现：
 
-- 内存模式使用 ring buffer。
-- PostgreSQL 模式可以单独建 checkpoint 表。
-- 只在 debug / test / degraded 场景开启，避免默认成本过高。
-- 先用于失败排障和回归测试，不承诺完整回滚能力。
+- 新增 `CheckpointRecorder`，通过 `Graph.WithCheckpointRecorder` 可选注入。
+- 新增 `MemoryCheckpointRecorder`，使用 ring buffer 只保留最近 N 条。
+- `Runnable.run` 记录 `frontier_before`、`frontier_after`、`frontier_error` 和 `suspended`。
+- `Resume` 记录 `resume_from`，其中 `Node` 是恢复来源，`Frontier` 是下一轮 frontier。
+- 线性 frontier 记录 `node_before`、`node_after`、`node_error`。
+- 并发 frontier 只记录 batch 级 checkpoint，不伪造节点级快照。
+
+当前边界：
+
+- 不写 PostgreSQL checkpoint 表。
+- 不实现 time travel、回滚或 UI。
+- 不改变 HTTP API、SSE、Session JSON 和 `NodeFunc`。
+- snapshot 使用 `json.Marshal(Session)`，只适合 debug / test / degraded 场景，不建议默认生产开启。
+- 并发 frontier 中如果出现 suspend，checkpoint 不把 `sess.CurrentNode` 当精确归因；这一点要等 13.1.4 并发写保护继续收口。
 
 收益：
 
