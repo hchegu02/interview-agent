@@ -35,6 +35,7 @@ const checkpointRecorderTimeout = 100 * time.Millisecond
 type Graph struct {
 	name      string
 	nodes     map[string]NodeFunc
+	specs     map[string]NodeSpec
 	edges     map[string][]string // from -> tos (多个表示 fan-out 并发)
 	routers   map[string]Router   // from -> 条件路由（与 edges 互斥）
 	entry     string
@@ -48,6 +49,7 @@ func New(name string) *Graph {
 	return &Graph{
 		name:     name,
 		nodes:    map[string]NodeFunc{},
+		specs:    map[string]NodeSpec{},
 		edges:    map[string][]string{},
 		routers:  map[string]Router{},
 		maxSteps: 200, // 全局步数兜底；业务循环用 WorkingMemory 预算更精确
@@ -57,6 +59,19 @@ func New(name string) *Graph {
 // AddNode 注册节点。重复注册会覆盖（最后一次生效）。
 func (g *Graph) AddNode(name string, fn NodeFunc) *Graph {
 	g.nodes[name] = fn
+	g.specs[name] = NodeSpec{Name: name, Fn: fn, kind: nodeKindLegacy}
+	return g
+}
+
+// AddNodeSpec 注册带写集元数据的节点。重复注册会覆盖（最后一次生效）。
+func (g *Graph) AddNodeSpec(spec NodeSpec) *Graph {
+	if spec.kind == nodeKindPatch {
+		g.nodes[spec.Name] = nil
+	} else {
+		g.nodes[spec.Name] = spec.Fn
+	}
+	spec.Writes = append([]string(nil), spec.Writes...)
+	g.specs[spec.Name] = spec
 	return g
 }
 
@@ -109,26 +124,26 @@ func (g *Graph) Compile() (*Runnable, error) {
 	if g.entry == "" {
 		return nil, fmt.Errorf("%w: entry not set", ErrInvalidConfig)
 	}
-	if _, ok := g.nodes[g.entry]; !ok {
+	if _, ok := g.specs[g.entry]; !ok {
 		return nil, fmt.Errorf("%w: entry node %q not registered", ErrInvalidConfig, g.entry)
 	}
 
 	for from, tos := range g.edges {
-		if _, ok := g.nodes[from]; !ok {
+		if _, ok := g.specs[from]; !ok {
 			return nil, fmt.Errorf("%w: edge from undefined node %q", ErrNodeNotFound, from)
 		}
 		for _, to := range tos {
 			if to == EndNode {
 				continue
 			}
-			if _, ok := g.nodes[to]; !ok {
+			if _, ok := g.specs[to]; !ok {
 				return nil, fmt.Errorf("%w: edge to undefined node %q (from %q)", ErrNodeNotFound, to, from)
 			}
 		}
 	}
 
 	for from := range g.routers {
-		if _, ok := g.nodes[from]; !ok {
+		if _, ok := g.specs[from]; !ok {
 			return nil, fmt.Errorf("%w: router on undefined node %q", ErrNodeNotFound, from)
 		}
 		if _, ok := g.edges[from]; ok {
@@ -202,7 +217,7 @@ func (r *Runnable) Resume(ctx context.Context, sess *domain.Session) error {
 	if current == "" {
 		return fmt.Errorf("%w: resume requires sess.CurrentNode", ErrInvalidConfig)
 	}
-	if _, ok := r.g.nodes[current]; !ok {
+	if _, ok := r.g.specs[current]; !ok {
 		return fmt.Errorf("%w: suspended node %q not in graph", ErrNodeNotFound, current)
 	}
 	// 从暂停节点的下游开始；当作"刚执行完该节点"的状态
@@ -298,6 +313,9 @@ func (r *Runnable) executeBatch(ctx context.Context, sess *domain.Session, nodes
 	if len(nodes) == 1 {
 		return r.executeNode(ctx, sess, nodes[0], step, true, true)
 	}
+	if err := r.validateConcurrentFrontier(nodes); err != nil {
+		return err
+	}
 
 	eg, ectx := errgroup.WithContext(ctx)
 	for _, name := range nodes {
@@ -312,10 +330,30 @@ func (r *Runnable) executeBatch(ctx context.Context, sess *domain.Session, nodes
 	return eg.Wait()
 }
 
+func (r *Runnable) validateConcurrentFrontier(nodes []string) error {
+	writers := make(map[string]string)
+	for _, name := range nodes {
+		spec, ok := r.g.specs[name]
+		if !ok {
+			return fmt.Errorf("%w: %q", ErrNodeNotFound, name)
+		}
+		if len(spec.Writes) == 0 {
+			return fmt.Errorf("%w: concurrent node %q has no declared writes", ErrInvalidConfig, name)
+		}
+		for _, write := range spec.Writes {
+			if prev, ok := writers[write]; ok {
+				return fmt.Errorf("%w: concurrent nodes %q and %q both write %q", ErrInvalidConfig, prev, name, write)
+			}
+			writers[write] = name
+		}
+	}
+	return nil
+}
+
 // executeNode 执行单个节点，前后调用 callback。
 func (r *Runnable) executeNode(ctx context.Context, sess *domain.Session, name string, step int, checkpointNode, writeCurrentNode bool) error {
 	g := r.g
-	fn, ok := g.nodes[name]
+	spec, ok := g.specs[name]
 	if !ok {
 		return fmt.Errorf("%w: %q", ErrNodeNotFound, name)
 	}
@@ -329,7 +367,7 @@ func (r *Runnable) executeNode(ctx context.Context, sess *domain.Session, name s
 	for _, cb := range g.callbacks {
 		cb.OnNodeStart(ctx, name, sess)
 	}
-	err := fn(ctx, sess)
+	err := r.callNode(ctx, sess, spec)
 	for _, cb := range g.callbacks {
 		if err != nil {
 			cb.OnNodeError(ctx, name, sess, err)
@@ -347,6 +385,26 @@ func (r *Runnable) executeNode(ctx context.Context, sess *domain.Session, name s
 		}
 	}
 	return err
+}
+
+func (r *Runnable) callNode(ctx context.Context, sess *domain.Session, spec NodeSpec) error {
+	if spec.kind == nodeKindPatch {
+		if spec.patch == nil {
+			return fmt.Errorf("%w: node %q has nil patch function", ErrInvalidConfig, spec.Name)
+		}
+		patch, err := spec.patch(ctx, sess)
+		if err != nil {
+			return err
+		}
+		if err := domain.ApplyStatePatch(sess, patch); err != nil {
+			return fmt.Errorf("%s: apply state patch: %w: %v", spec.Name, ErrPermanent, err)
+		}
+		return nil
+	}
+	if spec.Fn == nil {
+		return fmt.Errorf("%w: node %q has nil function", ErrInvalidConfig, spec.Name)
+	}
+	return spec.Fn(ctx, sess)
 }
 
 func (r *Runnable) recordCheckpoint(ctx context.Context, step int, phase CheckpointPhase, frontier []string, node, errMsg string, sess *domain.Session) {

@@ -111,3 +111,30 @@ func TestApplyStatePatch_ReplacesReport(t *testing.T) {
 		t.Fatalf("report = %+v", sess.Report)
 	}
 }
+
+func TestApplyStatePatch_ReplacesStatus(t *testing.T) {
+	status := StatusCompleted
+	sess := &Session{Status: StatusRunning}
+
+	if err := ApplyStatePatch(sess, StatePatch{Status: &status}); err != nil {
+		t.Fatalf("apply patch: %v", err)
+	}
+
+	if sess.Status != StatusCompleted {
+		t.Fatalf("status = %q, want completed", sess.Status)
+	}
+}
+
+func TestApplyStatePatch_ReplacesWorkingMemory(t *testing.T) {
+	mem := NewWorkingMemory()
+	mem.RoundsAsked = 3
+	sess := &Session{}
+
+	if err := ApplyStatePatch(sess, StatePatch{WorkingMemory: mem}); err != nil {
+		t.Fatalf("apply patch: %v", err)
+	}
+
+	if sess.WorkingMemory == nil || sess.WorkingMemory.RoundsAsked != 3 {
+		t.Fatalf("working memory = %+v", sess.WorkingMemory)
+	}
+}

@@ -67,6 +67,148 @@ func TestGraph_Linear(t *testing.T) {
 	}
 }
 
+func TestGraph_AddNodeLegacyLinearStillWorks(t *testing.T) {
+	var ran bool
+	g := New("legacy-linear").
+		AddNode("a", func(ctx context.Context, sess *domain.Session) error {
+			ran = true
+			sess.UserID = "legacy"
+			return nil
+		}).
+		Entry("a").
+		AddEdge("a", EndNode)
+
+	r, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	sess := &domain.Session{}
+	if err := r.Invoke(context.Background(), sess); err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	if !ran || sess.UserID != "legacy" {
+		t.Fatalf("legacy node did not run: ran=%v sess=%+v", ran, sess)
+	}
+}
+
+func TestGraph_PatchNodeAppliesStatePatch(t *testing.T) {
+	pool := []domain.Question{{ID: "q1", Content: "Redis AOF?"}}
+	g := New("patch-node").
+		AddNodeSpec(PatchNode("retrieve", []string{WriteCandidatePool}, func(ctx context.Context, sess *domain.Session) (domain.StatePatch, error) {
+			return domain.StatePatch{CandidatePool: &pool}, nil
+		})).
+		Entry("retrieve").
+		AddEdge("retrieve", EndNode)
+
+	r, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	sess := &domain.Session{}
+	if err := r.Invoke(context.Background(), sess); err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	if len(sess.CandidatePool) != 1 || sess.CandidatePool[0].ID != "q1" {
+		t.Fatalf("candidate pool = %+v", sess.CandidatePool)
+	}
+}
+
+func TestGraph_PatchNodeNilFuncReturnsInvalidConfig(t *testing.T) {
+	g := New("patch-node-nil").
+		AddNodeSpec(PatchNode("bad", []string{WriteReport}, nil)).
+		Entry("bad").
+		AddEdge("bad", EndNode)
+
+	r, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	err = r.Invoke(context.Background(), &domain.Session{})
+	if !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("invoke error = %v, want ErrInvalidConfig", err)
+	}
+}
+
+func TestGraph_PatchNodeApplyFailureIsPermanent(t *testing.T) {
+	g := New("patch-node-apply-failure").
+		AddNodeSpec(PatchNode("evaluate", []string{WriteCurrentEvaluation}, func(ctx context.Context, sess *domain.Session) (domain.StatePatch, error) {
+			return domain.StatePatch{CurrentEvaluation: &domain.Evaluation{QuestionID: "q1", Score: 80}}, nil
+		})).
+		Entry("evaluate").
+		AddEdge("evaluate", EndNode)
+
+	r, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	err = r.Invoke(context.Background(), &domain.Session{})
+	if !errors.Is(err, ErrPermanent) {
+		t.Fatalf("invoke error = %v, want ErrPermanent", err)
+	}
+	if !strings.Contains(err.Error(), "evaluate: apply state patch") {
+		t.Fatalf("error should include node name, got %v", err)
+	}
+}
+
+func TestGraph_ConcurrentFrontierRejectsConflictingWrites(t *testing.T) {
+	var ran int32
+	g := New("conflicting-writes").
+		AddNode("__START__", func(ctx context.Context, sess *domain.Session) error { return nil }).
+		AddNodeSpec(NodeSpec{
+			Name:   "a",
+			Fn:     func(ctx context.Context, sess *domain.Session) error { atomic.AddInt32(&ran, 1); return nil },
+			Writes: []string{WriteWorkingMemory},
+		}).
+		AddNodeSpec(NodeSpec{
+			Name:   "b",
+			Fn:     func(ctx context.Context, sess *domain.Session) error { atomic.AddInt32(&ran, 1); return nil },
+			Writes: []string{WriteWorkingMemory},
+		}).
+		Entry("__START__").
+		AddEdge("__START__", "a").
+		AddEdge("__START__", "b")
+
+	r, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if err := r.Invoke(context.Background(), &domain.Session{}); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("invoke error = %v, want ErrInvalidConfig", err)
+	}
+	if atomic.LoadInt32(&ran) != 0 {
+		t.Fatalf("conflicting nodes should not run, ran=%d", ran)
+	}
+}
+
+func TestGraph_ConcurrentFrontierRejectsLegacyNodeWithoutWrites(t *testing.T) {
+	var ran int32
+	g := New("legacy-parallel").
+		AddNode("__START__", func(ctx context.Context, sess *domain.Session) error { return nil }).
+		AddNode("legacy", func(ctx context.Context, sess *domain.Session) error {
+			atomic.AddInt32(&ran, 1)
+			return nil
+		}).
+		AddNodeSpec(NodeSpec{
+			Name:   "safe",
+			Fn:     func(ctx context.Context, sess *domain.Session) error { atomic.AddInt32(&ran, 1); return nil },
+			Writes: []string{WriteReport},
+		}).
+		Entry("__START__").
+		AddEdge("__START__", "legacy").
+		AddEdge("__START__", "safe")
+
+	r, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if err := r.Invoke(context.Background(), &domain.Session{}); !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("invoke error = %v, want ErrInvalidConfig", err)
+	}
+	if atomic.LoadInt32(&ran) != 0 {
+		t.Fatalf("unsafe frontier should not run, ran=%d", ran)
+	}
+}
+
 func TestGraph_CheckpointsLinearNodeSnapshots(t *testing.T) {
 	rec := NewMemoryCheckpointRecorder(20)
 	g := New("checkpoint-linear").
@@ -245,8 +387,8 @@ func TestGraph_ParallelFanOut(t *testing.T) {
 	// __START__ → {a, b} → c
 	g := New("parallel").
 		AddNode("__START__", recorder(&trace, &mu, "start")).
-		AddNode("a", recorder(&trace, &mu, "a")).
-		AddNode("b", recorder(&trace, &mu, "b")).
+		AddNodeSpec(NodeSpec{Name: "a", Fn: recorder(&trace, &mu, "a"), Writes: []string{WriteCandidatePool}}).
+		AddNodeSpec(NodeSpec{Name: "b", Fn: recorder(&trace, &mu, "b"), Writes: []string{WriteReport}}).
 		AddNode("c", recorder(&trace, &mu, "c")).
 		Entry("__START__").
 		AddEdge("__START__", "a").
@@ -287,8 +429,8 @@ func TestGraph_CheckpointsParallelFrontierIsBatchOnly(t *testing.T) {
 
 	g := New("checkpoint-parallel").
 		AddNode("__START__", recorder(&trace, &mu, "start")).
-		AddNode("a", recorder(&trace, &mu, "a")).
-		AddNode("b", recorder(&trace, &mu, "b")).
+		AddNodeSpec(NodeSpec{Name: "a", Fn: recorder(&trace, &mu, "a"), Writes: []string{WriteCandidatePool}}).
+		AddNodeSpec(NodeSpec{Name: "b", Fn: recorder(&trace, &mu, "b"), Writes: []string{WriteReport}}).
 		AddNode("c", recorder(&trace, &mu, "c")).
 		Entry("__START__").
 		AddEdge("__START__", "a").
@@ -331,8 +473,16 @@ func TestGraph_FanInDedup(t *testing.T) {
 
 	g := New("fanin").
 		AddNode("__START__", func(ctx context.Context, s *domain.Session) error { return nil }).
-		AddNode("a", func(ctx context.Context, s *domain.Session) error { return nil }).
-		AddNode("b", func(ctx context.Context, s *domain.Session) error { return nil }).
+		AddNodeSpec(NodeSpec{
+			Name:   "a",
+			Fn:     func(ctx context.Context, s *domain.Session) error { return nil },
+			Writes: []string{WriteCandidatePool},
+		}).
+		AddNodeSpec(NodeSpec{
+			Name:   "b",
+			Fn:     func(ctx context.Context, s *domain.Session) error { return nil },
+			Writes: []string{WriteReport},
+		}).
 		AddNode("c", func(ctx context.Context, s *domain.Session) error {
 			atomic.AddInt32(&cCount, 1)
 			return nil
@@ -842,12 +992,18 @@ func TestGraph_CheckpointsParallelSuspendDoesNotClaimNode(t *testing.T) {
 	rec := NewMemoryCheckpointRecorder(20)
 	g := New("checkpoint-parallel-suspend").
 		AddNode("__START__", func(ctx context.Context, sess *domain.Session) error { return nil }).
-		AddNode("a", func(ctx context.Context, sess *domain.Session) error {
-			return ErrSuspended
+		AddNodeSpec(NodeSpec{
+			Name:   "a",
+			Fn:     func(ctx context.Context, sess *domain.Session) error { return ErrSuspended },
+			Writes: []string{WriteSuspension},
 		}).
-		AddNode("b", func(ctx context.Context, sess *domain.Session) error {
-			sess.UserID = "b-ran"
-			return nil
+		AddNodeSpec(NodeSpec{
+			Name: "b",
+			Fn: func(ctx context.Context, sess *domain.Session) error {
+				sess.UserID = "b-ran"
+				return nil
+			},
+			Writes: []string{WriteReport},
 		}).
 		Entry("__START__").
 		AddEdge("__START__", "a").

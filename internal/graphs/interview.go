@@ -48,16 +48,37 @@ func BuildInterviewGraph(deps Deps) (*graph.Runnable, error) {
 		AddNode(nodeParseResume, nodes.NewParseResumeNode(deps.Model)).
 		AddNode(nodeGapAnalyze, nodes.NewGapAnalyzeNode(deps.Model)).
 		AddNode(nodeAnalyzeProfile, nodes.NewAnalyzeProfileNode()).
-		AddNode(nodeRetrieveRAG, nodes.NewRetrieveRAGNode(deps.Embedder, deps.Retriever, nodes.RetrieveRAGOptions{})).
-		AddNode(nodes.NodePickNext, nodes.NewPickNextNode(deps.Model, nodes.PickNextOptions{})).
-		AddNode(nodes.NodeEvaluate, nodes.NewEvaluateNode(deps.Model, nodes.EvaluateOptions{})).
+		AddNodeSpec(graph.NodeSpec{
+			Name:   nodeRetrieveRAG,
+			Fn:     nodes.NewRetrieveRAGNode(deps.Embedder, deps.Retriever, nodes.RetrieveRAGOptions{}),
+			Writes: []string{graph.WriteCandidatePool, graph.WriteRetrievalTrace, graph.WriteWorkingMemory},
+		}).
+		AddNodeSpec(graph.NodeSpec{
+			Name: nodes.NodePickNext,
+			Fn:   nodes.NewPickNextNode(deps.Model, nodes.PickNextOptions{}),
+			Writes: []string{
+				graph.WritePendingDecision,
+				graph.WriteRounds,
+				graph.WriteWorkingMemory,
+				graph.WriteSuspension,
+			},
+		}).
+		AddNodeSpec(graph.NodeSpec{
+			Name:   nodes.NodeEvaluate,
+			Fn:     nodes.NewEvaluateNode(deps.Model, nodes.EvaluateOptions{}),
+			Writes: []string{graph.WritePendingDecision, graph.WriteCurrentEvaluation, graph.WriteWorkingMemory},
+		}).
 		AddNode(nodeCritic, nodes.NewCriticNode(deps.Model, nodes.CriticOptions{})).
 		AddNode(nodes.NodeRefine, nodes.NewRefineNode(deps.Model, nodes.RefineOptions{})).
 		AddNode(nodes.NodeProbeAsk, nodes.NewProbeAskNode(deps.Model, nodes.ProbeAskOptions{})).
 		AddNode(nodeProbeEval, nodes.NewProbeEvalNode(deps.Model, nodes.ProbeEvalOptions{})).
 		AddNode(nodes.NodeUpdateMemory, nodes.NewUpdateMemoryNode(nodes.UpdateMemoryOptions{})).
 		AddNode(nodeReflectionCheck, nodes.NewReflectionCheckNode(deps.Model, nodes.ReflectionCheckOptions{})).
-		AddNode(nodes.NodeReport, nodes.NewReportNode()).
+		AddNodeSpec(graph.NodeSpec{
+			Name:   nodes.NodeReport,
+			Fn:     nodes.NewReportNode(),
+			Writes: []string{graph.WritePendingDecision, graph.WriteReport, graph.WriteStatus, graph.WriteWorkingMemory},
+		}).
 		Entry(nodeParseJD).
 		AddEdge(nodeParseJD, nodeParseResume).
 		AddEdge(nodeParseResume, nodeGapAnalyze).

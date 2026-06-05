@@ -426,9 +426,9 @@ type GraphCheckpoint struct {
 
 #### 13.1.4 并发写保护
 
-当前 frontier 可以并发执行多个节点。runner 已避免在并发节点 goroutine 内写 `CurrentNode`，但业务节点本身仍依赖“并发节点写 disjoint 字段”的约定。这个约定需要变成可检查的结构。
+当前 frontier 可以并发执行多个节点。runner 已避免在并发节点 goroutine 内写 `CurrentNode`，但业务节点本身仍依赖“并发节点写 disjoint 字段”的约定。第一版并发写保护已在 `internal/graph` 落地，把这个约定变成 runner 可检查规则。
 
-建议扩展节点注册信息：
+已落地模型：
 
 ```go
 type NodeSpec struct {
@@ -436,14 +436,33 @@ type NodeSpec struct {
     Fn     NodeFunc
     Writes []string
 }
+
+type PatchNodeFunc func(context.Context, *domain.Session) (domain.StatePatch, error)
 ```
 
-Compile 阶段或测试阶段检查同一 frontier 中是否存在相同写字段。短期可以只作为测试工具，不一定进入生产 runner。
+当前实现：
+
+- `AddNode(name, fn)` 继续保留，作为 legacy 线性兼容入口。
+- `AddNodeSpec(spec)` 支持声明节点写集。
+- `PatchNode(name, writes, fn)` 支持 patch-aware 节点，由 runner 统一调用 `domain.ApplyStatePatch`。
+- 并发 frontier 执行前检查写集：
+  - legacy 节点没有 `Writes` 时，不允许参与并发 frontier。
+  - 两个节点 `Writes` 有交集时，不允许并发执行。
+  - 写集 disjoint 时，允许并发执行。
+- `internal/graphs.BuildInterviewGraph` 已给 `retrieve_rag`、`pick_next`、`evaluate`、`report` 等关键节点声明写集；其中 `report` 声明了 `pending_decision/report/status/working_memory`。
+
+当前边界：
+
+- 未删除 `NodeFunc`，未强制所有节点一次性迁移。
+- 未改变 HTTP API、SSE、Session JSON 或数据库 schema。
+- patch-aware 能力已在 Graph 层可用，但业务节点仍以兼容迁移为主；不是完整 LangGraph runtime。
+- 写集是粗粒度 key，宁可保守拒绝一部分并发组合，也不放过明显冲突。
 
 收益：
 
 - 把并发写约定从注释变成检查。
 - 比单纯依赖 `go test -race` 更早发现设计冲突。
+- 为 checkpoint 记录 patch、agent-verify 检查节点写入边界打基础。
 - 后续新增 Router、Memory、Difficulty 节点时风险更低。
 
 #### 13.1.5 状态分层原则

@@ -7,8 +7,9 @@
 //  4. 全局步数预算（maxSteps）兜底循环，配合 WorkingMemory 业务预算双保险
 //
 // 为什么自研而不引 Eino：
-//   工程亮点（拓扑分析、errgroup、装饰器链、循环兜底）全在自己代码里，
-//   面试时每一段都能讲；Eino 替代实现 ~50 行，但工程深度被框架吞掉。
+//
+//	工程亮点（拓扑分析、errgroup、装饰器链、循环兜底）全在自己代码里，
+//	面试时每一段都能讲；Eino 替代实现 ~50 行，但工程深度被框架吞掉。
 //
 // 文件分布：
 //   - node.go        : 类型 + 错误集中定义
@@ -23,6 +24,19 @@ import (
 	"interview-agent/internal/domain"
 )
 
+const (
+	WriteCandidatePool          = "candidate_pool"
+	WriteRetrievalTrace         = "retrieval_trace"
+	WritePendingDecision        = "pending_decision"
+	WriteRounds                 = "rounds"
+	WriteCurrentEvaluation      = "current_evaluation"
+	WriteCurrentRoundCompletion = "current_round_completion"
+	WriteReport                 = "report"
+	WriteStatus                 = "status"
+	WriteWorkingMemory          = "working_memory"
+	WriteSuspension             = "suspension"
+)
+
 // NodeFunc 是节点的统一签名。
 //
 // 为什么不用泛型 In/Out：
@@ -31,9 +45,33 @@ import (
 //     跨节点状态变得很别扭
 //   - 简化 Graph 实现，~200 行 vs ~600 行
 //
-// 代价：节点作者负责不并发写到同一字段。并发节点的字段写入必须 disjoint。
-// 单测里 -race 会捕获违规。
+// 代价：legacy 节点仍可在线性流程里直接写 Session；并发节点必须通过
+// NodeSpec.Writes 声明写集，由 runner 在执行前检查冲突。
 type NodeFunc func(ctx context.Context, sess *domain.Session) error
+
+type PatchNodeFunc func(ctx context.Context, sess *domain.Session) (domain.StatePatch, error)
+
+type nodeKind int
+
+const (
+	nodeKindLegacy nodeKind = iota
+	nodeKindPatch
+)
+
+// NodeSpec 描述一个 Graph 节点及其写入边界。
+// Writes 是粗粒度 Session 字段 key，用于并发 frontier 写冲突检查。
+type NodeSpec struct {
+	Name   string
+	Fn     NodeFunc
+	Writes []string
+	kind   nodeKind
+	patch  PatchNodeFunc
+}
+
+// PatchNode 构造由 runner 统一 ApplyStatePatch 的节点规格。
+func PatchNode(name string, writes []string, fn PatchNodeFunc) NodeSpec {
+	return NodeSpec{Name: name, Writes: append([]string(nil), writes...), kind: nodeKindPatch, patch: fn}
+}
 
 // Router 是条件分支节点的下游决策函数。
 //

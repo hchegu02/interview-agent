@@ -16,6 +16,8 @@ type StatePatch struct {
 	CurrentEvaluation    *Evaluation
 	CompleteCurrentRound *time.Time
 	Report               *Report
+	Status               *SessionStatus
+	WorkingMemory        *WorkingMemory
 }
 
 // ApplyStatePatch 把结构化 patch 应用到 Session。
@@ -55,6 +57,12 @@ func ApplyStatePatch(sess *Session, patch StatePatch) error {
 	}
 	if patch.Report != nil {
 		sess.Report = patch.Report
+	}
+	if patch.Status != nil {
+		sess.Status = *patch.Status
+	}
+	if patch.WorkingMemory != nil {
+		sess.WorkingMemory = patch.WorkingMemory
 	}
 	return nil
 }
