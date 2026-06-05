@@ -75,9 +75,13 @@ func NewReportNodeWithHook(hook agentkit.Hook) graph.NodeFunc {
 			Improvements:       reportImprovements(sess),
 			NextSteps:          reportNextSteps(sess),
 		}
-		sess.Report = report
+		if err := applyNodePatch(sess, "report", domain.StatePatch{
+			ClearPendingDecision: true,
+			Report:               report,
+		}); err != nil {
+			return err
+		}
 		sess.Status = domain.StatusCompleted
-		sess.PendingDecision = nil
 		return nil
 	}
 }

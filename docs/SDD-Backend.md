@@ -339,24 +339,36 @@ type Suspension struct {
 
 #### 13.1.2 StatePatch / 局部状态更新
 
-当前节点直接修改 `*domain.Session`。这对单线程线性流程足够简单，但节点增多、fan-out 并发增多后，容易出现多个节点写同一字段的问题。
+当前节点仍以 `*domain.Session` 作为共享状态。第一阶段已经引入轻量 `StatePatch`，把高风险节点的核心写入收敛到统一 apply 入口，但没有改变 `graph.NodeFunc` 签名。
 
-建议先不全量重写 NodeFunc，而是在高风险节点逐步引入 `StatePatch`：
+已落地的 patch 模型：
 
 ```go
 type StatePatch struct {
-    CandidatePool   *[]domain.Question
-    RetrievalTrace  *domain.RetrievalTrace
-    PendingDecision *domain.Decision
-    AppendRound     *domain.AnswerRound
+    CandidatePool        *[]Question
+    RetrievalTrace       *RetrievalTrace
+    PendingDecision      *Decision
+    ClearPendingDecision bool
+    AppendRound          *AnswerRound
+    CurrentEvaluation    *Evaluation
+    CompleteCurrentRound *time.Time
+    Report               *Report
 }
 ```
 
-演进方式：
+当前实现：
 
-- 第一阶段只覆盖 `retrieve_rag`、`pick_next`、`evaluate`、`report` 等关键节点。
-- Runner 或 service 层统一 apply patch。
-- append、overwrite、merge 规则写清楚，不让节点随意改大对象。
+- `internal/domain.ApplyStatePatch` 统一处理 replace、append、current round 写入和错误返回。
+- `retrieve_rag` 通过 patch 写 `CandidatePool` / `RetrievalTrace`。
+- `pick_next` 通过 patch 写 `PendingDecision` / append `AnswerRound`，`WorkingMemory.RoundsAsked` 暂时仍直接写。
+- `evaluate` 通过 patch 写当前轮 `Evaluation` 并清理 `PendingDecision`。
+- `report` 通过 patch 写 `Report` 并清理 `PendingDecision`。
+
+当前边界：
+
+- `NodeFunc` 仍返回 `error`，节点在内部调用 patch helper；Graph runner 还不记录 patch。
+- `WorkingMemory`、`Status`、`CriticResult`、`FollowUps` 等字段还未纳入 patch，后续按风险逐步迁移。
+- `RetrievalTrace` 和 `Report` 指针保持当前状态写入语义，HTTP 响应层负责 clone。
 
 收益：
 

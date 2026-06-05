@@ -130,15 +130,17 @@ func NewEvaluateNode(model llm.ChatModel, opts EvaluateOptions) graph.NodeFunc {
 
 		// 1. 空答案短路
 		if strings.TrimSpace(round.Answer) == "" {
-			round.Evaluation = &domain.Evaluation{
+			eval := &domain.Evaluation{
 				QuestionID: round.Question.ID,
 				Score:      0,
 				Strengths:  []string{},
 				Weaknesses: []string{"候选人未作答"},
 				Suggestion: "本题未作答,建议下次至少给出思考方向",
 			}
-			sess.PendingDecision = nil
-			return nil
+			return applyNodePatch(sess, "evaluate", domain.StatePatch{
+				ClearPendingDecision: true,
+				CurrentEvaluation:    eval,
+			})
 		}
 
 		// 2. LLM 评估
@@ -146,21 +148,24 @@ func NewEvaluateNode(model llm.ChatModel, opts EvaluateOptions) graph.NodeFunc {
 		if err != nil {
 			// 3. 降级:写一个明显标识"评估失败"的 eval,会话继续
 			markEvalFallback(sess, err.Error())
-			round.Evaluation = &domain.Evaluation{
+			eval := &domain.Evaluation{
 				QuestionID: round.Question.ID,
 				Score:      -1,
 				Strengths:  []string{},
 				Weaknesses: []string{},
 				Suggestion: fmt.Sprintf("评估失败(降级): %s", err.Error()),
 			}
-			sess.PendingDecision = nil
-			return nil
+			return applyNodePatch(sess, "evaluate", domain.StatePatch{
+				ClearPendingDecision: true,
+				CurrentEvaluation:    eval,
+			})
 		}
 
-		round.Evaluation = eval
-		sess.PendingDecision = nil
 		// 注意:CompletedAt 不在这里写,留给 update_memory 节点统一标记
-		return nil
+		return applyNodePatch(sess, "evaluate", domain.StatePatch{
+			ClearPendingDecision: true,
+			CurrentEvaluation:    eval,
+		})
 	}
 }
 

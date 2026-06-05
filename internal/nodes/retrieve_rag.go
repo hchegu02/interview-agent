@@ -148,8 +148,8 @@ func NewRetrieveRAGNode(
 		vectors, err := embedder.Embed(ctx, []string{queryText})
 		if err != nil || len(vectors) != 1 || len(vectors[0]) == 0 {
 			markDegraded(sess, fmt.Sprintf("embed failed: %v", err))
-			sess.CandidatePool = cloneFallback(targetDiff, sess.QuestionBankFilter)
-			return nil
+			pool := cloneFallback(targetDiff, sess.QuestionBankFilter)
+			return applyNodePatch(sess, "retrieve_rag", domain.StatePatch{CandidatePool: &pool})
 		}
 
 		// 2. Retrieve
@@ -170,15 +170,13 @@ func NewRetrieveRAGNode(
 		results, trace, err := retrieveWithTrace(ctx, r, query)
 		if err != nil {
 			markDegraded(sess, fmt.Sprintf("retrieve failed: %v", err))
-			sess.CandidatePool = cloneFallback(targetDiff, sess.QuestionBankFilter)
-			sess.RetrievalTrace = trace
-			return nil
+			pool := cloneFallback(targetDiff, sess.QuestionBankFilter)
+			return applyNodePatch(sess, "retrieve_rag", domain.StatePatch{CandidatePool: &pool, RetrievalTrace: trace})
 		}
 		if len(results) == 0 {
 			markDegraded(sess, "retrieve returned 0 results")
-			sess.CandidatePool = cloneFallback(targetDiff, sess.QuestionBankFilter)
-			sess.RetrievalTrace = trace
-			return nil
+			pool := cloneFallback(targetDiff, sess.QuestionBankFilter)
+			return applyNodePatch(sess, "retrieve_rag", domain.StatePatch{CandidatePool: &pool, RetrievalTrace: trace})
 		}
 
 		// 3. 写候选池
@@ -194,9 +192,7 @@ func NewRetrieveRAGNode(
 				ExpectedPoints: append([]string(nil), res.ExpectedPoints...),
 			})
 		}
-		sess.CandidatePool = pool
-		sess.RetrievalTrace = trace
-		return nil
+		return applyNodePatch(sess, "retrieve_rag", domain.StatePatch{CandidatePool: &pool, RetrievalTrace: trace})
 	}
 }
 

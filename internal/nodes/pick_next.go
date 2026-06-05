@@ -58,10 +58,11 @@ type pickNextShape struct {
 // NewPickNextNode 构造 pick_next 节点。
 //
 // 节点契约:
-//   输入: sess.JobProfile / sess.GapReport / sess.CandidatePool / sess.WorkingMemory
-//   输出:
-//     - 正常出题: sess.PendingDecision (Action=ask_new) + Rounds 追加新 round + 返回 ErrSuspended
-//     - 结束面试: sess.PendingDecision (Action=end) + 返回 nil
+//
+//	输入: sess.JobProfile / sess.GapReport / sess.CandidatePool / sess.WorkingMemory
+//	输出:
+//	  - 正常出题: sess.PendingDecision (Action=ask_new) + Rounds 追加新 round + 返回 ErrSuspended
+//	  - 结束面试: sess.PendingDecision (Action=end) + 返回 nil
 //
 // model 可为 nil(测试 / 完全规则模式),走降级路径。
 func NewPickNextNode(model llm.ChatModel, opts PickNextOptions) graph.NodeFunc {
@@ -102,12 +103,12 @@ func NewPickNextNode(model llm.ChatModel, opts PickNextOptions) graph.NodeFunc {
 			if len(pool) == 0 {
 				reason = "候选题池已耗尽,转生成报告"
 			}
-			sess.PendingDecision = &domain.Decision{
+			decision := &domain.Decision{
 				Action:    domain.ActionEnd,
 				Reasoning: reason,
 				DecidedAt: time.Now(),
 			}
-			return nil
+			return applyNodePatch(sess, "pick_next", domain.StatePatch{PendingDecision: decision})
 		}
 
 		// 3. 如果 reflection_check 指定了补漏 topic,优先缩小候选池
@@ -127,18 +128,24 @@ func NewPickNextNode(model llm.ChatModel, opts PickNextOptions) graph.NodeFunc {
 
 		// 5. 写 PendingDecision + 新建 round
 		now := time.Now()
-		sess.PendingDecision = &domain.Decision{
+		decision := &domain.Decision{
 			Action:         domain.ActionAskNew,
 			Reasoning:      reasoning,
 			NextQuestionID: picked.ID,
 			DecidedAt:      now,
 		}
-		sess.Rounds = append(sess.Rounds, domain.AnswerRound{
+		round := &domain.AnswerRound{
 			RoundID:    fmt.Sprintf("r%d-%d", len(sess.Rounds)+1, now.UnixNano()),
 			Question:   picked,
 			PickReason: reasoning,
 			DecidedAt:  now,
-		})
+		}
+		if err := applyNodePatch(sess, "pick_next", domain.StatePatch{
+			PendingDecision: decision,
+			AppendRound:     round,
+		}); err != nil {
+			return err
+		}
 		mem.RoundsAsked++
 
 		// 6. suspend 等用户答题
