@@ -96,10 +96,11 @@
 - 输入自然语言任务。
 - 调用后端 Intent Router + Skill。
 - 展示 `intent`、`skill`、`confidence`、`reason` 和 `result`。
+- 当后端返回 `tool_trace` 时，只读展示工具名、权限、状态、错误类别、耗时和摘要。
 - 对 `start_interview` 动作跳转到 JD 页面。
 - 对 `start_drill` 动作把训练主题写入 JD 草稿。
 
-前端不实现意图判断、Skill 执行、工具调用或权限判断。
+前端不实现意图判断、Skill 执行、工具调用、MCP 访问或权限判断；`tool_trace` 只是后端响应的展示字段。
 
 ### 4.6 UserMemoryPage
 
@@ -140,6 +141,8 @@
 - `Report`
 - `RetrievalTrace`
 - `QuestionBankFilter`
+- `AgentResponse`
+- `ToolTrace`
 
 ## 6. API 对齐
 
@@ -212,6 +215,7 @@ npm --prefix web run build
 - 报告 helper。
 - 报告页 `retrieval_trace` 展示。
 - 面试页 / 报告页 `working_memory` 只读展示。
+- Agent 页 `tool_trace` 只读展示和缺字段兼容。
 
 ## 10. 后续演进计划
 
@@ -228,7 +232,7 @@ npm --prefix web run build
   -> 前端按响应展示测验、讲解、项目润色或面试入口
 ```
 
-前端不实现 intent 判断，只展示后端路由结果。后续若后端新增结构化 tool trace 字段，前端再增加只读展示。
+前端不实现 intent 判断，只展示后端路由结果和可选 `tool_trace`。
 
 ### 10.2 Long-term Memory 展示
 
@@ -247,7 +251,9 @@ npm --prefix web run build
 
 ### 10.4 MCP 工具结果展示
 
-后端已有 mock MCP tool adapter，`project_polish` 可以调用 `github.project_analyze` 并返回项目润色建议。当前 `/api/agent/message` 响应主要通过 `result.content/actions` 表达结果，尚无结构化 tool trace 字段；前端最小展示不应从文案里反推工具状态。
+后端已有 mock MCP tool adapter 和显式注入的真实 GitHub 只读 client 边界，`project_polish` 可以调用 `github.project_analyze` 并返回项目润色建议。当前 `/api/agent/message` 响应通过 `result.content/actions` 表达业务结果，并通过顶层 `tool_trace` 返回工具调用摘要。
+
+前端已在 Agent 页只读展示 `tool_trace`，字段包括工具名、权限、状态、错误类别、耗时和摘要。缺少 `tool_trace` 时保持原有页面行为，不从文案里反推工具状态。
 
 前端不直接调用外部 MCP 服务。
 

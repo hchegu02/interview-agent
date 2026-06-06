@@ -33,8 +33,8 @@
 
 ## 6. 文档和收口
 
-- [ ] 6.1 更新 `docs/SDD-Backend.md`，同步真实身份边界、长期记忆观测、真实工具 MVP、tool trace 和验证门禁。
-- [ ] 6.2 更新 `docs/SDD-Frontend.md`，同步前端只读展示 `tool_trace` 且不直接调用 MCP 服务。
-- [ ] 6.3 若本 change 修改代码，按项目规则新增或更新 `docs/code-changes/MM-DD-简短变更名.md`。
-- [ ] 6.4 运行最小必要验证：`go test ./... -count=1`、`npm --prefix web run test`、`npm --prefix web run build`、`go run ./cmd/agent-verify -session testdata/agent_verify/pass_session.json -tool-events testdata/agent_verify/pass_tool_events.json`。
-- [ ] 6.5 运行 `openspec validate production-agent-boundaries --strict` 并确认通过。
+- [x] 6.1 更新 `docs/SDD-Backend.md`，同步真实身份边界、长期记忆观测、真实工具 MVP、tool trace 和验证门禁。
+- [x] 6.2 更新 `docs/SDD-Frontend.md`，同步前端只读展示 `tool_trace` 且不直接调用 MCP 服务。
+- [x] 6.3 若本 change 修改代码，按项目规则新增或更新 `docs/code-changes/MM-DD-简短变更名.md`。
+- [x] 6.4 运行最小必要验证：`go test ./... -count=1`、`npm --prefix web run test`、`npm --prefix web run build`、`go run ./cmd/agent-verify -session testdata/agent_verify/pass_session.json -tool-events testdata/agent_verify/pass_tool_events.json -memory-observations testdata/agent_verify/pass_memory_observations.json`。
+- [x] 6.5 运行 `openspec validate production-agent-boundaries --strict` 并确认通过。

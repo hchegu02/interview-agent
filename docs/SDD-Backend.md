@@ -67,6 +67,8 @@ REST 请求
 | `GET` | `/api/question-bank` | 题库查询 |
 | `GET` | `/api/question-bank/:id` | 题目详情 |
 | `GET` | `/api/question-bank/facets` | 题库筛选项 |
+| `GET` | `/api/users/:user_id/memory` | 只读长期用户画像 |
+| `POST` | `/api/agent/message` | Intent Router + Skill 消息入口 |
 
 接口兼容原则：
 
@@ -269,7 +271,7 @@ rerank 用于：
 go test ./... -count=1
 go run ./cmd/rag-eval -cases testdata/rag/golden_queries.jsonl -config config/config.yaml.example -out tmp/eval/rag -min-recall-at-5 0.70 -min-recall-at-10 0.80 -min-mrr-at-k 0.90 -min-ndcg-at-k 0.75 -min-group-cases 3 -min-group-recall-at-5 0.50 -min-stage-recall-at-5 vector=0.70,bm25=0.65,rule=0.60,rrf=0.75,rerank=0.70 -min-stage-mrr-at-k rrf=0.88,rerank=0.90
 go run ./cmd/questionbank-lint -seed seeds/question_bank.json -min-expected-points 3 -min-scenario-ratio 0.8
-go run ./cmd/agent-verify -session testdata/agent_verify/pass_session.json -tool-events testdata/agent_verify/pass_tool_events.json
+go run ./cmd/agent-verify -session testdata/agent_verify/pass_session.json -tool-events testdata/agent_verify/pass_tool_events.json -memory-observations testdata/agent_verify/pass_memory_observations.json
 ```
 
 本地统一门禁：
@@ -292,6 +294,7 @@ npm --prefix web run build
 - RAG 修改必须跑 RAG eval。
 - Agent 输出结构修改必须跑 agent-verify。
 - Tool / MCP adapter 或 Skill 工具链路修改必须跑带 `-tool-events` 的 agent-verify。
+- 长期记忆写入观测修改必须跑带 `-memory-observations` 的 agent-verify 或对应 Go 测试。
 - `/api/agent/message` 或 Skill 工具链路修改必须跑相关 HTTP / skill 测试。
 - HTTP API 修改必须跑相关 Go 测试。
 - 前端类型和页面修改必须跑前端测试和 build。
@@ -636,6 +639,7 @@ type Store interface {
 - `PGStore` 是 PostgreSQL 长期记忆实现，以 `user_id` 为主键，把用户画像保存到 `user_memory.memory_json`，用 `updated_at` 记录画像更新时间，并通过 `row_version` 做 CAS 写入。
 - `InterviewService.Start` 在 Graph 执行前按 `UserID` 读取长期记忆，把历史弱点 topic 注入当前 `WorkingMemory.WeakSkills`，并把低分技能保守映射为较低 `SkillCoverage` 初值；读取失败只写 `WorkingMemory.DegradedReasons["memory"]`，不阻断面试启动。
 - `InterviewService.Answer` 在 Session 完成并保存后，会把 Report 非阻塞沉淀到长期记忆 Store；服务层串行化 `Get -> Apply -> Upsert`，避免当前进程内并发完成同一用户多场面试时丢更新。
+- 长期记忆写入会记录结构化观测事件，覆盖 success、skipped、failed 和 CAS 冲突重试耗尽；Debug 日志只输出 status、reason、error_class、attempts、elapsed_ms，不输出完整回答、报告正文、token 或原始 user/session 字段。
 - `cmd/server` 无 PostgreSQL 时注入内存长期记忆 Store；配置 PostgreSQL 时注入 `memory.PGStore`，让长期画像跨进程和重启保留。
 - `GET /api/users/:user_id/memory` 返回只读用户画像，用于前端展示长期强项、弱项、技能分数和复习建议。
 - 画像读取 API 已有最小 ownership 边界：默认开发 resolver 从 `X-User-ID` 或 `owner_user_id` 解析当前 owner，并要求 owner 与 path `user_id` 一致；缺少 owner 信息返回 401，owner 不匹配返回 403。`Server` 支持注入 `UserMemoryOwnerResolver` / `UserMemoryAuthorizer`，后续可替换为真实身份体系。
@@ -649,6 +653,7 @@ type Store interface {
 - 不提供长期画像编辑 API。
 - 不引入完整 JWT 或会话认证；当前只提供可插拔 owner resolver / authorizer 和最小读取隔离边界。
 - 长期记忆写入失败不阻断面试完成响应。
+- 长期记忆观测当前是日志和测试/验证用 observer，不等同于完整 metrics sink。
 
 长期记忆已经能影响新 Session 的当前面试策略初值，但不能覆盖 Session 内已经发生的题目、轮次、报告等事实。PG 模式下长期画像写入已使用数据库级 CAS / 乐观锁；内存 Store 仍只适合本地单进程演示。
 
@@ -725,20 +730,24 @@ evaluate
 - `ToolRegistry.List` 稳定返回已注册工具清单。
 - `MockMCPClient` 提供 deterministic mock 输出，便于本地测试和演示。
 - `RegisterDefaultMCPTools` 注册默认 mock MCP 工具。
+- `GitHubProjectClient` 是显式注入的真实只读 GitHub client，读取 `/repos/{owner}/{repo}` 公开元数据；零值缺 `HTTPClient` 或 `BaseURL` 时返回 `config_missing`，不会默认联网。
 - `github.project_analyze` 返回项目摘要、主要语言、亮点和风险点。
 - `web.fetch` 返回 URL、标题和正文摘要。
 - 所有工具调用仍经过 `ToolRegistry.Call` 的权限、超时和 before/after hook。
-- `agent-verify -tool-events` 已能校验工具 before/after hook 成对、权限为 `read_only`、after 无错误，并确认默认 `github.project_analyze` 调用存在。
+- Tool after hook 会记录 `success/failed` 状态；失败时优先记录 `MCPToolError.Code` 作为 `error_class`。
+- `agent-verify -tool-events` 已能校验工具 before/after hook 成对、权限为 `read_only`、after status、失败错误类别，并确认默认 `github.project_analyze` 调用存在。
+- `agent-verify -memory-observations` 已能校验长期记忆观测 fixture；长期记忆写入失败本身不阻断完整 Session 的验证通过，但必须包含稳定错误类别。
 - `ReportCompletenessVerifier` 会检查 report/session id 一致性、分数范围、技能拆解、转录分析、训练计划、改进建议和下一步。
 - `RetrievalTraceVerifier` 会检查 query、候选非空、final 去重、rank/score 合法等基础质量。
 
-当前工具只是 mock foundation：
+当前工具边界：
 
-- 不接真实 GitHub API。
+- 默认服务仍注册 deterministic mock 工具，不默认访问真实 GitHub。
+- 真实 GitHub client 需要装配层显式注入 HTTP client 和 API BaseURL。
 - 不接真实网页抓取。
 - 不实现完整 MCP Server / Client 协议生命周期。
 - 不实现 Gateway、daemon、Sandbox 或 runtime sub-agent。
-- 不改变 `/api/agent/message` 响应结构。
+- `/api/agent/message` 只暴露顶层 `tool_trace,omitempty`，不暴露底层工具输入、token、HTTP body 或 `result.tool_trace`。
 
 已接入 Skill 链路：
 
@@ -747,15 +756,17 @@ evaluate
 - `ProjectPolishSkill` 优先从 `context.github_url`、`context.github`、`context.repo_url` 读取 GitHub URL，其次从用户消息中识别 `github.com/owner/repo`。
 - 有 GitHub URL 且工具可用时，`ProjectPolishSkill` 通过 `ToolRegistry.Call` 调用 `github.project_analyze`。
 - 工具成功时，输出融合 mock 项目摘要、亮点和风险点。
+- 工具成功或失败都会生成内部 trace，并由 `AgentService` 提升到 `AgentResponse.tool_trace` 顶层字段。
 - 没有 URL、没有工具或工具失败时，降级到原通用项目亮点提炼建议，不中断 `/api/agent/message`。
 
 后续真实工具接入后的用途：
 
 ```text
 用户输入 GitHub 项目地址
-  -> 后续接入真实工具后拉取 / 分析项目资料
-  -> 当前阶段 github.project_analyze 只返回 mock 项目分析结果
+  -> 默认 mock 工具返回 deterministic 项目分析
+  -> 显式配置真实 GitHub client 后读取公开 repo 元数据
   -> ProjectPolishSkill 生成简历项目描述
+  -> /api/agent/message 返回顶层 tool_trace
   -> InterviewerAgent 针对项目追问
 ```
 
