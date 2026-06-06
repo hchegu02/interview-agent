@@ -34,9 +34,12 @@ type InterviewEvent struct {
 	Phase       string                  `json:"phase,omitempty"`
 	Progress    []interviewProgressStep `json:"progress,omitempty"`
 	Question    *domain.Question        `json:"question,omitempty"`
+	Suspension  *domain.Suspension      `json:"suspension,omitempty"`
 	Rounds      []interviewRound        `json:"rounds,omitempty"`
 	Report      *domain.Report          `json:"report,omitempty"`
 	Error       string                  `json:"error,omitempty"`
+	TraceID     string                  `json:"trace_id,omitempty"`
+	ReplayGap   bool                    `json:"replay_gap,omitempty"`
 	CreatedAt   time.Time               `json:"created_at,omitempty"`
 	UpdatedAt   time.Time               `json:"updated_at,omitempty"`
 	At          time.Time               `json:"at"`
@@ -123,7 +126,10 @@ func (h *MemoryInterviewEventHub) Subscribe(ctx context.Context, sessionID strin
 	if h.subs[sessionID] == nil {
 		h.subs[sessionID] = map[chan InterviewEvent]struct{}{}
 	}
-	replay := replayAfterID(h.history[sessionID], afterID)
+	replay, replayGap := replayAfterID(h.history[sessionID], afterID)
+	if replayGap {
+		ch <- InterviewEvent{Type: interviewEventSnapshot, SessionID: sessionID, ReplayGap: true}
+	}
 	for _, event := range replay {
 		select {
 		case ch <- event:
@@ -199,21 +205,29 @@ func appendEventHistory(history []InterviewEvent, event InterviewEvent, limit in
 	return history
 }
 
-func replayAfterID(history []InterviewEvent, afterID string) []InterviewEvent {
+func replayAfterID(history []InterviewEvent, afterID string) ([]InterviewEvent, bool) {
 	if afterID == "" {
-		return nil
+		return nil, false
+	}
+	if len(history) == 0 {
+		return nil, true
 	}
 	start := 0
+	found := false
 	for i := range history {
 		if history[i].ID == afterID {
 			start = i + 1
+			found = true
 			break
 		}
 	}
-	if start >= len(history) {
-		return nil
+	if !found {
+		return nil, true
 	}
-	return append([]InterviewEvent(nil), history[start:]...)
+	if start >= len(history) {
+		return nil, false
+	}
+	return append([]InterviewEvent(nil), history[start:]...), false
 }
 
 func NewInterviewGraphCallback(pub InterviewEventPublisher) graph.Callback {
@@ -243,7 +257,7 @@ func (c interviewGraphCallback) publish(ctx context.Context, eventType, node str
 	if c.pub == nil {
 		return
 	}
-	c.pub.Publish(ctx, buildInterviewEvent(eventType, sess, node, errMsg))
+	c.pub.Publish(ctx, buildInterviewEventWithContext(ctx, eventType, sess, node, errMsg))
 }
 
 type noopInterviewGraphCallback struct{}
@@ -253,11 +267,16 @@ func (noopInterviewGraphCallback) OnNodeEnd(context.Context, string, *domain.Ses
 func (noopInterviewGraphCallback) OnNodeError(context.Context, string, *domain.Session, error) {}
 
 func buildInterviewEvent(eventType string, sess *domain.Session, node, errMsg string) InterviewEvent {
+	return buildInterviewEventWithContext(context.Background(), eventType, sess, node, errMsg)
+}
+
+func buildInterviewEventWithContext(ctx context.Context, eventType string, sess *domain.Session, node, errMsg string) InterviewEvent {
 	ev := InterviewEvent{
-		Type:  eventType,
-		Node:  node,
-		Error: errMsg,
-		At:    time.Now(),
+		Type:    eventType,
+		Node:    node,
+		Error:   errMsg,
+		At:      time.Now(),
+		TraceID: traceIDFromContext(ctx),
 	}
 	if sess == nil {
 		return ev
@@ -270,6 +289,7 @@ func buildInterviewEvent(eventType string, sess *domain.Session, node, errMsg st
 	ev.Phase = interviewPhase(sess)
 	ev.Progress = interviewProgress(sess)
 	ev.Question = cloneQuestion(currentQuestion(sess))
+	ev.Suspension = cloneSuspension(sess.Suspension)
 	ev.Rounds = buildInterviewRounds(sess, ev.Mode)
 	ev.Report = cloneReport(sess.Report)
 	ev.CreatedAt = sess.CreatedAt

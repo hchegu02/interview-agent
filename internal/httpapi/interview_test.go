@@ -17,6 +17,7 @@ import (
 	"interview-agent/internal/config"
 	"interview-agent/internal/domain"
 	"interview-agent/internal/memory"
+	"interview-agent/pkg/traceid"
 )
 
 type fakeInterviewRunner struct{}
@@ -69,6 +70,35 @@ func (missingReportRunner) Resume(ctx context.Context, sess *domain.Session) err
 	}
 	sess.Status = domain.StatusCompleted
 	sess.Report = nil
+	return nil
+}
+
+type suspendingInterviewRunner struct{}
+
+func (suspendingInterviewRunner) Invoke(ctx context.Context, sess *domain.Session) error {
+	sess.CurrentNode = "pick_next"
+	sess.Suspension = &domain.Suspension{
+		Node:      "pick_next",
+		Awaiting:  domain.SuspensionAwaitingAnswer,
+		CreatedAt: time.Now(),
+	}
+	sess.Rounds = append(sess.Rounds, domain.AnswerRound{
+		RoundID:  "r1",
+		Question: domain.Question{ID: "q1", Content: "Q"},
+	})
+	return nil
+}
+
+func (suspendingInterviewRunner) Resume(ctx context.Context, sess *domain.Session) error {
+	sess.CurrentNode = "probe_ask"
+	sess.Suspension = &domain.Suspension{
+		Node:      "probe_ask",
+		Awaiting:  domain.SuspensionAwaitingAnswer,
+		CreatedAt: time.Now(),
+	}
+	if round := sess.CurrentRound(); round != nil {
+		round.FollowUps = append(round.FollowUps, domain.FollowUp{Question: "追问"})
+	}
 	return nil
 }
 
@@ -221,6 +251,7 @@ func TestInterviewStart_ReturnsFirstQuestion(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/interview/start", body)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Trace-Id", "trace-lease-start")
 
 	server.Router().ServeHTTP(rec, req)
 
@@ -300,6 +331,7 @@ func TestInterviewResponse_DoesNotExposeInternalRuntimeNames(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/interview/start", body)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Trace-Id", "trace-lease-start")
 
 	server.Router().ServeHTTP(rec, req)
 
@@ -338,6 +370,29 @@ func TestInterviewService_StartAcquiresLeaseAndSavesSnapshot(t *testing.T) {
 	}
 	if len(coord.saved) != 1 || coord.saved[0] != "lease-start:running" {
 		t.Fatalf("saved snapshots = %+v", coord.saved)
+	}
+}
+
+func TestInterviewService_StartReleasesLeaseAfterSuspension(t *testing.T) {
+	coord := &fakeSessionCoordinator{acquireOK: true, renewOK: true}
+	svc := NewInterviewServiceWithStoreEventsAndCoordinator(
+		suspendingInterviewRunner{},
+		NewMemorySessionStore(),
+		NewMemoryInterviewEventHub(8),
+		coord,
+		"owner-a",
+	)
+
+	if _, err := svc.Start(context.Background(), startInterviewRequest{
+		SessionID:  "lease-start-suspended",
+		UserID:     "u1",
+		JDText:     "jd",
+		ResumeText: "resume",
+	}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if len(coord.released) != 1 || coord.released[0] != "lease-start-suspended:owner-a" {
+		t.Fatalf("released = %+v", coord.released)
 	}
 }
 
@@ -406,6 +461,36 @@ func TestInterviewService_AnswerRenewsLeaseAndSavesSnapshot(t *testing.T) {
 	}
 	if len(coord.released) != 1 || coord.released[0] != "lease-answer:owner-a" {
 		t.Fatalf("released = %+v", coord.released)
+	}
+}
+
+func TestInterviewService_AnswerReleasesLeaseAfterSuspension(t *testing.T) {
+	coord := &fakeSessionCoordinator{acquireOK: true, renewOK: true}
+	svc := NewInterviewServiceWithStoreEventsAndCoordinator(
+		suspendingInterviewRunner{},
+		NewMemorySessionStore(),
+		NewMemoryInterviewEventHub(8),
+		coord,
+		"owner-a",
+	)
+
+	if _, err := svc.Start(context.Background(), startInterviewRequest{
+		SessionID:  "lease-answer-suspended",
+		UserID:     "u1",
+		JDText:     "jd",
+		ResumeText: "resume",
+	}); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if _, err := svc.Answer(context.Background(), answerInterviewRequest{
+		SessionID: "lease-answer-suspended",
+		UserID:    "u1",
+		Answer:    "answer",
+	}); err != nil {
+		t.Fatalf("answer: %v", err)
+	}
+	if len(coord.released) != 2 {
+		t.Fatalf("released = %+v, want start and answer release", coord.released)
 	}
 }
 
@@ -609,6 +694,7 @@ func TestInterviewStart_LeaseConflictReturnsHTTP409(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/interview/start", body)
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Trace-Id", "trace-lease-start")
 
 	server.Router().ServeHTTP(rec, req)
 
@@ -620,6 +706,12 @@ func TestInterviewStart_LeaseConflictReturnsHTTP409(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"retry_after_seconds":1`) {
 		t.Fatalf("body should include retry_after_seconds=1, got %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"code":"lease_conflict"`) {
+		t.Fatalf("body should include lease_conflict code, got %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"trace_id":"trace-lease-start"`) {
+		t.Fatalf("body should include trace id, got %s", rec.Body.String())
 	}
 }
 
@@ -815,6 +907,54 @@ func TestInterviewAnswer_ReturnsReport(t *testing.T) {
 	}
 	if got.Question != nil {
 		t.Fatalf("question should be empty after completed report, got %+v", got.Question)
+	}
+}
+
+func TestFillPendingAnswer_UsesSuspensionBeforeCurrentNode(t *testing.T) {
+	sess := &domain.Session{
+		ID:          "answer-suspension",
+		CurrentNode: "pick_next",
+		Suspension: &domain.Suspension{
+			Node:     "probe_ask",
+			Awaiting: domain.SuspensionAwaitingAnswer,
+		},
+		Rounds: []domain.AnswerRound{{
+			RoundID:  "r1",
+			Question: domain.Question{ID: "q1", Content: "Q"},
+			FollowUps: []domain.FollowUp{{
+				Question: "追问",
+			}},
+		}},
+	}
+
+	if err := fillPendingAnswer(sess, "follow-up answer"); err != nil {
+		t.Fatalf("fill answer: %v", err)
+	}
+	if sess.Rounds[0].Answer != "" {
+		t.Fatalf("main answer should not be written, got %q", sess.Rounds[0].Answer)
+	}
+	if got := sess.Rounds[0].FollowUps[0].Answer; got != "follow-up answer" {
+		t.Fatalf("follow-up answer = %q", got)
+	}
+}
+
+func TestFillPendingAnswer_RejectsNonAnswerSuspension(t *testing.T) {
+	sess := &domain.Session{
+		ID:          "answer-approval",
+		CurrentNode: "pick_next",
+		Suspension: &domain.Suspension{
+			Node:     "pick_next",
+			Awaiting: domain.SuspensionAwaitingApproval,
+		},
+		Rounds: []domain.AnswerRound{{
+			RoundID:  "r1",
+			Question: domain.Question{ID: "q1", Content: "Q"},
+		}},
+	}
+
+	err := fillPendingAnswer(sess, "answer")
+	if !errors.Is(err, ErrInvalidSessionState) {
+		t.Fatalf("err = %v, want ErrInvalidSessionState", err)
 	}
 }
 
@@ -1525,6 +1665,11 @@ func TestBuildInterviewEvent_ClonesMutableSessionData(t *testing.T) {
 		ID:          "sess-clone",
 		Status:      domain.StatusCompleted,
 		CurrentNode: "report",
+		Suspension: &domain.Suspension{
+			Node:     "pick_next",
+			Awaiting: domain.SuspensionAwaitingAnswer,
+			Payload:  map[string]any{"question_id": "q1"},
+		},
 		Report: &domain.Report{
 			SessionID:      "sess-clone",
 			OverallScore:   80,
@@ -1545,12 +1690,17 @@ func TestBuildInterviewEvent_ClonesMutableSessionData(t *testing.T) {
 		},
 	}
 
-	event := buildInterviewEvent(interviewEventSessionCompleted, sess, "", "")
+	ctx := traceid.Inject(context.Background(), "trace-clone")
+	event := buildInterviewEventWithContext(ctx, interviewEventSessionCompleted, sess, "", "")
 	sess.Report.SkillBreakdown["go"] = 10
 	sess.Report.Highlights[0] = "mutated"
 	sess.Rounds[0].Question.Tags[0] = "mutated"
 	sess.Rounds[0].Question.ExpectedPoints[0] = "mutated"
+	sess.Suspension.Payload["question_id"] = "mutated"
 
+	if event.TraceID != "trace-clone" {
+		t.Fatalf("trace id = %q", event.TraceID)
+	}
 	if event.Report.SkillBreakdown["go"] != 80 {
 		t.Fatalf("report score was mutated: %+v", event.Report.SkillBreakdown)
 	}
@@ -1562,6 +1712,9 @@ func TestBuildInterviewEvent_ClonesMutableSessionData(t *testing.T) {
 	}
 	if event.Question != nil && event.Question.ExpectedPoints[0] == "mutated" {
 		t.Fatalf("question expected points were mutated: %+v", event.Question.ExpectedPoints)
+	}
+	if event.Suspension == nil || event.Suspension.Payload["question_id"] != "q1" {
+		t.Fatalf("suspension was mutated: %+v", event.Suspension)
 	}
 }
 
@@ -1638,6 +1791,33 @@ func TestWriteInterviewSSE_UsesBusinessEventShape(t *testing.T) {
 	for _, forbidden := range []string{"current_node", "pick_next", "graph.node"} {
 		if strings.Contains(raw, forbidden) {
 			t.Fatalf("sse leaked %q: %s", forbidden, raw)
+		}
+	}
+}
+
+func TestWriteInterviewSSE_IncludesSuspensionTraceAndReplayGap(t *testing.T) {
+	rec := httptest.NewRecorder()
+	event := InterviewEvent{
+		ID:        "evt-runtime",
+		Type:      interviewEventSnapshot,
+		SessionID: "s-runtime",
+		Status:    string(domain.StatusRunning),
+		Phase:     "answering",
+		Suspension: &domain.Suspension{
+			Awaiting: domain.SuspensionAwaitingAnswer,
+		},
+		TraceID:   "trace-runtime",
+		ReplayGap: true,
+		At:        time.Now(),
+	}
+
+	if err := writeInterviewSSE(rec, event); err != nil {
+		t.Fatalf("write sse: %v", err)
+	}
+	raw := rec.Body.String()
+	for _, want := range []string{`"suspension"`, `"trace_id":"trace-runtime"`, `"replay_gap":true`} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("sse missing %s: %s", want, raw)
 		}
 	}
 }

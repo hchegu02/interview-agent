@@ -1,6 +1,8 @@
 package httpapi
 
 import (
+	"context"
+
 	"github.com/gin-gonic/gin"
 
 	"interview-agent/pkg/traceid"
@@ -21,4 +23,11 @@ func TraceIDMiddleware() gin.HandlerFunc {
 		c.Request = c.Request.WithContext(ctx)
 		c.Next()
 	}
+}
+
+func traceIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	return traceid.FromContext(ctx)
 }

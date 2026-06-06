@@ -75,6 +75,10 @@ func (s *InterviewService) Start(ctx context.Context, req startInterviewRequest)
 			return nil, err
 		}
 	}
+	if leaseAcquired && shouldReleaseMutationLease(sess) {
+		_ = s.releaseSessionLease(ctx, sess.ID)
+		leaseAcquired = false
+	}
 	s.publishEvent(ctx, interviewEventSessionCreated, sess, "", "")
 	return sess, nil
 }
@@ -154,6 +158,8 @@ func (s *InterviewService) Answer(ctx context.Context, req answerInterviewReques
 	}
 	if sess.Status == domain.StatusCompleted {
 		_ = s.persistLongTermMemory(ctx, sess)
+	}
+	if shouldReleaseMutationLease(sess) {
 		_ = s.releaseSessionLease(ctx, sess.ID)
 	}
 	eventType := interviewEventSessionUpdated
@@ -173,31 +179,56 @@ func nextUpdatedAt(prev time.Time) time.Time {
 }
 
 func fillPendingAnswer(sess *domain.Session, answer string) error {
-	// CurrentNode 决定答案写入哪一层：主问题写 Round.Answer，追问写最后一个 FollowUp。
-	// 这里显式拒绝其他节点，防止前端重复提交把答案塞进错误位置。
-	switch sess.CurrentNode {
+	// Suspension 是新恢复语义；CurrentNode 只作为旧 Session 兼容回退。
+	node, err := answerAwaitingNode(sess)
+	if err != nil {
+		return err
+	}
+	switch node {
 	case "pick_next":
 		round := sess.CurrentRound()
 		if round == nil {
-			return fmt.Errorf("no current round for answer")
+			return fmt.Errorf("%w: no current round for answer", ErrInvalidSessionState)
 		}
 		round.Answer = answer
 		return nil
 	case "probe_ask":
 		round := sess.CurrentRound()
 		if round == nil || len(round.FollowUps) == 0 {
-			return fmt.Errorf("no current follow-up for answer")
+			return fmt.Errorf("%w: no current follow-up for answer", ErrInvalidSessionState)
 		}
 		round.FollowUps[len(round.FollowUps)-1].Answer = answer
 		return nil
 	default:
-		return fmt.Errorf("session %q is not waiting for answer at node %q", sess.ID, sess.CurrentNode)
+		return fmt.Errorf("%w: session %q is not waiting for answer at node %q", ErrInvalidSessionState, sess.ID, node)
 	}
+}
+
+func answerAwaitingNode(sess *domain.Session) (string, error) {
+	if sess == nil {
+		return "", fmt.Errorf("%w: nil session", ErrInvalidSessionState)
+	}
+	if sess.Suspension != nil {
+		if sess.Suspension.Awaiting != "" && sess.Suspension.Awaiting != domain.SuspensionAwaitingAnswer {
+			return "", fmt.Errorf("%w: session %q is awaiting %q", ErrInvalidSessionState, sess.ID, sess.Suspension.Awaiting)
+		}
+		if sess.Suspension.Node != "" {
+			return sess.Suspension.Node, nil
+		}
+	}
+	return sess.CurrentNode, nil
+}
+
+func shouldReleaseMutationLease(sess *domain.Session) bool {
+	if sess == nil {
+		return false
+	}
+	return sess.Status == domain.StatusCompleted || sess.Suspension != nil
 }
 
 func (s *InterviewService) publishEvent(ctx context.Context, eventType string, sess *domain.Session, node, errMsg string) {
 	if s == nil || s.events == nil {
 		return
 	}
-	s.events.Publish(ctx, buildInterviewEvent(eventType, sess, node, errMsg))
+	s.events.Publish(ctx, buildInterviewEventWithContext(ctx, eventType, sess, node, errMsg))
 }

@@ -24,6 +24,7 @@ const (
 )
 
 var ErrSessionLeaseConflict = errors.New("session lease conflict")
+var ErrInvalidSessionState = errors.New("invalid session state")
 
 type interviewRunner interface {
 	Invoke(ctx context.Context, sess *domain.Session) error

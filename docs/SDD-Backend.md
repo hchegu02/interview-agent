@@ -333,12 +333,17 @@ type Suspension struct {
 - 新逻辑同时写 `Session.Suspension`。
 - HTTP 响应已返回可选 `suspension`，前端类型已对齐；SSE 事件复用同一响应结构。
 - `Resume` 优先读取 `Suspension.Node`，没有则回退 `CurrentNode`。
+- HTTP `Answer` 写入答案时优先读取 `Suspension.Awaiting/Node`，`CurrentNode` 只作为旧 Session 回退。
+- SSE 事件已返回可选 `suspension`、`trace_id` 和 `replay_gap`，断线恢复时客户端可以用 snapshot 兜底。
+- mutation lease 只保护 Start/Answer 执行期；Graph 暂停并保存成功后释放 lease，不占用等待用户输入阶段。
+- 面试 API 错误响应保留 `error` 字段，同时增加稳定 `code` 和 `trace_id`。
 
 当前边界：
 
 - 默认暂停类型先使用 `answer`，人工确认、工具审批和题目确认后续按节点语义写入。
 - `Payload` 当前只做 HTTP 响应层 map 拷贝；如果后续放入嵌套结构，需要补深层 clone 或改成明确 schema。
 - `CurrentNode` 仍是兼容字段，不能立即删除，否则会破坏旧 Session 恢复。
+- lease heartbeat、PG fencing token / CAS 和 Redis Streams 精确裁剪检测尚未实现，后续单独设计。
 
 收益：
 
@@ -362,6 +367,8 @@ type StatePatch struct {
     CurrentEvaluation    *Evaluation
     CompleteCurrentRound *time.Time
     Report               *Report
+    Status               *SessionStatus
+    WorkingMemory        *WorkingMemory
 }
 ```
 
@@ -372,11 +379,12 @@ type StatePatch struct {
 - `pick_next` 通过 patch 写 `PendingDecision` / append `AnswerRound`，`WorkingMemory.RoundsAsked` 暂时仍直接写。
 - `evaluate` 通过 patch 写当前轮 `Evaluation` 并清理 `PendingDecision`。
 - `report` 通过 patch 写 `Report` 并清理 `PendingDecision`。
+- `Status` 和 `WorkingMemory` 已纳入 `StatePatch` 类型，业务节点仍按风险逐步迁移到 runner-level patch。
 
 当前边界：
 
 - `NodeFunc` 仍返回 `error`，节点在内部调用 patch helper；Graph runner 还不记录 patch。
-- `WorkingMemory`、`Status`、`CriticResult`、`FollowUps` 等字段还未纳入 patch，后续按风险逐步迁移。
+- `CriticResult`、`FollowUps` 等字段还未纳入 patch，后续按风险逐步迁移。
 - `RetrievalTrace` 和 `Report` 指针保持当前状态写入语义，HTTP 响应层负责 clone。
 
 收益：
