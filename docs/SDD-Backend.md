@@ -594,9 +594,9 @@ type Store interface {
 
 ### 13.4 第三阶段：动态难度
 
-目标：根据用户连续答题表现和历史薄弱点调整下一题难度。
+阶段目标：根据用户连续答题表现和历史薄弱点调整下一题难度。
 
-建议先做简单状态机：
+第一版动态难度基础层已落地，先做单次 Session 内的规则状态机：
 
 ```go
 type Difficulty int
@@ -614,17 +614,31 @@ type DifficultyState struct {
 }
 ```
 
-建议流程：
+当前流程：
 
 ```text
 evaluate
   -> update_memory
   -> update_difficulty
   -> reflection_check
-  -> retrieve_rag / pick_next
+  -> pick_next / report
 ```
 
-动态难度要依赖评分、当前题目难度、历史薄弱点和目标岗位，不要让 LLM 单独决定难度。
+当前实现：
+
+- `WorkingMemory.Difficulty` 保存当前难度、连续高分次数、连续低分次数和最近已消费的评分轮次。
+- `update_difficulty` 读取最近一轮最终评分，`score >= 80` 计入高分 streak，`score < 50` 计入低分 streak。
+- 连续两轮高分升一档，连续两轮低分降一档，难度限制在 easy/medium/hard。
+- 中间分数清空 streak，降级评分 `score < 0` 不影响难度。
+- 重放同一个 round 时不会重复累计 streak，避免恢复或重试导致难度误升/误降。
+- Graph 已接入 `update_memory -> update_difficulty -> reflection_check`。
+
+当前边界：
+
+- 不让 LLM 单独决定难度。
+- 尚未读取长期记忆中的历史弱点。
+- 尚未把动态难度写入 RAG 检索目标难度。
+- 不改变 HTTP 响应结构。
 
 ### 13.5 第四阶段：MCP Adapter
 

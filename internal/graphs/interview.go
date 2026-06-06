@@ -73,6 +73,7 @@ func BuildInterviewGraph(deps Deps) (*graph.Runnable, error) {
 		AddNode(nodes.NodeProbeAsk, nodes.NewProbeAskNode(deps.Model, nodes.ProbeAskOptions{})).
 		AddNode(nodeProbeEval, nodes.NewProbeEvalNode(deps.Model, nodes.ProbeEvalOptions{})).
 		AddNode(nodes.NodeUpdateMemory, nodes.NewUpdateMemoryNode(nodes.UpdateMemoryOptions{})).
+		AddNode(nodes.NodeUpdateDifficulty, nodes.NewUpdateDifficultyNode(nodes.UpdateDifficultyOptions{})).
 		AddNode(nodeReflectionCheck, nodes.NewReflectionCheckNode(deps.Model, nodes.ReflectionCheckOptions{})).
 		AddNodeSpec(graph.NodeSpec{
 			Name:   nodes.NodeReport,
@@ -91,7 +92,8 @@ func BuildInterviewGraph(deps Deps) (*graph.Runnable, error) {
 		AddBranch(nodes.NodeRefine, nodes.RouteAfterRefine).
 		AddEdge(nodes.NodeProbeAsk, nodeProbeEval).
 		AddBranch(nodeProbeEval, nodes.RouteAfterProbeEval).
-		AddEdge(nodes.NodeUpdateMemory, nodeReflectionCheck).
+		AddEdge(nodes.NodeUpdateMemory, nodes.NodeUpdateDifficulty).
+		AddEdge(nodes.NodeUpdateDifficulty, nodeReflectionCheck).
 		AddBranch(nodeReflectionCheck, nodes.RouteAfterReflection).
 		AddEdge(nodes.NodeReport, graph.EndNode)
 

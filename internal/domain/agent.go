@@ -95,7 +95,7 @@ type Critic struct {
 	// 共用 evaluation + answer 的上下文,一次 LLM 调用同时输出两个信号。
 	// 设计动机:probe_decider 单独建节点的话,prompt 几乎和 critic 一模一样,
 	//          省一次 LLM 调用比"职责更纯"的工程洁癖更划算。
-	HasProbeSignal bool   `json:"has_probe_signal"`
+	HasProbeSignal bool `json:"has_probe_signal"`
 	// 候选追问主题(LLM 提示的"答案中值得深挖的点"),
 	// probe_ask 节点把它作为 hint 生成具体的追问问题。
 	ProbeTopic string `json:"probe_topic,omitempty"`
@@ -111,33 +111,49 @@ type Critic struct {
 //   - WeakSkills:      evaluate.Score < 50 的题对应技能进这里
 //   - SuspectedSkills: parse_resume 抽取出来但还没被任何题验证的技能
 //   - SkillCoverage:   每个技能的累计覆盖度（normalized score 累加,float），
-//                      用于"覆盖率均衡"决策——pick_next 优先选 coverage 低的类目
+//     用于"覆盖率均衡"决策——pick_next 优先选 coverage 低的类目
 //   - AvgScore:        所有 FinalEvaluation 的均分（动态难度调整用）
 type WorkingMemory struct {
 	ConfirmedSkills []string           `json:"confirmed_skills"`
 	WeakSkills      []string           `json:"weak_skills"`
 	SuspectedSkills []string           `json:"suspected_skills"`
 	SkillCoverage   map[string]float64 `json:"skill_coverage"`
-	AvgScore        float64        `json:"avg_score"`
-	RoundsAsked     int            `json:"rounds_asked"`
-	MaxRounds       int            `json:"max_rounds"` // 默认 8
-	ScoredRounds    int            `json:"scored_rounds"`
-	DegradedRounds  int            `json:"degraded_rounds"`
-	DegradedReasons map[string]string `json:"degraded_reasons,omitempty"`
+	Difficulty      *DifficultyState   `json:"difficulty,omitempty"`
+	AvgScore        float64            `json:"avg_score"`
+	RoundsAsked     int                `json:"rounds_asked"`
+	MaxRounds       int                `json:"max_rounds"` // 默认 8
+	ScoredRounds    int                `json:"scored_rounds"`
+	DegradedRounds  int                `json:"degraded_rounds"`
+	DegradedReasons map[string]string  `json:"degraded_reasons,omitempty"`
 
 	// 追问预算（防止 LLM 无限追问）
 	ProbesUsed int `json:"probes_used"`
 	MaxProbes  int `json:"max_probes"` // 默认 4
 
 	// 反思补漏预算（防止 LLM 无限补题）
-	ReflectionsUsed int `json:"reflections_used"`
-	MaxReflections  int `json:"max_reflections"` // 默认 1
+	ReflectionsUsed int    `json:"reflections_used"`
+	MaxReflections  int    `json:"max_reflections"` // 默认 1
 	ReflectTopic    string `json:"reflect_topic,omitempty"`
 
 	// Notes 是通用元数据袋,存非核心、非降级类的状态标记,如 fallback_used、
 	// cost_capped 等。SSE 层 / 报告页可读这里给前端透出。
 	// 主决策路径不依赖 Notes —— 它只是辅助信号。
 	Notes map[string]string `json:"notes,omitempty"`
+}
+
+type Difficulty int
+
+const (
+	DifficultyEasy   Difficulty = 1
+	DifficultyMedium Difficulty = 2
+	DifficultyHard   Difficulty = 3
+)
+
+type DifficultyState struct {
+	Current       Difficulty `json:"current"`
+	CorrectStreak int        `json:"correct_streak"`
+	WrongStreak   int        `json:"wrong_streak"`
+	LastRoundID   string     `json:"last_round_id,omitempty"`
 }
 
 // NewWorkingMemory 用默认上限构造一个空记忆。
@@ -147,10 +163,15 @@ func NewWorkingMemory() *WorkingMemory {
 		WeakSkills:      []string{},
 		SuspectedSkills: []string{},
 		SkillCoverage:   map[string]float64{},
+		Difficulty:      NewDifficultyState(),
 		MaxRounds:       8,
 		MaxProbes:       4,
 		MaxReflections:  1,
 	}
+}
+
+func NewDifficultyState() *DifficultyState {
+	return &DifficultyState{Current: DifficultyMedium}
 }
 
 // RemainingRounds 剩余可问主题题数。Agent 循环退出条件之一。
@@ -172,11 +193,11 @@ func (m *WorkingMemory) CanReflect() bool { return m.ReflectionsUsed < m.MaxRefl
 type Action string
 
 const (
-	ActionAskNew  Action = "ask_new"  // 出新题
-	ActionProbe   Action = "probe"    // 追问当前题
-	ActionRefine  Action = "refine"   // critic 触发重评
-	ActionReflect Action = "reflect"  // 反思补漏
-	ActionEnd     Action = "end"      // 结束面试，进 report
+	ActionAskNew  Action = "ask_new" // 出新题
+	ActionProbe   Action = "probe"   // 追问当前题
+	ActionRefine  Action = "refine"  // critic 触发重评
+	ActionReflect Action = "reflect" // 反思补漏
+	ActionEnd     Action = "end"     // 结束面试，进 report
 )
 
 // Validate 状态合法性检查。
@@ -198,9 +219,9 @@ type Decision struct {
 	// LLM 解释为什么做这个决策（可解释性）
 	Reasoning string `json:"reasoning"`
 	// 不同 Action 用不同字段：
-	NextQuestionID string `json:"next_question_id,omitempty"` // ask_new
-	ProbeQuestion  string `json:"probe_question,omitempty"`   // probe
-	ProbeReason    string `json:"probe_reason,omitempty"`     // probe
-	ReflectTopic   string `json:"reflect_topic,omitempty"`    // reflect
+	NextQuestionID string    `json:"next_question_id,omitempty"` // ask_new
+	ProbeQuestion  string    `json:"probe_question,omitempty"`   // probe
+	ProbeReason    string    `json:"probe_reason,omitempty"`     // probe
+	ReflectTopic   string    `json:"reflect_topic,omitempty"`    // reflect
 	DecidedAt      time.Time `json:"decided_at"`
 }

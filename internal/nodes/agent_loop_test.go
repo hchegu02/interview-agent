@@ -37,6 +37,7 @@ func buildAgentSubgraph(t *testing.T, model llm.ChatModel) *graph.Runnable {
 		AddNode(NodeProbeAsk, NewProbeAskNode(model, ProbeAskOptions{})).
 		AddNode("probe_eval", NewProbeEvalNode(model, ProbeEvalOptions{})).
 		AddNode(NodeUpdateMemory, NewUpdateMemoryNode(UpdateMemoryOptions{})).
+		AddNode(NodeUpdateDifficulty, NewUpdateDifficultyNode(UpdateDifficultyOptions{})).
 		AddNode("reflection_check", NewReflectionCheckNode(model, ReflectionCheckOptions{MinRounds: 1})).
 		AddNode(NodeReport, NewReportNode()).
 		Entry(NodePickNext).
@@ -46,7 +47,8 @@ func buildAgentSubgraph(t *testing.T, model llm.ChatModel) *graph.Runnable {
 		AddBranch(NodeRefine, RouteAfterRefine).
 		AddEdge(NodeProbeAsk, "probe_eval").
 		AddBranch("probe_eval", RouteAfterProbeEval).
-		AddEdge(NodeUpdateMemory, "reflection_check").
+		AddEdge(NodeUpdateMemory, NodeUpdateDifficulty).
+		AddEdge(NodeUpdateDifficulty, "reflection_check").
 		AddBranch("reflection_check", RouteAfterReflection).
 		AddEdge(NodeReport, graph.EndNode).
 		Compile()
@@ -116,14 +118,14 @@ const (
 	evalQ2   = `{"question_id":"q2","score":70,"strengths":["分布式锁能讲 setnx"],"weaknesses":["lua 脚本没提"],"suggestion":"补 lua"}`
 	evalLow  = `{"question_id":"q1","score":85,"strengths":["看上去答全"],"weaknesses":[],"suggestion":"无"}`
 
-	criticPass     = `{"grounded_score":85,"need_refine":false,"issues":[],"summary":"评估准确","has_probe_signal":false,"probe_topic":""}`
-	criticPassQ2   = `{"grounded_score":80,"need_refine":false,"issues":[],"summary":"ok","has_probe_signal":false,"probe_topic":""}`
-	criticRefine   = `{"grounded_score":40,"need_refine":true,"issues":["原评估过高"],"summary":"虚高","has_probe_signal":false,"probe_topic":""}`
-	criticProbe    = `{"grounded_score":80,"need_refine":false,"issues":[],"summary":"还有可挖","has_probe_signal":true,"probe_topic":"work stealing 细节"}`
+	criticPass   = `{"grounded_score":85,"need_refine":false,"issues":[],"summary":"评估准确","has_probe_signal":false,"probe_topic":""}`
+	criticPassQ2 = `{"grounded_score":80,"need_refine":false,"issues":[],"summary":"ok","has_probe_signal":false,"probe_topic":""}`
+	criticRefine = `{"grounded_score":40,"need_refine":true,"issues":["原评估过高"],"summary":"虚高","has_probe_signal":false,"probe_topic":""}`
+	criticProbe  = `{"grounded_score":80,"need_refine":false,"issues":[],"summary":"还有可挖","has_probe_signal":true,"probe_topic":"work stealing 细节"}`
 
 	refinedDown = `{"question_id":"q1","score":55,"strengths":["G/M/P 名词到位"],"weaknesses":["未讲 work stealing","未讲调度协作"],"suggestion":"补全两点"}`
 
-	probeAskWS = `{"question":"work stealing 触发时机是怎样的?","reason":"候选人没讲触发逻辑"}`
+	probeAskWS  = `{"question":"work stealing 触发时机是怎样的?","reason":"候选人没讲触发逻辑"}`
 	probeAskWS2 = `{"question":"那窃取的对象是怎么选的?","reason":"继续深挖"}`
 
 	probeEvalEnd  = `{"score":70,"strengths":["讲了触发"],"weaknesses":["没讲窃取目标"],"suggestion":"够用","has_more_probe":false,"next_probe_topic":""}`
@@ -140,15 +142,15 @@ const (
 func TestAgentLoop_HappyPath_TwoRounds(t *testing.T) {
 	stub := &stubChatModel{responses: []string{
 		// round 1
-		pickQ1,         // pick_next
-		evalGood,       // evaluate
-		criticPass,     // critic
-		reflectAskNew,  // reflection_check
+		pickQ1,        // pick_next
+		evalGood,      // evaluate
+		criticPass,    // critic
+		reflectAskNew, // reflection_check
 		// round 2
-		pickQ2,         // pick_next
-		evalQ2,         // evaluate
-		criticPassQ2,   // critic
-		reflectEnd,     // reflection_check
+		pickQ2,       // pick_next
+		evalQ2,       // evaluate
+		criticPassQ2, // critic
+		reflectEnd,   // reflection_check
 	}}
 	r := buildAgentSubgraph(t, stub)
 	sess := buildAgentSession(agentSamplePool(), 8, 4)
@@ -196,6 +198,9 @@ func TestAgentLoop_HappyPath_TwoRounds(t *testing.T) {
 	if sess.WorkingMemory.AvgScore <= 0 {
 		t.Errorf("AvgScore should be updated, got %v", sess.WorkingMemory.AvgScore)
 	}
+	if sess.WorkingMemory.Difficulty == nil || sess.WorkingMemory.Difficulty.Current != domain.DifficultyMedium {
+		t.Errorf("difficulty should stay medium, got %+v", sess.WorkingMemory.Difficulty)
+	}
 	if stub.idx != 8 {
 		t.Errorf("expected 8 LLM calls, got %d", stub.idx)
 	}
@@ -208,9 +213,9 @@ func TestAgentLoop_HappyPath_TwoRounds(t *testing.T) {
 func TestAgentLoop_RefineBranch(t *testing.T) {
 	stub := &stubChatModel{responses: []string{
 		pickQ1,
-		evalLow,       // 原评估 85
-		criticRefine,  // critic 认为虚高, NeedRefine=true
-		refinedDown,   // refine 修正到 55
+		evalLow,      // 原评估 85
+		criticRefine, // critic 认为虚高, NeedRefine=true
+		refinedDown,  // refine 修正到 55
 		reflectEnd,
 	}}
 	r := buildAgentSubgraph(t, stub)
@@ -250,9 +255,9 @@ func TestAgentLoop_SingleProbe(t *testing.T) {
 	stub := &stubChatModel{responses: []string{
 		pickQ1,
 		evalGood,
-		criticProbe,   // HasProbeSignal=true
-		probeAskWS,    // probe_ask 生成追问
-		probeEvalEnd,  // probe_eval has_more=false → 关闭信号
+		criticProbe,  // HasProbeSignal=true
+		probeAskWS,   // probe_ask 生成追问
+		probeEvalEnd, // probe_eval has_more=false → 关闭信号
 		reflectEnd,
 	}}
 	r := buildAgentSubgraph(t, stub)
@@ -306,11 +311,11 @@ func TestAgentLoop_MultiProbe_BudgetClamps(t *testing.T) {
 	stub := &stubChatModel{responses: []string{
 		pickQ1,
 		evalGood,
-		criticProbe,        // → probe_ask #1
+		criticProbe, // → probe_ask #1
 		probeAskWS,
-		probeEvalMore,      // has_more=true → 继续
-		probeAskWS2,        // probe_ask #2 (ProbesUsed 此时变 2)
-		probeEvalMore,      // LLM 还想 more, 但 ProbesUsed=2==MaxProbes → 节点压制
+		probeEvalMore, // has_more=true → 继续
+		probeAskWS2,   // probe_ask #2 (ProbesUsed 此时变 2)
+		probeEvalMore, // LLM 还想 more, 但 ProbesUsed=2==MaxProbes → 节点压制
 		reflectEnd,
 	}}
 	r := buildAgentSubgraph(t, stub)
