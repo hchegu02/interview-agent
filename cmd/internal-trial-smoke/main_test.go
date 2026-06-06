@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"flag"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,7 +14,7 @@ func TestRunPassesOfflineInternalTrialSmoke(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("run exit = %d, stderr = %s", code, stderr.String())
 	}
-	for _, want := range []string{"interview", "memory", "business_trial", "project_polish", "tool_trace"} {
+	for _, want := range []string{"interview", "memory", "business_trial: feedback evidence verified", "project_polish", "tool_trace"} {
 		if !strings.Contains(stdout.String(), want) {
 			t.Fatalf("stdout missing %q: %s", want, stdout.String())
 		}
@@ -42,5 +43,22 @@ func TestRunFailsWhenBusinessFeedbackFixtureIsMissing(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "load business feedback fixture") {
 		t.Fatalf("stderr missing load business feedback reason: %s", stderr.String())
+	}
+}
+
+func TestBusinessFeedbackFlagDefaultUsesFallback(t *testing.T) {
+	var opts smokeOptions
+	fs := flag.NewFlagSet("internal-trial-smoke", flag.ContinueOnError)
+	registerFlags(fs, &opts)
+
+	if opts.BusinessFeedbackPath != "" {
+		t.Fatalf("BusinessFeedbackPath default = %q, want empty fallback", opts.BusinessFeedbackPath)
+	}
+	flag := fs.Lookup("business-feedback")
+	if flag == nil {
+		t.Fatal("missing business-feedback flag")
+	}
+	if flag.DefValue != "" {
+		t.Fatalf("business-feedback flag default = %q, want empty fallback", flag.DefValue)
 	}
 }

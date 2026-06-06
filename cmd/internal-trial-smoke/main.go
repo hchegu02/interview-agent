@@ -23,11 +23,15 @@ type smokeOptions struct {
 
 func main() {
 	var opts smokeOptions
-	flag.StringVar(&opts.SessionPath, "session", defaultSessionFixturePath, "session fixture JSON path")
-	flag.StringVar(&opts.BusinessFeedbackPath, "business-feedback", defaultBusinessFeedbackFixturePath, "business feedback fixture JSON path")
-	flag.BoolVar(&opts.RealGitHub, "real-github", false, "reserved for explicitly configured real GitHub trial wiring")
+	registerFlags(flag.CommandLine, &opts)
 	flag.Parse()
 	os.Exit(run(opts, os.Stdout, os.Stderr))
+}
+
+func registerFlags(flags *flag.FlagSet, opts *smokeOptions) {
+	flags.StringVar(&opts.SessionPath, "session", defaultSessionFixturePath, "session fixture JSON path")
+	flags.StringVar(&opts.BusinessFeedbackPath, "business-feedback", "", "business feedback fixture JSON path")
+	flags.BoolVar(&opts.RealGitHub, "real-github", false, "reserved for explicitly configured real GitHub trial wiring")
 }
 
 const (
