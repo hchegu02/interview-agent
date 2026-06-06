@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"time"
 
 	"interview-agent/internal/agentkit"
 )
@@ -19,9 +20,19 @@ type SkillInput struct {
 }
 
 type SkillResult struct {
-	Title   string   `json:"title"`
-	Content string   `json:"content"`
-	Actions []Action `json:"actions,omitempty"`
+	Title     string      `json:"title"`
+	Content   string      `json:"content"`
+	Actions   []Action    `json:"actions,omitempty"`
+	ToolTrace []ToolTrace `json:"-"`
+}
+
+type ToolTrace struct {
+	Name          string `json:"name"`
+	Permission    string `json:"permission,omitempty"`
+	Status        string `json:"status"`
+	ErrorClass    string `json:"error_class,omitempty"`
+	ElapsedMillis int64  `json:"elapsed_ms,omitempty"`
+	Summary       string `json:"summary,omitempty"`
 }
 
 type Action struct {
@@ -108,34 +119,60 @@ func (projectPolishSkill) Name() string { return "project_polish" }
 func (s projectPolishSkill) Run(ctx context.Context, input SkillInput) (SkillResult, error) {
 	topic := topicFrom(input)
 	if url := githubURLFrom(input); url != "" && s.tools != nil {
-		if result, ok := s.tryAnalyzeProject(ctx, url); ok {
-			return result, nil
-		}
+		return s.tryAnalyzeProject(ctx, url, topic), nil
 	}
-	return SkillResult{
-		Title:   "项目亮点提炼",
-		Content: fmt.Sprintf("围绕 %s 描述时，按“背景问题、你的动作、技术取舍、量化结果、复盘改进”组织，避免只罗列技术名词。", topic),
-		Actions: []Action{{Type: "rewrite_resume", Label: "整理成简历表述", Value: topic}},
-	}, nil
+	return projectPolishFallback(topic, nil), nil
 }
 
-func (s projectPolishSkill) tryAnalyzeProject(ctx context.Context, githubURL string) (SkillResult, bool) {
+func projectPolishFallback(topic string, trace []ToolTrace) SkillResult {
+	return SkillResult{
+		Title:     "项目亮点提炼",
+		Content:   fmt.Sprintf("围绕 %s 描述时，按“背景问题、你的动作、技术取舍、量化结果、复盘改进”组织，避免只罗列技术名词。", topic),
+		Actions:   []Action{{Type: "rewrite_resume", Label: "整理成简历表述", Value: topic}},
+		ToolTrace: trace,
+	}
+}
+
+func (s projectPolishSkill) tryAnalyzeProject(ctx context.Context, githubURL, topic string) SkillResult {
+	start := time.Now()
 	result, err := s.tools.Call(ctx, agentkit.ToolCall{
 		Name:         "github.project_analyze",
 		Input:        map[string]any{"url": githubURL},
 		InputSummary: "github repository url",
 		Permission:   agentkit.PermissionReadOnly,
 	})
+	elapsed := elapsedMillis(start)
 	if err != nil {
-		return SkillResult{}, false
+		return projectPolishFallback(topic, []ToolTrace{{
+			Name:          "github.project_analyze",
+			Permission:    string(agentkit.PermissionReadOnly),
+			Status:        "failed",
+			ErrorClass:    toolErrorClass(err),
+			ElapsedMillis: elapsed,
+			Summary:       "github project analysis failed; generic project polish advice returned",
+		}})
 	}
 	out, ok := result.Output.(map[string]any)
 	if !ok {
-		return SkillResult{}, false
+		return projectPolishFallback(topic, []ToolTrace{{
+			Name:          "github.project_analyze",
+			Permission:    string(agentkit.PermissionReadOnly),
+			Status:        "failed",
+			ErrorClass:    "tool_result_invalid",
+			ElapsedMillis: elapsed,
+			Summary:       "github project analysis returned an invalid result; generic project polish advice returned",
+		}})
 	}
 	summary := strings.TrimSpace(fmt.Sprint(out["summary"]))
 	if summary == "" {
-		return SkillResult{}, false
+		return projectPolishFallback(topic, []ToolTrace{{
+			Name:          "github.project_analyze",
+			Permission:    string(agentkit.PermissionReadOnly),
+			Status:        "failed",
+			ErrorClass:    "tool_result_invalid",
+			ElapsedMillis: elapsed,
+			Summary:       "github project analysis returned an empty summary; generic project polish advice returned",
+		}})
 	}
 	highlights := stringSliceFromAny(out["highlights"])
 	risks := stringSliceFromAny(out["risk_points"])
@@ -157,7 +194,39 @@ func (s projectPolishSkill) tryAnalyzeProject(ctx context.Context, githubURL str
 		Title:   "项目亮点提炼",
 		Content: b.String(),
 		Actions: []Action{{Type: "rewrite_resume", Label: "整理成简历表述", Value: githubURL}},
-	}, true
+		ToolTrace: []ToolTrace{{
+			Name:          "github.project_analyze",
+			Permission:    string(agentkit.PermissionReadOnly),
+			Status:        "success",
+			ElapsedMillis: elapsed,
+			Summary:       compactToolTraceSummary(result.Summary),
+		}},
+	}
+}
+
+func toolErrorClass(err error) string {
+	var toolErr agentkit.MCPToolError
+	if errors.As(err, &toolErr) && strings.TrimSpace(toolErr.Code) != "" {
+		return strings.TrimSpace(toolErr.Code)
+	}
+	return "tool_call_failed"
+}
+
+func compactToolTraceSummary(value string) string {
+	const maxToolTraceSummaryChars = 160
+	summary := strings.Join(strings.Fields(value), " ")
+	if len(summary) <= maxToolTraceSummaryChars {
+		return summary
+	}
+	return summary[:maxToolTraceSummaryChars]
+}
+
+func elapsedMillis(start time.Time) int64 {
+	elapsed := time.Since(start).Milliseconds()
+	if elapsed <= 0 {
+		return 1
+	}
+	return elapsed
 }
 
 func topicFrom(input SkillInput) string {

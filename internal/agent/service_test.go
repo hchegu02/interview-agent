@@ -43,6 +43,15 @@ func TestDefaultService_ProjectPolishUsesMockGithubTool(t *testing.T) {
 	if !strings.Contains(resp.Result.Content, "interview-agent mock GitHub project analysis") {
 		t.Fatalf("content should include mock tool output: %s", resp.Result.Content)
 	}
+	if len(resp.ToolTrace) != 1 {
+		t.Fatalf("top-level tool trace len = %d, want 1", len(resp.ToolTrace))
+	}
+	if len(resp.Result.ToolTrace) != 1 {
+		t.Fatalf("result tool trace len = %d, want 1", len(resp.Result.ToolTrace))
+	}
+	if resp.ToolTrace[0].Name != "github.project_analyze" || resp.ToolTrace[0].Status != "success" {
+		t.Fatalf("top-level tool trace = %+v, want github success trace", resp.ToolTrace[0])
+	}
 }
 
 func TestService_RejectsEmptyMessage(t *testing.T) {

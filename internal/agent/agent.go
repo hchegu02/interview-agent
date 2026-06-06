@@ -62,6 +62,7 @@ type AgentResponse struct {
 	Confidence float64            `json:"confidence"`
 	Reason     string             `json:"reason"`
 	Result     skills.SkillResult `json:"result"`
+	ToolTrace  []skills.ToolTrace `json:"tool_trace,omitempty"`
 }
 
 type Router interface {
@@ -141,6 +142,7 @@ func (s *Service) HandleMessage(ctx context.Context, msg AgentMessage) (AgentRes
 		return AgentResponse{}, err
 	}
 	resp.Result = result
+	resp.ToolTrace = append([]skills.ToolTrace(nil), result.ToolTrace...)
 	return resp, nil
 }
 
