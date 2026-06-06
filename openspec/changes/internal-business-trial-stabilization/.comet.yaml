@@ -14,3 +14,5 @@ verified_at: null
 archived: false
 handoff_context: openspec/changes/internal-business-trial-stabilization/.comet/handoff/design-context.json
 handoff_hash: 60d3439bb16b7a311024e22df35b89c9206686636640206f5adfb23a6ace3505
+build_command: go test ./cmd/internal-trial-smoke ./internal/agentkit/verify -count=1
+verify_command: go test ./cmd/internal-trial-smoke ./internal/agentkit/verify -count=1
