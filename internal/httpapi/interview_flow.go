@@ -18,6 +18,8 @@ func (s *InterviewService) Start(ctx context.Context, req startInterviewRequest)
 	// 这样内存存储、PG 存储和事件快照看到的是同一份数据结构。
 	id := req.SessionID
 	if id == "" {
+		// 无外部 session_id 时使用本地递增 ID，主要服务 demo/test。
+		// 生产入口可以传入外部生成的 ULID/UUID，避免多实例本地计数冲突。
 		s.mu.Lock()
 		s.nextID++
 		id = fmt.Sprintf("sess-%d", s.nextID)
@@ -40,8 +42,11 @@ func (s *InterviewService) Start(ctx context.Context, req startInterviewRequest)
 		QuestionBankFilter: cloneQuestionBankFilter(req.QuestionBankFilter),
 		WorkingMemory:      domain.NewWorkingMemory(),
 	}
+	// 长期记忆只作为 WorkingMemory 的初始化信号，不能覆盖本次 JD/简历原始输入。
 	s.hydrateWorkingMemoryFromLongTermMemory(ctx, sess)
 	leaseAcquired := false
+	// 首轮 Invoke 也要拿 mutation lease：start 可能被重复点击或多实例接管，
+	// lease 先挡住重复执行，最终写保护仍由 SessionStore/PG row_version 兜底。
 	if err := s.acquireSessionLease(ctx, sess.ID); err != nil {
 		s.publishEvent(ctx, interviewEventSessionFailed, sess, "", err.Error())
 		return nil, err
@@ -53,9 +58,12 @@ func (s *InterviewService) Start(ctx context.Context, req startInterviewRequest)
 	}
 	releaseOnFailure := func() {
 		if leaseAcquired {
+			// 使用 background 释放是有意的：即使用户请求 ctx 已取消，也要尽量清理 lease。
 			_, _ = s.coordinator.ReleaseLease(context.Background(), sess.ID, s.ownerID)
 		}
 	}
+	// Invoke 会从 setup 节点一路推进，直到首题生成并触发 suspension。
+	// HTTP 层不关心中间节点，只拿最终 Session 状态返回给前端。
 	if err := s.runner.Invoke(ctx, sess); err != nil {
 		s.publishEvent(ctx, interviewEventSessionFailed, sess, "", err.Error())
 		releaseOnFailure()
@@ -80,10 +88,15 @@ func (s *InterviewService) Start(ctx context.Context, req startInterviewRequest)
 		_ = s.releaseSessionLease(ctx, sess.ID)
 		leaseAcquired = false
 	}
+	// created 事件在持久化成功后发布，避免前端收到一个数据库里还不存在的 session。
 	s.publishEvent(ctx, interviewEventSessionCreated, sess, "", "")
 	return sess, nil
 }
 
+// cloneQuestionBankFilter 复制并收敛前端传来的题库范围。
+//
+// 这里不直接复用请求指针，避免后续修改 Session 过滤条件时影响原请求对象；
+// 空字符串、非法难度和空 filter 会被清理掉，让下游 RAG 只处理有效约束。
 func cloneQuestionBankFilter(filter *domain.QuestionBankFilter) *domain.QuestionBankFilter {
 	if filter == nil {
 		return nil
@@ -136,9 +149,12 @@ func (s *InterviewService) Answer(ctx context.Context, req answerInterviewReques
 	if req.UserID != "" && sess.UserID != req.UserID {
 		return nil, fmt.Errorf("session %q not found", req.SessionID)
 	}
+	// Answer 是长耗时 mutation：续租成功后才写答案和 Resume，避免两个实例并发推进同一轮。
 	if err := s.renewSessionLease(ctx, sess.ID); err != nil {
 		return nil, err
 	}
+	// 先把用户输入写进当前等待点，再 Resume。Graph 节点只从 Session 读取答案，
+	// 这样主问题回答和追问回答都走同一个状态入口。
 	if err := fillPendingAnswer(sess, req.Answer); err != nil {
 		return nil, err
 	}
@@ -146,6 +162,7 @@ func (s *InterviewService) Answer(ctx context.Context, req answerInterviewReques
 		s.publishEvent(ctx, interviewEventSessionFailed, sess, "", err.Error())
 		return nil, err
 	}
+	// updated_at 只服务排序/展示；并发正确性由 PG row_version 负责。
 	sess.UpdatedAt = nextUpdatedAt(sess.UpdatedAt)
 	if err := s.store.Save(ctx, sess); err != nil {
 		s.publishEvent(ctx, interviewEventSessionFailed, sess, "", err.Error())
@@ -157,6 +174,7 @@ func (s *InterviewService) Answer(ctx context.Context, req answerInterviewReques
 			return nil, err
 		}
 	}
+	// 长期记忆只在完整面试完成后持久化，避免半截评分污染用户画像。
 	if sess.Status == domain.StatusCompleted {
 		_ = s.persistLongTermMemory(ctx, sess)
 	}
@@ -171,6 +189,9 @@ func (s *InterviewService) Answer(ctx context.Context, req answerInterviewReques
 	return sess, nil
 }
 
+// nextUpdatedAt 保证同一 Session 的更新时间单调递增。
+//
+// 这不是并发控制手段；它只避免时钟精度/回拨导致历史会话排序抖动。
 func nextUpdatedAt(prev time.Time) time.Time {
 	now := time.Now()
 	if now.After(prev) {
@@ -179,6 +200,10 @@ func nextUpdatedAt(prev time.Time) time.Time {
 	return prev.Add(time.Nanosecond)
 }
 
+// fillPendingAnswer 根据当前暂停节点决定答案写入位置。
+//
+// pick_next 表示正在等主问题回答；probe_ask 表示正在等追问回答。
+// 这里集中判断可以避免 handler 根据前端状态猜测要写哪个字段。
 func fillPendingAnswer(sess *domain.Session, answer string) error {
 	// Suspension 是新恢复语义；CurrentNode 只作为旧 Session 兼容回退。
 	node, err := answerAwaitingNode(sess)
@@ -205,6 +230,9 @@ func fillPendingAnswer(sess *domain.Session, answer string) error {
 	}
 }
 
+// answerAwaitingNode 优先使用 Suspension 里的暂停节点。
+//
+// CurrentNode 是旧 Session 的兼容回退；新状态应以 Suspension.Node/Awaiting 为准。
 func answerAwaitingNode(sess *domain.Session) (string, error) {
 	if sess == nil {
 		return "", fmt.Errorf("%w: nil session", ErrInvalidSessionState)
@@ -220,6 +248,10 @@ func answerAwaitingNode(sess *domain.Session) (string, error) {
 	return sess.CurrentNode, nil
 }
 
+// shouldReleaseMutationLease 判断本轮 mutation 是否可以释放 lease。
+//
+// Graph 已完成或进入 suspension 时，当前 HTTP mutation 已经结束；
+// 继续持有 lease 只会阻塞下一次 answer 或实例接管。
 func shouldReleaseMutationLease(sess *domain.Session) bool {
 	if sess == nil {
 		return false
@@ -227,6 +259,9 @@ func shouldReleaseMutationLease(sess *domain.Session) bool {
 	return sess.Status == domain.StatusCompleted || sess.Suspension != nil
 }
 
+// publishEvent 是 InterviewService 到 SSE/事件总线的唯一出口。
+//
+// 调用方只传内部事件类型和 Session，公开字段过滤在事件构造/响应构造里完成。
 func (s *InterviewService) publishEvent(ctx context.Context, eventType string, sess *domain.Session, node, errMsg string) {
 	if s == nil || s.events == nil {
 		return
