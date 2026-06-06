@@ -44,17 +44,18 @@ type sessionSnapshotDeleter interface {
 }
 
 type InterviewService struct {
-	runner      interviewRunner
-	store       SessionStore
-	events      InterviewEventHub
-	memoryStore memory.Store
-	coordinator SessionCoordinator
-	ownerID     string
-	leaseTTL    time.Duration
-	snapshotTTL time.Duration
-	memoryMu    sync.Mutex
-	mu          sync.Mutex
-	nextID      int
+	runner                interviewRunner
+	store                 SessionStore
+	events                InterviewEventHub
+	memoryStore           memory.Store
+	memoryPersistObserver longTermMemoryPersistObserver
+	coordinator           SessionCoordinator
+	ownerID               string
+	leaseTTL              time.Duration
+	snapshotTTL           time.Duration
+	memoryMu              sync.Mutex
+	mu                    sync.Mutex
+	nextID                int
 }
 
 func (s *InterviewService) SetMemoryStore(store memory.Store) {

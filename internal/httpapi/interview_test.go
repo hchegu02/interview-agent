@@ -124,6 +124,21 @@ func (readErrorMemoryStore) UpsertUserMemory(ctx context.Context, memory *memory
 	return nil
 }
 
+type conflictMemoryStore struct {
+	gets    int
+	upserts int
+}
+
+func (s *conflictMemoryStore) GetUserMemory(ctx context.Context, userID string) (*memory.UserMemory, error) {
+	s.gets++
+	return nil, memory.ErrUserMemoryNotFound
+}
+
+func (s *conflictMemoryStore) UpsertUserMemory(ctx context.Context, mem *memory.UserMemory) error {
+	s.upserts++
+	return memory.ErrUserMemoryConflict
+}
+
 type captureStartMemoryRunner struct {
 	memory *domain.WorkingMemory
 	rounds int
@@ -190,6 +205,69 @@ func cloneTestUserMemory(in *memory.UserMemory) *memory.UserMemory {
 		out.SkillScores[k] = v
 	}
 	return &out
+}
+
+type longTermMemoryPersistObservationRecorder struct {
+	mu     sync.Mutex
+	events []longTermMemoryPersistObservation
+}
+
+func recordLongTermMemoryPersistObservationsForTest(t *testing.T, svc *InterviewService) *longTermMemoryPersistObservationRecorder {
+	t.Helper()
+	rec := &longTermMemoryPersistObservationRecorder{}
+	svc.memoryPersistObserver = func(_ context.Context, ev longTermMemoryPersistObservation) {
+		rec.mu.Lock()
+		defer rec.mu.Unlock()
+		rec.events = append(rec.events, ev)
+	}
+	return rec
+}
+
+func (r *longTermMemoryPersistObservationRecorder) snapshot() []longTermMemoryPersistObservation {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([]longTermMemoryPersistObservation, len(r.events))
+	copy(out, r.events)
+	return out
+}
+
+func completedMemorySessionForTest(sessionID, userID string) *domain.Session {
+	return &domain.Session{
+		ID:     sessionID,
+		UserID: userID,
+		Rounds: []domain.AnswerRound{{
+			RoundID: "r1",
+			Answer:  "完整回答正文不应进入观测信号",
+			Question: domain.Question{
+				ID:      "q1",
+				Content: "讲一下 Go",
+				Tags:    []string{"go"},
+			},
+		}},
+		Report: &domain.Report{
+			SessionID:      sessionID,
+			OverallScore:   80,
+			SkillBreakdown: map[string]int{"go": 80},
+			Highlights:     []string{"完整报告正文不应进入观测信号"},
+			Improvements:   []string{"补充调度细节"},
+			NextSteps:      []string{"继续练习并发题"},
+		},
+	}
+}
+
+func assertLongTermMemoryObservationDoesNotLeakText(t *testing.T, ev longTermMemoryPersistObservation) {
+	t.Helper()
+	raw := fmt.Sprintf("%+v", ev)
+	for _, forbidden := range []string{
+		"完整回答正文不应进入观测信号",
+		"完整报告正文不应进入观测信号",
+		"token",
+		"secret",
+	} {
+		if strings.Contains(raw, forbidden) {
+			t.Fatalf("observation leaked %q: %+v", forbidden, ev)
+		}
+	}
 }
 
 type fakeSessionCoordinator struct {
@@ -1102,6 +1180,148 @@ func TestInterviewService_AnswerPersistsLongTermMemory(t *testing.T) {
 	if len(got.Strengths) == 0 || got.Strengths[0] != "Go 基础清楚" {
 		t.Fatalf("strengths = %+v", got.Strengths)
 	}
+}
+
+func TestPersistLongTermMemory_RecordsSuccessObservation(t *testing.T) {
+	memStore := memory.NewMemoryStore()
+	svc := NewInterviewService(fakeInterviewRunner{})
+	svc.SetMemoryStore(memStore)
+	observed := recordLongTermMemoryPersistObservationsForTest(t, svc)
+	sess := completedMemorySessionForTest("memory-success", "u-memory")
+
+	if err := svc.persistLongTermMemory(context.Background(), sess); err != nil {
+		t.Fatalf("persistLongTermMemory error = %v", err)
+	}
+
+	events := observed.snapshot()
+	if len(events) != 1 {
+		t.Fatalf("observed len = %d, want 1: %+v", len(events), events)
+	}
+	ev := events[0]
+	if ev.Status != longTermMemoryPersistSuccess {
+		t.Fatalf("status = %q, want success", ev.Status)
+	}
+	if ev.UserID != "u-memory" || ev.SessionID != "memory-success" {
+		t.Fatalf("ids = %+v, want user/session ids", ev)
+	}
+	if ev.Attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", ev.Attempts)
+	}
+	if ev.Elapsed <= 0 {
+		t.Fatalf("elapsed = %v, want positive duration", ev.Elapsed)
+	}
+	assertLongTermMemoryObservationDoesNotLeakText(t, ev)
+}
+
+func TestPersistLongTermMemory_RecordsSkippedObservation(t *testing.T) {
+	svc := NewInterviewService(fakeInterviewRunner{})
+	svc.SetMemoryStore(memory.NewMemoryStore())
+	observed := recordLongTermMemoryPersistObservationsForTest(t, svc)
+	sess := &domain.Session{ID: "memory-skip", UserID: "u-memory"}
+
+	if err := svc.persistLongTermMemory(context.Background(), sess); err != nil {
+		t.Fatalf("persistLongTermMemory error = %v", err)
+	}
+
+	events := observed.snapshot()
+	if len(events) != 1 {
+		t.Fatalf("observed len = %d, want 1: %+v", len(events), events)
+	}
+	ev := events[0]
+	if ev.Status != longTermMemoryPersistSkipped {
+		t.Fatalf("status = %q, want skipped", ev.Status)
+	}
+	if ev.Reason == "" {
+		t.Fatalf("reason should be set: %+v", ev)
+	}
+	if ev.UserID != "u-memory" || ev.SessionID != "memory-skip" {
+		t.Fatalf("ids = %+v, want user/session ids", ev)
+	}
+	assertLongTermMemoryObservationDoesNotLeakText(t, ev)
+}
+
+func TestPersistLongTermMemory_RecordsSkippedObservationForMissingUser(t *testing.T) {
+	svc := NewInterviewService(fakeInterviewRunner{})
+	svc.SetMemoryStore(memory.NewMemoryStore())
+	observed := recordLongTermMemoryPersistObservationsForTest(t, svc)
+	sess := completedMemorySessionForTest("memory-skip-user", "")
+
+	if err := svc.persistLongTermMemory(context.Background(), sess); err == nil {
+		t.Fatal("persistLongTermMemory error = nil, want existing missing user error")
+	}
+
+	events := observed.snapshot()
+	if len(events) != 1 {
+		t.Fatalf("observed len = %d, want 1: %+v", len(events), events)
+	}
+	ev := events[0]
+	if ev.Status != longTermMemoryPersistSkipped || ev.Reason != "user_missing" {
+		t.Fatalf("observation = %+v, want skipped user_missing", ev)
+	}
+	if ev.SessionID != "memory-skip-user" {
+		t.Fatalf("session id = %q, want memory-skip-user", ev.SessionID)
+	}
+	assertLongTermMemoryObservationDoesNotLeakText(t, ev)
+}
+
+func TestPersistLongTermMemory_RecordsFailedObservation(t *testing.T) {
+	svc := NewInterviewService(fakeInterviewRunner{})
+	svc.SetMemoryStore(failingMemoryStore{})
+	observed := recordLongTermMemoryPersistObservationsForTest(t, svc)
+	sess := completedMemorySessionForTest("memory-failed", "u-memory")
+
+	err := svc.persistLongTermMemory(context.Background(), sess)
+	if err == nil {
+		t.Fatal("persistLongTermMemory error = nil, want store error")
+	}
+
+	events := observed.snapshot()
+	if len(events) != 1 {
+		t.Fatalf("observed len = %d, want 1: %+v", len(events), events)
+	}
+	ev := events[0]
+	if ev.Status != longTermMemoryPersistFailed {
+		t.Fatalf("status = %q, want failed", ev.Status)
+	}
+	if ev.ErrorClass != "store_write_failed" {
+		t.Fatalf("error class = %q, want store_write_failed", ev.ErrorClass)
+	}
+	if ev.Attempts != 1 {
+		t.Fatalf("attempts = %d, want 1", ev.Attempts)
+	}
+	assertLongTermMemoryObservationDoesNotLeakText(t, ev)
+}
+
+func TestPersistLongTermMemory_RecordsConflictRetryExhaustedObservation(t *testing.T) {
+	store := &conflictMemoryStore{}
+	svc := NewInterviewService(fakeInterviewRunner{})
+	svc.SetMemoryStore(store)
+	observed := recordLongTermMemoryPersistObservationsForTest(t, svc)
+	sess := completedMemorySessionForTest("memory-conflict", "u-memory")
+
+	err := svc.persistLongTermMemory(context.Background(), sess)
+	if !errors.Is(err, memory.ErrUserMemoryConflict) {
+		t.Fatalf("persistLongTermMemory error = %v, want conflict", err)
+	}
+
+	events := observed.snapshot()
+	if len(events) != 1 {
+		t.Fatalf("observed len = %d, want 1: %+v", len(events), events)
+	}
+	ev := events[0]
+	if ev.Status != longTermMemoryPersistConflictRetryExhausted {
+		t.Fatalf("status = %q, want conflict_retry_exhausted", ev.Status)
+	}
+	if ev.ErrorClass != "cas_conflict" {
+		t.Fatalf("error class = %q, want cas_conflict", ev.ErrorClass)
+	}
+	if ev.Attempts != longTermMemoryWriteMaxAttempts {
+		t.Fatalf("attempts = %d, want %d", ev.Attempts, longTermMemoryWriteMaxAttempts)
+	}
+	if store.gets != longTermMemoryWriteMaxAttempts || store.upserts != longTermMemoryWriteMaxAttempts {
+		t.Fatalf("store gets/upserts = %d/%d, want %d/%d", store.gets, store.upserts, longTermMemoryWriteMaxAttempts, longTermMemoryWriteMaxAttempts)
+	}
+	assertLongTermMemoryObservationDoesNotLeakText(t, ev)
 }
 
 func TestInterviewService_StartSeedsWorkingMemoryFromLongTermMemory(t *testing.T) {
