@@ -345,7 +345,8 @@ type Suspension struct {
 - `Payload` 当前只做 HTTP 响应层 map 拷贝；如果后续放入嵌套结构，需要补深层 clone 或改成明确 schema。
 - `CurrentNode` 仍是兼容字段，不能立即删除，否则会破坏旧 Session 恢复。
 - PG Session Store 已通过 `sessions.row_version` CAS 拒绝旧快照覆盖新状态；`updated_at` 保留为展示、排序和旧数据兼容字段。
-- lease heartbeat、强 Redis fencing token 和 Redis Streams 精确裁剪检测尚未实现，后续单独设计。
+- Redis Streams 已基于当前最小 retained stream ID 检测 `Last-Event-ID` 是否被裁剪，并通过 `replay_gap` 提示客户端用 snapshot 兜底。
+- lease heartbeat 和强 Redis fencing token 尚未实现，后续单独设计。
 
 收益：
 

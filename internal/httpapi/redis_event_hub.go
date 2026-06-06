@@ -174,6 +174,22 @@ func (h *RedisInterviewEventHub) Subscribe(ctx context.Context, sessionID string
 			conn.Close()
 			return ch, func() {}, err
 		}
+	} else {
+		firstID, err := redisFirstRetainedStreamID(conn, stream)
+		if err != nil {
+			conn.Close()
+			return ch, func() {}, err
+		}
+		if firstID == "" || compareRedisStreamIDs(lastID, firstID) < 0 {
+			ch <- InterviewEvent{
+				ID:        lastID,
+				Type:      interviewEventSnapshot,
+				SessionID: sessionID,
+				ReplayGap: true,
+				At:        time.Now(),
+			}
+			lastID = "0-0"
+		}
 	}
 
 	ctx, cancel := context.WithCancel(ctx)
@@ -311,6 +327,69 @@ func redisLatestStreamID(conn net.Conn, stream string) (string, error) {
 		return "0-0", nil
 	}
 	return id, nil
+}
+
+func redisFirstRetainedStreamID(conn net.Conn, stream string) (string, error) {
+	value, err := redisDo(conn, "XRANGE", stream, "-", "+", "COUNT", "1")
+	if err != nil {
+		return "", err
+	}
+	return redisFirstStreamID(value), nil
+}
+
+func redisFirstStreamID(value any) string {
+	messages, ok := value.([]any)
+	if !ok || len(messages) == 0 {
+		return ""
+	}
+	message, ok := messages[0].([]any)
+	if !ok || len(message) == 0 {
+		return ""
+	}
+	id, ok := message[0].(string)
+	if !ok {
+		return ""
+	}
+	return id
+}
+
+func compareRedisStreamIDs(a, b string) int {
+	aMS, aSeq, aOK := parseRedisStreamID(a)
+	bMS, bSeq, bOK := parseRedisStreamID(b)
+	switch {
+	case !aOK && !bOK:
+		return 0
+	case !aOK:
+		return -1
+	case !bOK:
+		return 1
+	case aMS < bMS:
+		return -1
+	case aMS > bMS:
+		return 1
+	case aSeq < bSeq:
+		return -1
+	case aSeq > bSeq:
+		return 1
+	default:
+		return 0
+	}
+}
+
+func parseRedisStreamID(id string) (int64, int64, bool) {
+	parts := strings.Split(id, "-")
+	if len(parts) != 2 {
+		return 0, 0, false
+	}
+	ms, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || ms < 0 {
+		return 0, 0, false
+	}
+	seq, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil || seq < 0 {
+		return 0, 0, false
+	}
+	return ms, seq, true
 }
 
 func redisDoString(conn net.Conn, args ...string) (string, error) {

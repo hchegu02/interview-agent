@@ -122,6 +122,26 @@ func TestReadRedisValue_Array(t *testing.T) {
 	}
 }
 
+func readRedisCommandForTest(conn net.Conn) ([]string, error) {
+	value, err := readRedisValue(bufio.NewReader(conn))
+	if err != nil {
+		return nil, err
+	}
+	raw, ok := value.([]any)
+	if !ok {
+		return nil, errors.New("expected redis command array")
+	}
+	out := make([]string, 0, len(raw))
+	for _, item := range raw {
+		s, ok := item.(string)
+		if !ok {
+			return nil, errors.New("expected redis command string")
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+
 func TestRedisStreamEvents(t *testing.T) {
 	value := []any{
 		[]any{
@@ -150,6 +170,226 @@ func TestRedisStreamEvents(t *testing.T) {
 	}
 	if events[0].SessionID != "s1" {
 		t.Fatalf("session_id = %q", events[0].SessionID)
+	}
+}
+
+func TestCompareRedisStreamIDs(t *testing.T) {
+	tests := []struct {
+		a    string
+		b    string
+		want int
+	}{
+		{a: "1-0", b: "2-0", want: -1},
+		{a: "2-1", b: "2-0", want: 1},
+		{a: "2-0", b: "2-0", want: 0},
+		{a: "bad", b: "2-0", want: -1},
+		{a: "2-0", b: "bad", want: 1},
+	}
+	for _, tt := range tests {
+		got := compareRedisStreamIDs(tt.a, tt.b)
+		if got != tt.want {
+			t.Fatalf("compareRedisStreamIDs(%q, %q) = %d, want %d", tt.a, tt.b, got, tt.want)
+		}
+	}
+}
+
+func TestRedisFirstStreamID(t *testing.T) {
+	value := []any{
+		[]any{
+			"7-1",
+			[]any{"event", `{"session_id":"s1"}`},
+		},
+	}
+	got := redisFirstStreamID(value)
+	if got != "7-1" {
+		t.Fatalf("first id = %q, want 7-1", got)
+	}
+	if got := redisFirstStreamID([]any{}); got != "" {
+		t.Fatalf("empty first id = %q, want empty", got)
+	}
+}
+
+func TestRedisInterviewEventHubSubscribeReportsReplayGapWhenAfterIDIsTrimmed(t *testing.T) {
+	hub, err := NewRedisInterviewEventHub(RedisEventHubOptions{
+		Addr:  "redis.test:6379",
+		Block: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("new hub: %v", err)
+	}
+	server, client := net.Pipe()
+	hub.dialer = func(context.Context) (net.Conn, error) {
+		return client, nil
+	}
+
+	serverErr := make(chan error, 1)
+	go func() {
+		defer server.Close()
+		if _, err := readRedisCommandForTest(server); err != nil {
+			serverErr <- err
+			return
+		}
+		firstIDResp := "*1\r\n" +
+			"*2\r\n" +
+			"$3\r\n5-0\r\n" +
+			"*0\r\n"
+		if _, err := io.WriteString(server, firstIDResp); err != nil {
+			serverErr <- err
+			return
+		}
+		serverErr <- nil
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events, unsubscribe, err := hub.Subscribe(ctx, "s-trimmed", "1-0")
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer unsubscribe()
+
+	select {
+	case err := <-serverErr:
+		if err != nil {
+			t.Fatalf("server: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for server")
+	}
+
+	select {
+	case got := <-events:
+		if !got.ReplayGap {
+			t.Fatalf("ReplayGap = false, want true: %+v", got)
+		}
+		if got.Type != interviewEventSnapshot {
+			t.Fatalf("type = %q, want %q", got.Type, interviewEventSnapshot)
+		}
+		if got.SessionID != "s-trimmed" {
+			t.Fatalf("session_id = %q, want s-trimmed", got.SessionID)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for replay gap event")
+	}
+}
+
+func TestRedisInterviewEventHubSubscribeDoesNotReportReplayGapAtFirstRetainedID(t *testing.T) {
+	hub, err := NewRedisInterviewEventHub(RedisEventHubOptions{
+		Addr:  "redis.test:6379",
+		Block: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("new hub: %v", err)
+	}
+	server, client := net.Pipe()
+	hub.dialer = func(context.Context) (net.Conn, error) {
+		return client, nil
+	}
+
+	serverErr := make(chan error, 1)
+	go func() {
+		defer server.Close()
+		if _, err := readRedisCommandForTest(server); err != nil {
+			serverErr <- err
+			return
+		}
+		firstIDResp := "*1\r\n" +
+			"*2\r\n" +
+			"$3\r\n5-0\r\n" +
+			"*0\r\n"
+		if _, err := io.WriteString(server, firstIDResp); err != nil {
+			serverErr <- err
+			return
+		}
+		if _, err := readRedisCommandForTest(server); err != nil {
+			serverErr <- err
+			return
+		}
+		_, err := io.WriteString(server, "*0\r\n")
+		serverErr <- err
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events, unsubscribe, err := hub.Subscribe(ctx, "s-no-gap", "5-0")
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer unsubscribe()
+
+	select {
+	case err := <-serverErr:
+		if err != nil {
+			t.Fatalf("server: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for server")
+	}
+
+	select {
+	case got := <-events:
+		t.Fatalf("unexpected event: %+v", got)
+	default:
+	}
+}
+
+func TestRedisInterviewEventHubSubscribeWithoutAfterIDDoesNotReportReplayGap(t *testing.T) {
+	hub, err := NewRedisInterviewEventHub(RedisEventHubOptions{
+		Addr:  "redis.test:6379",
+		Block: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatalf("new hub: %v", err)
+	}
+	server, client := net.Pipe()
+	hub.dialer = func(context.Context) (net.Conn, error) {
+		return client, nil
+	}
+
+	serverErr := make(chan error, 1)
+	go func() {
+		defer server.Close()
+		if _, err := readRedisCommandForTest(server); err != nil {
+			serverErr <- err
+			return
+		}
+		latestIDResp := "*1\r\n" +
+			"*2\r\n" +
+			"$3\r\n9-0\r\n" +
+			"*0\r\n"
+		if _, err := io.WriteString(server, latestIDResp); err != nil {
+			serverErr <- err
+			return
+		}
+		if _, err := readRedisCommandForTest(server); err != nil {
+			serverErr <- err
+			return
+		}
+		_, err := io.WriteString(server, "*0\r\n")
+		serverErr <- err
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events, unsubscribe, err := hub.Subscribe(ctx, "s-new-sub", "")
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer unsubscribe()
+
+	select {
+	case err := <-serverErr:
+		if err != nil {
+			t.Fatalf("server: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for server")
+	}
+
+	select {
+	case got := <-events:
+		t.Fatalf("unexpected event: %+v", got)
+	default:
 	}
 }
 
