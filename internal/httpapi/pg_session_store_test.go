@@ -2,10 +2,13 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"interview-agent/internal/domain"
@@ -113,5 +116,66 @@ func TestPGInterval_DefaultsWhenNonPositive(t *testing.T) {
 	}
 	if got := pgInterval(2 * time.Hour); got != "7200 seconds" {
 		t.Errorf("pgInterval(2h) = %q, want 7200 seconds", got)
+	}
+}
+
+func TestPGSessionStore_SaveWithExecRejectsStaleWrite(t *testing.T) {
+	store := NewPGSessionStore(nil, time.Hour)
+	err := store.saveWithExec(context.Background(), &domain.Session{
+		ID:        "stale",
+		UserID:    "u1",
+		Status:    domain.StatusRunning,
+		UpdatedAt: time.Now(),
+	}, func(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+		if !strings.Contains(sql, "sessions.state_json->>'updated_at'") {
+			t.Fatalf("upsert SQL missing state_json updated_at guard: %s", sql)
+		}
+		return pgconn.NewCommandTag("UPDATE 0"), nil
+	})
+	if !errors.Is(err, ErrStaleSessionWrite) {
+		t.Fatalf("err = %v, want ErrStaleSessionWrite", err)
+	}
+}
+
+func TestPGSessionStore_SaveWithExecFillsZeroUpdatedAt(t *testing.T) {
+	store := NewPGSessionStore(nil, time.Hour)
+	sess := &domain.Session{
+		ID:     "zero-updated",
+		UserID: "u1",
+		Status: domain.StatusRunning,
+	}
+
+	if err := store.saveWithExec(context.Background(), sess, func(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+		if len(args) != 7 {
+			t.Fatalf("args len = %d, want 7", len(args))
+		}
+		if _, ok := args[6].(time.Time); !ok {
+			t.Fatalf("updated_at arg type = %T", args[6])
+		}
+		return pgconn.NewCommandTag("INSERT 0 1"), nil
+	}); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if sess.UpdatedAt.IsZero() {
+		t.Fatal("UpdatedAt should be filled")
+	}
+	if sess.CreatedAt.IsZero() {
+		t.Fatal("CreatedAt should be filled with zero UpdatedAt")
+	}
+}
+
+func TestPGSessionStore_SaveWithExecPropagatesExecError(t *testing.T) {
+	store := NewPGSessionStore(nil, time.Hour)
+	dbErr := errors.New("db down")
+	err := store.saveWithExec(context.Background(), &domain.Session{
+		ID:        "exec-error",
+		UserID:    "u1",
+		Status:    domain.StatusRunning,
+		UpdatedAt: time.Now(),
+	}, func(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+		return pgconn.CommandTag{}, dbErr
+	})
+	if !errors.Is(err, dbErr) {
+		t.Fatalf("err = %v, want dbErr", err)
 	}
 }

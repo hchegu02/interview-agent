@@ -11,6 +11,7 @@ import (
 )
 
 var ErrSessionNotFound = errors.New("session not found")
+var ErrStaleSessionWrite = errors.New("stale session write")
 
 // SessionStore 是 HTTP 面试服务看到的会话存储边界。
 //

@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
+
 	"interview-agent/internal/config"
 	"interview-agent/internal/domain"
 	"interview-agent/internal/memory"
@@ -712,6 +714,28 @@ func TestInterviewStart_LeaseConflictReturnsHTTP409(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `"trace_id":"trace-lease-start"`) {
 		t.Fatalf("body should include trace id, got %s", rec.Body.String())
+	}
+}
+
+func TestWriteInterviewError_StaleSessionWriteReturnsHTTP409(t *testing.T) {
+	router := gin.New()
+	router.Use(TraceIDMiddleware())
+	router.GET("/stale", func(c *gin.Context) {
+		writeInterviewError(c, fmt.Errorf("%w: s1", ErrStaleSessionWrite))
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/stale", nil)
+	req.Header.Set("X-Trace-Id", "trace-stale")
+	router.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409, body=%s", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{`"code":"stale_session_write"`, `"trace_id":"trace-stale"`} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("body missing %s: %s", want, rec.Body.String())
+		}
 	}
 }
 

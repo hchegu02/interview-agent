@@ -343,7 +343,8 @@ type Suspension struct {
 - 默认暂停类型先使用 `answer`，人工确认、工具审批和题目确认后续按节点语义写入。
 - `Payload` 当前只做 HTTP 响应层 map 拷贝；如果后续放入嵌套结构，需要补深层 clone 或改成明确 schema。
 - `CurrentNode` 仍是兼容字段，不能立即删除，否则会破坏旧 Session 恢复。
-- lease heartbeat、PG fencing token / CAS 和 Redis Streams 精确裁剪检测尚未实现，后续单独设计。
+- PG Session Store 已通过 `updated_at` stale write guard 拒绝明显旧快照覆盖新状态。
+- lease heartbeat、强 fencing token / row version 和 Redis Streams 精确裁剪检测尚未实现，后续单独设计。
 
 收益：
 
