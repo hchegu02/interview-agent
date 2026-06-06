@@ -2,9 +2,31 @@
   {
     "user_id": "agent-verify-user",
     "session_id": "agent-verify-pass",
+    "status": "success",
+    "attempts": 1,
+    "elapsed_ms": 2
+  },
+  {
+    "user_id": "agent-verify-user",
+    "session_id": "agent-verify-pass",
+    "status": "skipped",
+    "reason": "report_missing",
+    "elapsed_ms": 1
+  },
+  {
+    "user_id": "agent-verify-user",
+    "session_id": "agent-verify-pass",
     "status": "failed",
     "error_class": "store_write_failed",
     "attempts": 1,
     "elapsed_ms": 3
+  },
+  {
+    "user_id": "agent-verify-user",
+    "session_id": "agent-verify-pass",
+    "status": "conflict_retry_exhausted",
+    "error_class": "cas_conflict",
+    "attempts": 3,
+    "elapsed_ms": 5
   }
 ]

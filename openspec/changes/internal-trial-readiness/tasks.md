@@ -16,13 +16,13 @@
 
 ## 4. Memory Observability Trial Gate
 
-- [ ] 4.1 Ensure internal smoke or verification fixture observes long-term memory success, skipped, failed and conflict-exhausted states.
-- [ ] 4.2 Confirm memory observation payloads do not include full answers, reports, tokens or private config.
+- [x] 4.1 Ensure internal smoke or verification fixture observes long-term memory success, skipped, failed and conflict-exhausted states.
+- [x] 4.2 Confirm memory observation payloads do not include full answers, reports, tokens or private config.
 
 ## 5. Internal Trial Smoke and Quality Gates
 
-- [ ] 5.1 Add a repeatable internal trial smoke command or script covering interview completion, report, memory observation, Agent project polish and tool trace.
-- [ ] 5.2 Update `cmd/agent-verify` fixtures or related tests if the smoke needs new stable inputs.
+- [x] 5.1 Add a repeatable internal trial smoke command or script covering interview completion, report, memory observation, Agent project polish and tool trace.
+- [x] 5.2 Update `cmd/agent-verify` fixtures or related tests if the smoke needs new stable inputs.
 - [ ] 5.3 Run Go, frontend, agent-verify, smoke and OpenSpec validation gates.
 
 ## 6. Documentation
