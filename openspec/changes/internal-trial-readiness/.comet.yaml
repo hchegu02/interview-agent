@@ -2,12 +2,12 @@ workflow: full
 phase: verify
 build_mode: subagent-driven-development
 isolation: branch
-verify_mode: null
+verify_mode: full
 base_ref: 70e3c9dbd261943e21ceb8433449cd4e9bff1979
 design_doc: docs/superpowers/specs/2026-06-06-internal-trial-readiness-design.md
 plan: docs/superpowers/plans/2026-06-06-internal-trial-readiness.md
 verify_result: pending
-verification_report: null
+verification_report: docs/superpowers/reports/2026-06-06-internal-trial-readiness-verify.md
 branch_status: pending
 created_at: 2026-06-06
 verified_at: null
