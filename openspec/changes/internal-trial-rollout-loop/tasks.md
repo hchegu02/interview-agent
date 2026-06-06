@@ -10,13 +10,15 @@
 - [x] 2.3 Add business trial Runbook with fixed user flow and feedback collection steps.
 - [x] 2.4 Add issue record template with required reproduction and diagnostic fields.
 - [x] 2.5 Add product feedback scoring template.
-- [ ] 2.6 Add Go/No-Go standard for continuing, pausing, rolling back, or expanding trial scope.
+- [x] 2.6 Add Go/No-Go standard for continuing, pausing, rolling back, or expanding trial scope.
 
 ## 3. Verification
 
-- [ ] 3.1 Verify documentation links and tracked paths.
-- [ ] 3.2 Run minimal config or docs-related tests if touched.
-- [ ] 3.3 Run `openspec validate internal-trial-rollout-loop --strict`.
+- [x] 3.1 Verify documentation links and tracked paths.
+- [x] 3.2 Run minimal config or docs-related tests if touched.
+- [x] 3.3 Run `openspec validate internal-trial-rollout-loop --strict`.
+
+Note: implementation changes are Markdown-only rollout documents. No Go, frontend, config, or script files were modified, so no Go/frontend test was required for 3.2.
 
 ## 4. Closeout
 
