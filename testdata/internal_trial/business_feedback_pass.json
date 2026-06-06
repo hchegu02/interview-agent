@@ -1,0 +1,14 @@
+{
+  "trial_role": "interviewer",
+  "trial_date": "2026-06-07",
+  "scenario": "go-backend-internal",
+  "completed_fixed_script": true,
+  "interview_flow_score": 4,
+  "report_usefulness_score": 4,
+  "project_polish_score": 4,
+  "expand_recommendation": "yes",
+  "has_blocker": false,
+  "most_valuable": "报告和追问可以辅助内部面试复盘。",
+  "top_issue": "题库覆盖仍需继续增加 Go 后端真实场景。",
+  "next_priority": "继续收集 Go 后端题库和报告质量反馈。"
+}
