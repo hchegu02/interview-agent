@@ -179,6 +179,9 @@ func (s *ImportService) embedCommittedItems(ctx context.Context, items []Item) e
 }
 
 func importItemAccepted(item ImportItem) bool {
+	if item.AgentReviewStatus == ImportAgentReviewRejected {
+		return false
+	}
 	return item.ReviewStatus == "" || item.ReviewStatus == ImportReviewStatusAccepted
 }
 

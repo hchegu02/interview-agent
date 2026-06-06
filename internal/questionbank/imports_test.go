@@ -152,6 +152,64 @@ func TestImportService_CommitSkipsRejectedItems(t *testing.T) {
 	}
 }
 
+func TestCommitSkipsAgentRejectedItems(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore(nil)
+	imports := NewMemoryImportStore()
+	service := NewImportService(ImportServiceDeps{
+		Imports: imports,
+		Writer:  store,
+	})
+
+	job, err := service.ImportLocalQuestionBank(ctx, ImportFile{
+		Filename: "questions.json",
+		Reader: strings.NewReader(`[{
+			"id":"reject-agent-001",
+			"content":"Go channel 关闭后接收行为是什么？",
+			"skill_category":"go",
+			"difficulty":3,
+			"tags":["channel"],
+			"expected_points":["zero value","ok flag","panic on send"]
+		}]`),
+		Size: 256,
+	})
+	if err != nil {
+		t.Fatalf("ImportLocalQuestionBank: %v", err)
+	}
+	items, err := imports.ListItems(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %+v, want one item", items)
+	}
+	items[0].AgentReviewStatus = ImportAgentReviewRejected
+	items[0].AgentReviewReason = "not grounded in source"
+	if err := imports.UpdateItems(ctx, items); err != nil {
+		t.Fatalf("UpdateItems: %v", err)
+	}
+
+	committed, err := service.Commit(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if committed.ImportedItems != 0 {
+		t.Fatalf("ImportedItems = %d, want 0", committed.ImportedItems)
+	}
+	committedItems, err := imports.ListItems(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("ListItems after commit: %v", err)
+	}
+	for _, item := range committedItems {
+		if item.QuestionID == "reject-agent-001" && item.Status == ImportItemStatusImported {
+			t.Fatalf("agent rejected item was imported: %+v", item)
+		}
+	}
+	if _, err := store.Get(ctx, "reject-agent-001"); err == nil {
+		t.Fatal("agent rejected item should not be written to question bank")
+	}
+}
+
 func TestImportService_ImportLocalQuestionOnlyUsesLLMEnrichment(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemoryStore(nil)
