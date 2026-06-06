@@ -57,6 +57,35 @@ Graph runner MUST support nodes that return `domain.StatePatch` and apply those 
 - **AND** the runner should apply their `StatePatch`
 - **AND** their legacy direct-call constructors should remain compatible
 
+#### Scenario: probe evaluation uses runner-level patch
+
+- **WHEN** the Interview Graph registers `probe_eval`
+- **THEN** it SHOULD register it as a patch-aware node
+- **AND** the runner should apply its `StatePatch`
+- **AND** the legacy direct-call constructor should remain compatible
+
+#### Scenario: critic uses runner-level patch
+
+- **WHEN** the Interview Graph registers `critic`
+- **THEN** it SHOULD register it as a patch-aware node
+- **AND** the runner should apply its `StatePatch`
+- **AND** the legacy direct-call constructor should remain compatible
+
+#### Scenario: refine uses runner-level patch
+
+- **WHEN** the Interview Graph registers `refine`
+- **THEN** it SHOULD register it as a patch-aware node
+- **AND** the runner should apply its `StatePatch`
+- **AND** the legacy direct-call constructor should remain compatible
+
+#### Scenario: update memory uses runner-level patch
+
+- **WHEN** the Interview Graph registers `update_memory`
+- **THEN** it SHOULD register it as a patch-aware node
+- **AND** the runner should apply its `StatePatch`
+- **AND** the legacy direct-call constructor should remain compatible
+- **AND** its patch should include both `WorkingMemory` and current round completion when settling a round
+
 ### Requirement: 并发 frontier 必须检测写冲突
 
 Graph runner MUST reject unsafe concurrent frontiers before executing their nodes.
@@ -84,4 +113,3 @@ The change MUST NOT alter HTTP API responses, SSE payloads, Session JSON format,
 
 - **WHEN** graph nodes execute through the new runner
 - **THEN** Session JSON should not gain graph write-set or patch metadata fields
-

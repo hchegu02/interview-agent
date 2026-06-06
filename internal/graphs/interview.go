@@ -68,15 +68,31 @@ func BuildInterviewGraph(deps Deps) (*graph.Runnable, error) {
 			[]string{graph.WritePendingDecision, graph.WriteCurrentEvaluation, graph.WriteWorkingMemory},
 			nodes.NewEvaluatePatchNode(deps.Model, nodes.EvaluateOptions{}),
 		)).
-		AddNode(nodeCritic, nodes.NewCriticNode(deps.Model, nodes.CriticOptions{})).
-		AddNode(nodes.NodeRefine, nodes.NewRefineNode(deps.Model, nodes.RefineOptions{})).
+		AddNodeSpec(graph.PatchNode(
+			nodeCritic,
+			[]string{graph.WriteCurrentCriticResult, graph.WriteWorkingMemory},
+			nodes.NewCriticPatchNode(deps.Model, nodes.CriticOptions{}),
+		)).
+		AddNodeSpec(graph.PatchNode(
+			nodes.NodeRefine,
+			[]string{graph.WriteCurrentRefinedEval, graph.WriteWorkingMemory},
+			nodes.NewRefinePatchNode(deps.Model, nodes.RefineOptions{}),
+		)).
 		AddNodeSpec(graph.PatchNode(
 			nodes.NodeProbeAsk,
 			[]string{graph.WriteRounds, graph.WriteWorkingMemory},
 			nodes.NewProbeAskPatchNode(deps.Model, nodes.ProbeAskOptions{}),
 		)).
-		AddNode(nodeProbeEval, nodes.NewProbeEvalNode(deps.Model, nodes.ProbeEvalOptions{})).
-		AddNode(nodes.NodeUpdateMemory, nodes.NewUpdateMemoryNode(nodes.UpdateMemoryOptions{})).
+		AddNodeSpec(graph.PatchNode(
+			nodeProbeEval,
+			[]string{graph.WriteRounds, graph.WriteWorkingMemory},
+			nodes.NewProbeEvalPatchNode(deps.Model, nodes.ProbeEvalOptions{}),
+		)).
+		AddNodeSpec(graph.PatchNode(
+			nodes.NodeUpdateMemory,
+			[]string{graph.WriteWorkingMemory, graph.WriteCurrentRoundCompletion},
+			nodes.NewUpdateMemoryPatchNode(nodes.UpdateMemoryOptions{}),
+		)).
 		AddNode(nodes.NodeUpdateDifficulty, nodes.NewUpdateDifficultyNode(nodes.UpdateDifficultyOptions{})).
 		AddNode(nodeReflectionCheck, nodes.NewReflectionCheckNode(deps.Model, nodes.ReflectionCheckOptions{})).
 		AddNodeSpec(graph.PatchNode(

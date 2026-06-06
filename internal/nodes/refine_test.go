@@ -61,6 +61,32 @@ func TestRefine_Success_WritesRefinedEval(t *testing.T) {
 	}
 }
 
+func TestRefinePatchNode_ReturnsPatchWithoutMutatingSession(t *testing.T) {
+	stub := &stubChatModel{responses: []string{
+		`{"question_id":"go-001","score":55,"strengths":["提到 G"],"weaknesses":["未讲 M/P"],"suggestion":"补全 GMP 三者关系"}`,
+	}}
+	sess := buildRefineSession(true, 80)
+	node := NewRefinePatchNode(stub, RefineOptions{})
+
+	patch, err := node(context.Background(), sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.Rounds[0].RefinedEval != nil {
+		t.Fatalf("patch node should not mutate session directly: %+v", sess.Rounds[0].RefinedEval)
+	}
+	if patch.CurrentRefinedEvaluation == nil || patch.CurrentRefinedEvaluation.Score != 55 {
+		t.Fatalf("refined patch = %+v", patch.CurrentRefinedEvaluation)
+	}
+
+	if err := domain.ApplyStatePatch(sess, patch); err != nil {
+		t.Fatalf("apply patch: %v", err)
+	}
+	if sess.Rounds[0].RefinedEval == nil || sess.Rounds[0].FinalEvaluation().Score != 55 {
+		t.Fatalf("refined after apply = %+v", sess.Rounds[0].RefinedEval)
+	}
+}
+
 func TestRefine_NotNeeded_SkipsLLM(t *testing.T) {
 	stub := &stubChatModel{}
 	sess := buildRefineSession(false, 80)
@@ -73,6 +99,23 @@ func TestRefine_NotNeeded_SkipsLLM(t *testing.T) {
 	}
 	if sess.Rounds[0].RefinedEval != nil {
 		t.Error("RefinedEval should remain nil")
+	}
+}
+
+func TestRefinePatchNode_NotNeededReturnsEmptyPatch(t *testing.T) {
+	stub := &stubChatModel{}
+	sess := buildRefineSession(false, 80)
+	node := NewRefinePatchNode(stub, RefineOptions{})
+
+	patch, err := node(context.Background(), sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stub.idx != 0 {
+		t.Errorf("LLM should not be called when need_refine=false, called %d", stub.idx)
+	}
+	if patch.CurrentRefinedEvaluation != nil || patch.WorkingMemory != nil {
+		t.Fatalf("expected empty patch, got %+v", patch)
 	}
 }
 
@@ -95,6 +138,27 @@ func TestRefine_LLMFails_KeepsOriginal(t *testing.T) {
 	}
 	if sess.WorkingMemory.DegradedReasons["refine"] == "" {
 		t.Error("expected refine degraded reason")
+	}
+}
+
+func TestRefinePatchNode_LLMFailsReturnsWorkingMemoryPatch(t *testing.T) {
+	stub := &stubChatModel{errs: []error{errors.New("boom")}, responses: []string{""}}
+	sess := buildRefineSession(true, 80)
+	node := NewRefinePatchNode(stub, RefineOptions{})
+
+	patch, err := node(context.Background(), sess)
+	if err != nil {
+		t.Fatalf("should not return err, got %v", err)
+	}
+	if patch.CurrentRefinedEvaluation != nil {
+		t.Fatalf("refined eval should remain nil on failure, got %+v", patch.CurrentRefinedEvaluation)
+	}
+	if patch.WorkingMemory == nil || patch.WorkingMemory.DegradedReasons["refine"] == "" {
+		t.Fatalf("expected refine degraded reason patch, got %+v", patch.WorkingMemory)
+	}
+	if sess.Rounds[0].RefinedEval != nil || sess.WorkingMemory.DegradedReasons["refine"] != "" {
+		t.Fatalf("patch node should not mutate session directly: refined=%+v memory=%+v",
+			sess.Rounds[0].RefinedEval, sess.WorkingMemory)
 	}
 }
 

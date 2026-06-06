@@ -73,10 +73,23 @@ func validateCritic(raw []byte) error {
 // NewCriticNode 构造 critic 节点。
 //
 // 节点契约:
-//   输入: CurrentRound() 必须存在,Evaluation 必须已填(可为降级 score=-1)
-//   输出: round.CriticResult 被填(始终,失败走"放行")
-//   返回: nil(始终);ErrPermanent 仅当 CurrentRound() / Evaluation 为 nil
+//
+//	输入: CurrentRound() 必须存在,Evaluation 必须已填(可为降级 score=-1)
+//	输出: round.CriticResult 被填(始终,失败走"放行")
+//	返回: nil(始终);ErrPermanent 仅当 CurrentRound() / Evaluation 为 nil
 func NewCriticNode(model llm.ChatModel, opts CriticOptions) graph.NodeFunc {
+	patchNode := NewCriticPatchNode(model, opts)
+	return func(ctx context.Context, sess *domain.Session) error {
+		patch, err := patchNode(ctx, sess)
+		if err != nil {
+			return err
+		}
+		return applyNodePatch(sess, "critic", patch)
+	}
+}
+
+// NewCriticPatchNode 构造由 Graph runner 统一应用 StatePatch 的 critic 节点。
+func NewCriticPatchNode(model llm.ChatModel, opts CriticOptions) graph.PatchNodeFunc {
 	if opts.Temperature == 0 {
 		opts.Temperature = 0.2
 	}
@@ -87,46 +100,49 @@ func NewCriticNode(model llm.ChatModel, opts CriticOptions) graph.NodeFunc {
 		opts.RefineThreshold = 60
 	}
 
-	return func(ctx context.Context, sess *domain.Session) error {
+	return func(ctx context.Context, sess *domain.Session) (domain.StatePatch, error) {
 		round := sess.CurrentRound()
 		if round == nil {
-			return fmt.Errorf("critic: no current round: %w", graph.ErrPermanent)
+			return domain.StatePatch{}, fmt.Errorf("critic: no current round: %w", graph.ErrPermanent)
 		}
 		if round.Evaluation == nil {
-			return fmt.Errorf("critic: evaluation required: %w", graph.ErrPermanent)
+			return domain.StatePatch{}, fmt.Errorf("critic: evaluation required: %w", graph.ErrPermanent)
 		}
-		if sess.WorkingMemory == nil {
-			sess.WorkingMemory = domain.NewWorkingMemory()
-		}
+		mem := cloneWorkingMemory(sess.WorkingMemory)
 
 		// 1. 评估降级 → 直接放行 critic,不烧 token
 		if round.Evaluation.Score < 0 {
-			round.CriticResult = &domain.Critic{
+			patch := domain.StatePatch{CurrentCriticResult: &domain.Critic{
 				GroundedScore:  -1,
 				NeedRefine:     false,
 				Summary:        "上游评估已降级,跳过 critic",
 				HasProbeSignal: false,
+			}}
+			if sess.WorkingMemory == nil {
+				patch.WorkingMemory = mem
 			}
-			return nil
+			return patch, nil
 		}
 
 		// 2. LLM 调用
 		shape, err := criticByLLM(ctx, model, round, opts)
 		if err != nil {
-			markCriticFallback(sess, err.Error())
-			round.CriticResult = &domain.Critic{
-				GroundedScore:  -1,
-				NeedRefine:     false,
-				Summary:        fmt.Sprintf("critic 降级: %s", err.Error()),
-				HasProbeSignal: false,
-			}
-			return nil
+			markDegradedReason(mem, "critic", err.Error())
+			return domain.StatePatch{
+				CurrentCriticResult: &domain.Critic{
+					GroundedScore:  -1,
+					NeedRefine:     false,
+					Summary:        fmt.Sprintf("critic 降级: %s", err.Error()),
+					HasProbeSignal: false,
+				},
+				WorkingMemory: mem,
+			}, nil
 		}
 
 		// 3. 预算约束:probe 预算耗尽 → 强制 has_probe_signal=false
 		hasProbe := shape.HasProbeSignal
 		probeTopic := strings.TrimSpace(shape.ProbeTopic)
-		if hasProbe && !sess.WorkingMemory.CanProbe() {
+		if hasProbe && !mem.CanProbe() {
 			hasProbe = false
 			probeTopic = ""
 		}
@@ -137,15 +153,18 @@ func NewCriticNode(model llm.ChatModel, opts CriticOptions) graph.NodeFunc {
 		// 4. 决定 need_refine:LLM 说要 refine 或 grounded_score 低于阈值都触发
 		needRefine := shape.NeedRefine || shape.GroundedScore < opts.RefineThreshold
 
-		round.CriticResult = &domain.Critic{
+		patch := domain.StatePatch{CurrentCriticResult: &domain.Critic{
 			GroundedScore:  shape.GroundedScore,
 			NeedRefine:     needRefine,
 			Issues:         shape.Issues,
 			Summary:        strings.TrimSpace(shape.Summary),
 			HasProbeSignal: hasProbe,
 			ProbeTopic:     probeTopic,
+		}}
+		if sess.WorkingMemory == nil {
+			patch.WorkingMemory = mem
 		}
-		return nil
+		return patch, nil
 	}
 }
 
@@ -189,8 +208,4 @@ func criticByLLM(
 		return nil, fmt.Errorf("unmarshal critic: %w", err)
 	}
 	return &shape, nil
-}
-
-func markCriticFallback(sess *domain.Session, reason string) {
-	markDegradedReason(sess.WorkingMemory, "critic", reason)
 }

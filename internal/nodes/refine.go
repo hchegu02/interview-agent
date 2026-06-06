@@ -39,10 +39,23 @@ type RefineOptions struct {
 // NewRefineNode 构造 refine 节点。
 //
 // 节点契约:
-//   输入: CurrentRound() 必须存在,Evaluation 和 CriticResult 都已填
-//   输出: round.RefinedEval(成功) 或保持 nil(失败,但 round 不破坏)
-//   返回: nil(始终);ErrPermanent 仅当 round / eval / critic 为 nil
+//
+//	输入: CurrentRound() 必须存在,Evaluation 和 CriticResult 都已填
+//	输出: round.RefinedEval(成功) 或保持 nil(失败,但 round 不破坏)
+//	返回: nil(始终);ErrPermanent 仅当 round / eval / critic 为 nil
 func NewRefineNode(model llm.ChatModel, opts RefineOptions) graph.NodeFunc {
+	patchNode := NewRefinePatchNode(model, opts)
+	return func(ctx context.Context, sess *domain.Session) error {
+		patch, err := patchNode(ctx, sess)
+		if err != nil {
+			return err
+		}
+		return applyNodePatch(sess, "refine", patch)
+	}
+}
+
+// NewRefinePatchNode 构造由 Graph runner 统一应用 StatePatch 的 refine 节点。
+func NewRefinePatchNode(model llm.ChatModel, opts RefineOptions) graph.PatchNodeFunc {
 	if opts.Temperature == 0 {
 		opts.Temperature = 0.2
 	}
@@ -50,28 +63,32 @@ func NewRefineNode(model llm.ChatModel, opts RefineOptions) graph.NodeFunc {
 		opts.MaxTokens = 600
 	}
 
-	return func(ctx context.Context, sess *domain.Session) error {
+	return func(ctx context.Context, sess *domain.Session) (domain.StatePatch, error) {
 		round := sess.CurrentRound()
 		if round == nil {
-			return fmt.Errorf("refine: no current round: %w", graph.ErrPermanent)
+			return domain.StatePatch{}, fmt.Errorf("refine: no current round: %w", graph.ErrPermanent)
 		}
 		if round.Evaluation == nil || round.CriticResult == nil {
-			return fmt.Errorf("refine: requires eval+critic: %w", graph.ErrPermanent)
+			return domain.StatePatch{}, fmt.Errorf("refine: requires eval+critic: %w", graph.ErrPermanent)
 		}
 		// 节点自检:critic 说不需要 refine 就直接放过(router 通常已挡掉)
 		if !round.CriticResult.NeedRefine {
-			return nil
+			return domain.StatePatch{}, nil
 		}
 
 		refined, err := refineByLLM(ctx, model, round, opts)
 		if err != nil {
-			markRefineFallback(sess, err.Error())
 			// 不覆盖原 evaluation,RefinedEval 保持 nil,
 			// FinalEvaluation() 会回退到原 evaluation
-			return nil
+			return domain.StatePatch{
+				WorkingMemory: workingMemoryWithDegradedReason(sess.WorkingMemory, "refine", err.Error()),
+			}, nil
 		}
-		round.RefinedEval = refined
-		return nil
+		patch := domain.StatePatch{CurrentRefinedEvaluation: refined}
+		if sess.WorkingMemory == nil {
+			patch.WorkingMemory = domain.NewWorkingMemory()
+		}
+		return patch, nil
 	}
 }
 
@@ -128,11 +145,4 @@ func refineByLLM(
 		Weaknesses: s.Weaknesses,
 		Suggestion: strings.TrimSpace(s.Suggestion),
 	}, nil
-}
-
-func markRefineFallback(sess *domain.Session, reason string) {
-	if sess.WorkingMemory == nil {
-		sess.WorkingMemory = domain.NewWorkingMemory()
-	}
-	markDegradedReason(sess.WorkingMemory, "refine", reason)
 }

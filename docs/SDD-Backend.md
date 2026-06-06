@@ -362,16 +362,21 @@ type Suspension struct {
 
 ```go
 type StatePatch struct {
-    CandidatePool        *[]Question
-    RetrievalTrace       *RetrievalTrace
-    PendingDecision      *Decision
-    ClearPendingDecision bool
-    AppendRound          *AnswerRound
-    CurrentEvaluation    *Evaluation
-    CompleteCurrentRound *time.Time
-    Report               *Report
-    Status               *SessionStatus
-    WorkingMemory        *WorkingMemory
+    CandidatePool             *[]Question
+    RetrievalTrace            *RetrievalTrace
+    PendingDecision           *Decision
+    ClearPendingDecision      bool
+    AppendRound               *AnswerRound
+    AppendCurrentFollowUp     *FollowUp
+    CurrentFollowUpEvaluation *Evaluation
+    CurrentCriticResult       *Critic
+    CurrentCriticProbeSignal  *CriticProbeSignalPatch
+    CurrentEvaluation         *Evaluation
+    CurrentRefinedEvaluation  *Evaluation
+    CompleteCurrentRound      *time.Time
+    Report                    *Report
+    Status                    *SessionStatus
+    WorkingMemory             *WorkingMemory
 }
 ```
 
@@ -381,15 +386,18 @@ type StatePatch struct {
 - `retrieve_rag` 已迁移到 runner-level `PatchNode`，通过 patch 写 `CandidatePool` / `RetrievalTrace`，降级时通过 `WorkingMemory` patch 写 `DegradedReasons["rag"]`。
 - `pick_next` 已迁移到 runner-level `PatchNode`，通过 patch 写 `PendingDecision`、append `AnswerRound`、替换 `WorkingMemory`，并通过显式 patch-on-suspend 语义在暂停前应用 patch。
 - `evaluate` 已迁移到 runner-level `PatchNode`，通过 patch 写当前轮 `Evaluation` 并清理 `PendingDecision`，LLM 评估降级时通过 `WorkingMemory` patch 写 `DegradedReasons["eval"]`。
+- `critic` 已迁移到 runner-level `PatchNode`，通过 patch 写当前轮完整 `CriticResult`，LLM 降级时通过 `WorkingMemory` patch 写 `DegradedReasons["critic"]`。
+- `refine` 已迁移到 runner-level `PatchNode`，通过 patch 写当前轮 `RefinedEval`，LLM 降级时只通过 `WorkingMemory` patch 写 `DegradedReasons["refine"]`，不覆盖原始 `Evaluation`。
 - `probe_ask` 已迁移到 runner-level `PatchNode`，通过 patch 追加当前轮 `FollowUp`、替换 `WorkingMemory`，并在 LLM 降级时只更新 `CriticResult` 的追问信号字段。
+- `probe_eval` 已迁移到 runner-level `PatchNode`，通过 patch 写当前最后一个 `FollowUp.Evaluation`，并通过窄 patch 更新 `CriticResult` 的追问信号字段。
+- `update_memory` 已迁移到 runner-level `PatchNode`，复用 `WorkingMemory + CompleteCurrentRound` patch 同时写入运行时记忆和本轮完成时间，避免后续 `update_difficulty/reflection_check` 看到半更新状态。
 - `report` 已迁移到 runner-level `PatchNode`，通过 patch 写 `Report`、`StatusCompleted` 并清理 `PendingDecision`。
 - `Status` 和 `WorkingMemory` 已纳入 `StatePatch` 类型，非挂起节点优先迁移到 runner-level patch。
 
 当前边界：
 
-- `NodeFunc` 仍返回 `error`，旧节点构造函数保留兼容 wrapper；`retrieve_rag`、`pick_next`、`evaluate`、`probe_ask`、`report` 在 `BuildInterviewGraph` 中已由 runner 统一 apply patch。
-- `probe_eval` 暂不迁移到 runner-level `PatchNode`。它需要 `StatePatch` 支持追答 `Evaluation` 和 Critic 后续追问信号更新，后续单独扩展。
-- `CriticResult` 目前只支持追问信号窄 patch；`FollowUps` 目前只支持追加当前轮追问。其他内嵌字段后续按风险逐步迁移。
+- `NodeFunc` 仍返回 `error`，旧节点构造函数保留兼容 wrapper；`retrieve_rag`、`pick_next`、`evaluate`、`critic`、`refine`、`probe_ask`、`probe_eval`、`update_memory`、`report` 在 `BuildInterviewGraph` 中已由 runner 统一 apply patch。
+- `CriticResult` 已支持完整写入和追问信号窄 patch；后者只服务 `probe_ask/probe_eval` 循环，不替代完整 critic 输出。`FollowUps` 目前支持追加当前轮追问和写当前最后追问评估。`RefinedEval` 已支持当前轮写入。其他内嵌字段后续按风险逐步迁移。
 - `RetrievalTrace` 和 `Report` 指针保持当前状态写入语义，HTTP 响应层负责 clone。
 
 收益：
@@ -472,13 +480,13 @@ type PatchNodeFunc func(context.Context, *domain.Session) (domain.StatePatch, er
   - legacy 节点没有 `Writes` 时，不允许参与并发 frontier。
   - 两个节点 `Writes` 有交集时，不允许并发执行。
   - 写集 disjoint 时，允许并发执行。
-- `internal/graphs.BuildInterviewGraph` 已给 `retrieve_rag`、`pick_next`、`evaluate`、`probe_ask`、`report` 等关键节点声明写集；其中 `retrieve_rag`、`pick_next`、`evaluate`、`probe_ask`、`report` 已注册为 `PatchNode`，`report` 声明了 `pending_decision/report/status/working_memory`。
+- `internal/graphs.BuildInterviewGraph` 已给 `retrieve_rag`、`pick_next`、`evaluate`、`critic`、`refine`、`probe_ask`、`probe_eval`、`update_memory`、`report` 等关键节点声明写集；其中 `retrieve_rag`、`pick_next`、`evaluate`、`critic`、`refine`、`probe_ask`、`probe_eval`、`update_memory`、`report` 已注册为 `PatchNode`，`critic` 声明了 `current_critic_result/working_memory`，`refine` 声明了 `current_refined_evaluation/working_memory`，`update_memory` 声明了 `working_memory/current_round_completion`，`report` 声明了 `pending_decision/report/status/working_memory`。
 
 当前边界：
 
 - 未删除 `NodeFunc`，未强制所有节点一次性迁移。
 - 未改变 HTTP API、SSE、Session JSON 或数据库 schema。
-- patch-aware 能力已在 Graph 层可用，并已覆盖第一批非挂起业务节点、`pick_next` 和 `probe_ask` 挂起节点；`probe_eval` 等更深层 round 内嵌写入仍等待后续 patch 字段扩展，不是完整 LangGraph runtime。
+- patch-aware 能力已在 Graph 层可用，并已覆盖第一批非挂起业务节点、`pick_next`、`critic/refine`、`update_memory` 和完整追问 ask/eval 链路；`update_difficulty/reflection_check` 仍是 legacy 节点，不是完整 LangGraph runtime。
 - 写集是粗粒度 key，宁可保守拒绝一部分并发组合，也不放过明显冲突。
 
 收益：

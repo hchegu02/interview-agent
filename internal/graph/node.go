@@ -31,6 +31,8 @@ const (
 	WritePendingDecision        = "pending_decision"
 	WriteRounds                 = "rounds"
 	WriteCurrentEvaluation      = "current_evaluation"
+	WriteCurrentCriticResult    = "current_critic_result"
+	WriteCurrentRefinedEval     = "current_refined_evaluation"
 	WriteCurrentRoundCompletion = "current_round_completion"
 	WriteReport                 = "report"
 	WriteStatus                 = "status"

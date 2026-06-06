@@ -109,6 +109,73 @@ func TestCritic_ProbeSignal_WithBudget_KeptOn(t *testing.T) {
 	}
 }
 
+func TestCriticPatchNode_ReturnsPatchWithoutMutatingSession(t *testing.T) {
+	stub := &stubChatModel{responses: []string{
+		`{"grounded_score":82,"need_refine":false,"issues":[],"summary":"评估可信","has_probe_signal":true,"probe_topic":"work stealing"}`,
+	}}
+	sess := buildCriticSession(75, "答案")
+	node := NewCriticPatchNode(stub, CriticOptions{})
+
+	patch, err := node(context.Background(), sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sess.Rounds[0].CriticResult != nil {
+		t.Fatalf("patch node should not mutate session directly: %+v", sess.Rounds[0].CriticResult)
+	}
+	if patch.CurrentCriticResult == nil {
+		t.Fatal("expected critic result patch")
+	}
+	if patch.CurrentCriticResult.GroundedScore != 82 || !patch.CurrentCriticResult.HasProbeSignal {
+		t.Fatalf("critic patch = %+v", patch.CurrentCriticResult)
+	}
+
+	if err := domain.ApplyStatePatch(sess, patch); err != nil {
+		t.Fatalf("apply patch: %v", err)
+	}
+	if sess.Rounds[0].CriticResult == nil || sess.Rounds[0].CriticResult.ProbeTopic != "work stealing" {
+		t.Fatalf("critic after apply = %+v", sess.Rounds[0].CriticResult)
+	}
+}
+
+func TestCriticPatchNode_LLMFailsReturnsCriticAndWorkingMemoryPatch(t *testing.T) {
+	stub := &stubChatModel{errs: []error{errors.New("boom")}, responses: []string{""}}
+	sess := buildCriticSession(70, "answer")
+	node := NewCriticPatchNode(stub, CriticOptions{})
+
+	patch, err := node(context.Background(), sess)
+	if err != nil {
+		t.Fatalf("should not return err, got %v", err)
+	}
+	if patch.CurrentCriticResult == nil || patch.CurrentCriticResult.GroundedScore != -1 {
+		t.Fatalf("expected degraded critic patch, got %+v", patch.CurrentCriticResult)
+	}
+	if patch.WorkingMemory == nil || patch.WorkingMemory.DegradedReasons["critic"] == "" {
+		t.Fatalf("expected critic degraded reason patch, got %+v", patch.WorkingMemory)
+	}
+	if sess.Rounds[0].CriticResult != nil || sess.WorkingMemory.DegradedReasons["critic"] != "" {
+		t.Fatalf("patch node should not mutate session directly: critic=%+v memory=%+v",
+			sess.Rounds[0].CriticResult, sess.WorkingMemory)
+	}
+}
+
+func TestCriticPatchNode_DegradedEvalShortCircuits(t *testing.T) {
+	stub := &stubChatModel{}
+	sess := buildCriticSession(-1, "answer")
+	node := NewCriticPatchNode(stub, CriticOptions{})
+
+	patch, err := node(context.Background(), sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stub.idx != 0 {
+		t.Errorf("LLM should not be called when eval score=-1, called %d times", stub.idx)
+	}
+	if patch.CurrentCriticResult == nil || patch.CurrentCriticResult.GroundedScore != -1 || patch.CurrentCriticResult.HasProbeSignal {
+		t.Fatalf("expected passthrough critic patch, got %+v", patch.CurrentCriticResult)
+	}
+}
+
 func TestCritic_DegradedEval_ShortCircuits(t *testing.T) {
 	stub := &stubChatModel{} // 不放 response, 如果被调用会 err
 	sess := buildCriticSession(-1, "answer")

@@ -26,6 +26,12 @@ TBD - created by archiving change add-state-patch-updates. Update Purpose after 
 - **AND** 不应覆盖已有追问历史
 - **AND** 如果不存在当前轮次，应用 patch 必须返回错误
 
+#### Scenario: 写入当前最后追问评估
+
+- **WHEN** 追答评分节点产出最后一个 FollowUp 的 Evaluation
+- **THEN** StatePatch 可以写入当前未完成轮次最后一个 `FollowUp` 的 `Evaluation`
+- **AND** 如果不存在当前轮次或当前轮没有追问，应用 patch 必须返回错误
+
 #### Scenario: 更新当前轮 Critic 追问信号
 
 - **WHEN** 追问节点需要关闭或更新追问信号
@@ -33,10 +39,24 @@ TBD - created by archiving change add-state-patch-updates. Update Purpose after 
 - **AND** 不应覆盖 `GroundedScore`、`NeedRefine`、`Issues` 或 `Summary`
 - **AND** 如果不存在当前轮次，应用 patch 必须返回错误
 
+#### Scenario: 写入当前轮完整 CriticResult
+
+- **WHEN** critic 节点产出当前回答的完整 CriticResult
+- **THEN** StatePatch 可以写入当前未完成轮次的 `CriticResult`
+- **AND** 不应覆盖 `Evaluation`、`FollowUps`、`RefinedEvaluation` 或 `CompletedAt`
+- **AND** 如果不存在当前轮次，应用 patch 必须返回错误
+
 #### Scenario: 写入当前轮评估
 
 - **WHEN** 评分节点产出当前回答的 Evaluation
 - **THEN** StatePatch 可以写入当前未完成轮次的 `Evaluation`
+- **AND** 如果不存在当前轮次，应用 patch 必须返回错误
+
+#### Scenario: 写入当前轮修正评估
+
+- **WHEN** refine 节点产出当前回答的修正 Evaluation
+- **THEN** StatePatch 可以写入当前未完成轮次的 `RefinedEval`
+- **AND** 不应覆盖原始 `Evaluation`、`CriticResult`、`FollowUps` 或 `CompletedAt`
 - **AND** 如果不存在当前轮次，应用 patch 必须返回错误
 
 #### Scenario: 清理待执行决策
@@ -54,4 +74,3 @@ TBD - created by archiving change add-state-patch-updates. Update Purpose after 
 - **WHEN** 系统引入 StatePatch
 - **THEN** Graph `NodeFunc` 签名不应改变
 - **AND** HTTP API 响应结构不应因为 StatePatch 改变
-

@@ -62,6 +62,35 @@ func TestUpdateMemory_HighScore_ConfirmsSkill(t *testing.T) {
 	}
 }
 
+func TestUpdateMemoryPatchNode_ReturnsPatchWithoutMutatingSession(t *testing.T) {
+	sess := buildUpdateMemSession(85, "go", []string{"go", "concurrency"})
+	node := NewUpdateMemoryPatchNode(UpdateMemoryOptions{})
+
+	patch, err := node(context.Background(), sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sess.Rounds[0].CompletedAt.IsZero() {
+		t.Fatalf("patch node should not complete round directly: %v", sess.Rounds[0].CompletedAt)
+	}
+	if len(sess.WorkingMemory.SkillCoverage) != 0 || len(sess.WorkingMemory.ConfirmedSkills) != 0 {
+		t.Fatalf("patch node should not mutate memory directly: %+v", sess.WorkingMemory)
+	}
+	if patch.WorkingMemory == nil || !approxEq(patch.WorkingMemory.SkillCoverage["go"], 0.85) {
+		t.Fatalf("working memory patch = %+v", patch.WorkingMemory)
+	}
+	if patch.CompleteCurrentRound == nil || patch.CompleteCurrentRound.IsZero() {
+		t.Fatalf("completion patch missing: %+v", patch.CompleteCurrentRound)
+	}
+
+	if err := domain.ApplyStatePatch(sess, patch); err != nil {
+		t.Fatalf("apply patch: %v", err)
+	}
+	if sess.Rounds[0].CompletedAt.IsZero() || !contains(sess.WorkingMemory.ConfirmedSkills, "go") {
+		t.Fatalf("session after apply: round=%+v memory=%+v", sess.Rounds[0], sess.WorkingMemory)
+	}
+}
+
 func TestUpdateMemory_LowScore_MarksWeak(t *testing.T) {
 	sess := buildUpdateMemSession(30, "redis", nil)
 	// 预置 redis 在 ConfirmedSkills (假设之前一题答对了)
@@ -164,14 +193,34 @@ func TestUpdateMemory_DegradedRound_Skipped(t *testing.T) {
 	}
 }
 
+func TestUpdateMemoryPatchNode_DegradedRoundReturnsMemoryAndCompletionPatch(t *testing.T) {
+	sess := buildUpdateMemSession(-1, "go", nil)
+	node := NewUpdateMemoryPatchNode(UpdateMemoryOptions{})
+
+	patch, err := node(context.Background(), sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if patch.WorkingMemory == nil || patch.WorkingMemory.DegradedRounds != 1 {
+		t.Fatalf("expected degraded round memory patch, got %+v", patch.WorkingMemory)
+	}
+	if patch.CompleteCurrentRound == nil || patch.CompleteCurrentRound.IsZero() {
+		t.Fatalf("completion patch missing: %+v", patch.CompleteCurrentRound)
+	}
+	if sess.WorkingMemory.DegradedRounds != 0 || !sess.Rounds[0].CompletedAt.IsZero() {
+		t.Fatalf("patch node should not mutate session directly: round=%+v memory=%+v",
+			sess.Rounds[0], sess.WorkingMemory)
+	}
+}
+
 func TestUpdateMemory_AvgScore_IncrementalAcrossRounds(t *testing.T) {
 	sess := buildUpdateMemSession(80, "go", nil)
 	node := NewUpdateMemoryNode(UpdateMemoryOptions{})
 	_ = node(context.Background(), sess)
 	// 模拟第二轮: 加一道新 round
 	sess.Rounds = append(sess.Rounds, domain.AnswerRound{
-		RoundID:  "r2",
-		Question: domain.Question{ID: "redis-001", SkillCategory: "redis"},
+		RoundID:    "r2",
+		Question:   domain.Question{ID: "redis-001", SkillCategory: "redis"},
 		Evaluation: &domain.Evaluation{QuestionID: "redis-001", Score: 60},
 	})
 	_ = node(context.Background(), sess)

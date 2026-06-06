@@ -274,6 +274,37 @@ func TestProbeEval_Success_WritesEvalAndUpdatesSignals(t *testing.T) {
 	}
 }
 
+func TestProbeEvalPatchNode_SuccessReturnsEvaluationPatch(t *testing.T) {
+	stub := &stubChatModel{responses: []string{
+		`{"score":75,"strengths":["讲清了 P 的本地队列"],"weaknesses":["没讲全局队列的协作"],"suggestion":"补全两级队列协作","has_more_probe":true,"next_probe_topic":"全局队列的 lock 设计"}`,
+	}}
+	sess := buildProbeEvalSession("当某个 P 的队列空了,它会从其他 P 偷一半 G", 1)
+	node := NewProbeEvalPatchNode(stub, ProbeEvalOptions{})
+
+	patch, err := node(context.Background(), sess)
+	if err != nil {
+		t.Fatalf("patch node failed: %v", err)
+	}
+	if sess.Rounds[0].FollowUps[0].Evaluation != nil {
+		t.Fatalf("patch node should not apply evaluation directly, got %+v", sess.Rounds[0].FollowUps[0].Evaluation)
+	}
+	if patch.CurrentFollowUpEvaluation == nil || patch.CurrentFollowUpEvaluation.Score != 75 {
+		t.Fatalf("patch follow-up evaluation = %+v", patch.CurrentFollowUpEvaluation)
+	}
+	if patch.CurrentCriticProbeSignal == nil || !patch.CurrentCriticProbeSignal.HasProbeSignal {
+		t.Fatalf("patch critic probe signal = %+v", patch.CurrentCriticProbeSignal)
+	}
+	if err := domain.ApplyStatePatch(sess, patch); err != nil {
+		t.Fatalf("apply patch: %v", err)
+	}
+	if sess.Rounds[0].FollowUps[0].Evaluation == nil || sess.Rounds[0].FollowUps[0].Evaluation.Score != 75 {
+		t.Fatalf("evaluation after apply = %+v", sess.Rounds[0].FollowUps[0].Evaluation)
+	}
+	if sess.Rounds[0].CriticResult.ProbeTopic != "全局队列的 lock 设计" {
+		t.Fatalf("critic after apply = %+v", sess.Rounds[0].CriticResult)
+	}
+}
+
 func TestProbeEval_NoMoreProbe_ClosesSignal(t *testing.T) {
 	stub := &stubChatModel{responses: []string{
 		`{"score":80,"strengths":["完整"],"weaknesses":[],"suggestion":"无","has_more_probe":false,"next_probe_topic":""}`,
@@ -308,6 +339,30 @@ func TestProbeEval_EmptyAnswer_ShortCircuits(t *testing.T) {
 	}
 	if sess.Rounds[0].CriticResult.HasProbeSignal {
 		t.Error("empty answer should close probe signal")
+	}
+}
+
+func TestProbeEvalPatchNode_EmptyAnswerReturnsCloseSignalPatch(t *testing.T) {
+	stub := &stubChatModel{}
+	sess := buildProbeEvalSession("   ", 1)
+	node := NewProbeEvalPatchNode(stub, ProbeEvalOptions{})
+
+	patch, err := node(context.Background(), sess)
+	if err != nil {
+		t.Fatalf("patch node failed: %v", err)
+	}
+	if stub.idx != 0 {
+		t.Fatalf("LLM should not be called, called %d", stub.idx)
+	}
+	if patch.CurrentFollowUpEvaluation == nil || patch.CurrentFollowUpEvaluation.Score != 0 {
+		t.Fatalf("patch follow-up evaluation = %+v", patch.CurrentFollowUpEvaluation)
+	}
+	if patch.CurrentCriticProbeSignal == nil || patch.CurrentCriticProbeSignal.HasProbeSignal {
+		t.Fatalf("patch should close probe signal, got %+v", patch.CurrentCriticProbeSignal)
+	}
+	if sess.Rounds[0].FollowUps[0].Evaluation != nil || !sess.Rounds[0].CriticResult.HasProbeSignal {
+		t.Fatalf("patch node should not apply directly: followup=%+v critic=%+v",
+			sess.Rounds[0].FollowUps[0], sess.Rounds[0].CriticResult)
 	}
 }
 
@@ -351,6 +406,44 @@ func TestProbeEval_LLMFails_DegradesAndClosesSignals(t *testing.T) {
 	}
 	if sess.WorkingMemory.DegradedReasons["probe_eval"] == "" {
 		t.Error("expected probe_eval degraded reason")
+	}
+}
+
+func TestProbeEvalPatchNode_LLMFailsReturnsDegradedPatch(t *testing.T) {
+	stub := &stubChatModel{
+		errs:      []error{errors.New("boom"), errors.New("boom2")},
+		responses: []string{"", ""},
+	}
+	sess := buildProbeEvalSession("答案", 1)
+	node := NewProbeEvalPatchNode(stub, ProbeEvalOptions{})
+
+	patch, err := node(context.Background(), sess)
+	if err != nil {
+		t.Fatalf("patch node should degrade to nil error, got %v", err)
+	}
+	if sess.Rounds[0].FollowUps[0].Evaluation != nil {
+		t.Fatalf("patch node should not apply evaluation directly, got %+v", sess.Rounds[0].FollowUps[0].Evaluation)
+	}
+	if patch.CurrentFollowUpEvaluation == nil || patch.CurrentFollowUpEvaluation.Score != -1 {
+		t.Fatalf("patch follow-up evaluation = %+v", patch.CurrentFollowUpEvaluation)
+	}
+	if patch.CurrentCriticProbeSignal == nil || patch.CurrentCriticProbeSignal.HasProbeSignal {
+		t.Fatalf("patch should close signal, got %+v", patch.CurrentCriticProbeSignal)
+	}
+	if patch.WorkingMemory == nil || patch.WorkingMemory.DegradedReasons["probe_eval"] == "" {
+		t.Fatalf("patch working memory degraded reason missing: %+v", patch.WorkingMemory)
+	}
+	if err := domain.ApplyStatePatch(sess, patch); err != nil {
+		t.Fatalf("apply patch: %v", err)
+	}
+	if sess.Rounds[0].FollowUps[0].Evaluation == nil || sess.Rounds[0].FollowUps[0].Evaluation.Score != -1 {
+		t.Fatalf("evaluation after apply = %+v", sess.Rounds[0].FollowUps[0].Evaluation)
+	}
+	if sess.Rounds[0].CriticResult.HasProbeSignal {
+		t.Fatalf("critic signal should be closed after apply: %+v", sess.Rounds[0].CriticResult)
+	}
+	if sess.WorkingMemory.DegradedReasons["probe_eval"] == "" {
+		t.Fatalf("degraded reason after apply = %+v", sess.WorkingMemory)
 	}
 }
 

@@ -60,10 +60,23 @@ type UpdateMemoryOptions struct {
 // NewUpdateMemoryNode 构造 update_memory 节点。
 //
 // 节点契约:
-//   输入: CurrentRound() 存在, FinalEvaluation 已填(score 可为 -1)
-//   输出: 本轮信号合并入 WorkingMemory; round.CompletedAt 标记
-//   返回: nil(始终); ErrPermanent: 无 round 或 无 final eval
+//
+//	输入: CurrentRound() 存在, FinalEvaluation 已填(score 可为 -1)
+//	输出: 本轮信号合并入 WorkingMemory; round.CompletedAt 标记
+//	返回: nil(始终); ErrPermanent: 无 round 或 无 final eval
 func NewUpdateMemoryNode(opts UpdateMemoryOptions) graph.NodeFunc {
+	patchNode := NewUpdateMemoryPatchNode(opts)
+	return func(ctx context.Context, sess *domain.Session) error {
+		patch, err := patchNode(ctx, sess)
+		if err != nil {
+			return err
+		}
+		return applyNodePatch(sess, "update_memory", patch)
+	}
+}
+
+// NewUpdateMemoryPatchNode 构造由 Graph runner 统一应用 StatePatch 的 update_memory 节点。
+func NewUpdateMemoryPatchNode(opts UpdateMemoryOptions) graph.PatchNodeFunc {
 	if opts.MainWeight == 0 && opts.FollowUpWeight == 0 {
 		opts.MainWeight = 0.7
 		opts.FollowUpWeight = 0.3
@@ -75,25 +88,26 @@ func NewUpdateMemoryNode(opts UpdateMemoryOptions) graph.NodeFunc {
 		opts.WeakThreshold = 50
 	}
 
-	return func(ctx context.Context, sess *domain.Session) error {
+	return func(ctx context.Context, sess *domain.Session) (domain.StatePatch, error) {
+		_ = ctx
 		round := sess.CurrentRound()
 		if round == nil {
-			return fmt.Errorf("update_memory: no current round: %w", graph.ErrPermanent)
+			return domain.StatePatch{}, fmt.Errorf("update_memory: no current round: %w", graph.ErrPermanent)
 		}
 		final := round.FinalEvaluation()
 		if final == nil {
-			return fmt.Errorf("update_memory: no final evaluation: %w", graph.ErrPermanent)
+			return domain.StatePatch{}, fmt.Errorf("update_memory: no final evaluation: %w", graph.ErrPermanent)
 		}
-		if sess.WorkingMemory == nil {
-			sess.WorkingMemory = domain.NewWorkingMemory()
-		}
-		mem := sess.WorkingMemory
+		mem := cloneWorkingMemory(sess.WorkingMemory)
+		completedAt := time.Now()
 
 		// 1. 降级数据: 不入任何统计, 只记账
 		if final.Score < 0 {
 			markDegradedRound(mem)
-			round.CompletedAt = time.Now()
-			return nil
+			return domain.StatePatch{
+				WorkingMemory:        mem,
+				CompleteCurrentRound: &completedAt,
+			}, nil
 		}
 
 		// 2. 合并主答 + 追答评估
@@ -126,8 +140,10 @@ func NewUpdateMemoryNode(opts UpdateMemoryOptions) graph.NodeFunc {
 		mem.ScoredRounds++
 		mem.AvgScore = mem.AvgScore + (float64(combined)-mem.AvgScore)/float64(mem.ScoredRounds)
 
-		round.CompletedAt = time.Now()
-		return nil
+		return domain.StatePatch{
+			WorkingMemory:        mem,
+			CompleteCurrentRound: &completedAt,
+		}, nil
 	}
 }
 

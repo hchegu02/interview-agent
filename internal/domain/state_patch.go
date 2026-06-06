@@ -8,18 +8,21 @@ import (
 // StatePatch 表达节点对 Session 的结构化写入意图。
 // 第一阶段只覆盖高风险字段，避免节点随意改大对象。
 type StatePatch struct {
-	CandidatePool            *[]Question
-	RetrievalTrace           *RetrievalTrace
-	PendingDecision          *Decision
-	ClearPendingDecision     bool
-	AppendRound              *AnswerRound
-	AppendCurrentFollowUp    *FollowUp
-	CurrentCriticProbeSignal *CriticProbeSignalPatch
-	CurrentEvaluation        *Evaluation
-	CompleteCurrentRound     *time.Time
-	Report                   *Report
-	Status                   *SessionStatus
-	WorkingMemory            *WorkingMemory
+	CandidatePool             *[]Question
+	RetrievalTrace            *RetrievalTrace
+	PendingDecision           *Decision
+	ClearPendingDecision      bool
+	AppendRound               *AnswerRound
+	AppendCurrentFollowUp     *FollowUp
+	CurrentFollowUpEvaluation *Evaluation
+	CurrentCriticResult       *Critic
+	CurrentCriticProbeSignal  *CriticProbeSignalPatch
+	CurrentEvaluation         *Evaluation
+	CurrentRefinedEvaluation  *Evaluation
+	CompleteCurrentRound      *time.Time
+	Report                    *Report
+	Status                    *SessionStatus
+	WorkingMemory             *WorkingMemory
 }
 
 type CriticProbeSignalPatch struct {
@@ -55,6 +58,23 @@ func ApplyStatePatch(sess *Session, patch StatePatch) error {
 		}
 		round.FollowUps = append(round.FollowUps, *patch.AppendCurrentFollowUp)
 	}
+	if patch.CurrentFollowUpEvaluation != nil {
+		round := sess.CurrentRound()
+		if round == nil {
+			return fmt.Errorf("apply state patch: current round missing for follow-up evaluation")
+		}
+		if len(round.FollowUps) == 0 {
+			return fmt.Errorf("apply state patch: current round follow-up missing for evaluation")
+		}
+		round.FollowUps[len(round.FollowUps)-1].Evaluation = patch.CurrentFollowUpEvaluation
+	}
+	if patch.CurrentCriticResult != nil {
+		round := sess.CurrentRound()
+		if round == nil {
+			return fmt.Errorf("apply state patch: current round missing for critic result")
+		}
+		round.CriticResult = patch.CurrentCriticResult
+	}
 	if patch.CurrentCriticProbeSignal != nil {
 		round := sess.CurrentRound()
 		if round == nil {
@@ -72,6 +92,13 @@ func ApplyStatePatch(sess *Session, patch StatePatch) error {
 			return fmt.Errorf("apply state patch: current round missing for evaluation")
 		}
 		round.Evaluation = patch.CurrentEvaluation
+	}
+	if patch.CurrentRefinedEvaluation != nil {
+		round := sess.CurrentRound()
+		if round == nil {
+			return fmt.Errorf("apply state patch: current round missing for refined evaluation")
+		}
+		round.RefinedEval = patch.CurrentRefinedEvaluation
 	}
 	if patch.CompleteCurrentRound != nil {
 		round := sess.CurrentRound()

@@ -232,6 +232,18 @@ func validateProbeEval(raw []byte) error {
 //	      按 LLM 决策 + 预算约束更新
 //	返回: nil (始终, 失败走降级); ErrPermanent: round/followup 缺
 func NewProbeEvalNode(model llm.ChatModel, opts ProbeEvalOptions) graph.NodeFunc {
+	patchNode := NewProbeEvalPatchNode(model, opts)
+	return func(ctx context.Context, sess *domain.Session) error {
+		patch, err := patchNode(ctx, sess)
+		if err != nil {
+			return err
+		}
+		return applyNodePatch(sess, "probe_eval", patch)
+	}
+}
+
+// NewProbeEvalPatchNode 构造由 Graph runner 统一应用 StatePatch 的 probe_eval 节点。
+func NewProbeEvalPatchNode(model llm.ChatModel, opts ProbeEvalOptions) graph.PatchNodeFunc {
 	if opts.Temperature == 0 {
 		opts.Temperature = 0.2
 	}
@@ -239,73 +251,82 @@ func NewProbeEvalNode(model llm.ChatModel, opts ProbeEvalOptions) graph.NodeFunc
 		opts.MaxTokens = 500
 	}
 
-	return func(ctx context.Context, sess *domain.Session) error {
+	return func(ctx context.Context, sess *domain.Session) (domain.StatePatch, error) {
 		round := sess.CurrentRound()
 		if round == nil {
-			return fmt.Errorf("probe_eval: no current round: %w", graph.ErrPermanent)
+			return domain.StatePatch{}, fmt.Errorf("probe_eval: no current round: %w", graph.ErrPermanent)
 		}
 		if len(round.FollowUps) == 0 {
-			return fmt.Errorf("probe_eval: no follow-up: %w", graph.ErrPermanent)
+			return domain.StatePatch{}, fmt.Errorf("probe_eval: no follow-up: %w", graph.ErrPermanent)
 		}
 		last := &round.FollowUps[len(round.FollowUps)-1]
-		if sess.WorkingMemory == nil {
-			sess.WorkingMemory = domain.NewWorkingMemory()
-		}
+		mem := cloneWorkingMemory(sess.WorkingMemory)
 
 		// 空追答短路: 与 evaluate 对称
 		if strings.TrimSpace(last.Answer) == "" {
-			last.Evaluation = &domain.Evaluation{
+			eval := &domain.Evaluation{
 				QuestionID: round.Question.ID + "-followup",
 				Score:      0,
 				Strengths:  []string{},
 				Weaknesses: []string{"候选人对追问未作答"},
 				Suggestion: "追问未作答, 跳过深挖",
 			}
-			// 关闭再追信号
+			patch := domain.StatePatch{CurrentFollowUpEvaluation: eval}
 			if round.CriticResult != nil {
-				round.CriticResult.HasProbeSignal = false
-				round.CriticResult.ProbeTopic = ""
+				patch.CurrentCriticProbeSignal = &domain.CriticProbeSignalPatch{HasProbeSignal: false, ProbeTopic: ""}
 			}
-			return nil
+			if sess.WorkingMemory == nil {
+				patch.WorkingMemory = mem
+			}
+			return patch, nil
 		}
 
 		shape, err := probeEvalByLLM(ctx, model, round, last, opts)
 		if err != nil {
-			markProbeEvalFallback(sess, err.Error())
-			last.Evaluation = &domain.Evaluation{
+			markDegradedReason(mem, "probe_eval", err.Error())
+			eval := &domain.Evaluation{
 				QuestionID: round.Question.ID + "-followup",
 				Score:      -1,
 				Suggestion: fmt.Sprintf("追答评估失败(降级): %s", err.Error()),
 			}
-			if round.CriticResult != nil {
-				round.CriticResult.HasProbeSignal = false
-				round.CriticResult.ProbeTopic = ""
+			patch := domain.StatePatch{
+				CurrentFollowUpEvaluation: eval,
+				WorkingMemory:             mem,
 			}
-			return nil
+			if round.CriticResult != nil {
+				patch.CurrentCriticProbeSignal = &domain.CriticProbeSignalPatch{HasProbeSignal: false, ProbeTopic: ""}
+			}
+			return patch, nil
 		}
 
-		last.Evaluation = &domain.Evaluation{
+		eval := &domain.Evaluation{
 			QuestionID: round.Question.ID + "-followup",
 			Score:      shape.Score,
 			Strengths:  shape.Strengths,
 			Weaknesses: shape.Weaknesses,
 			Suggestion: strings.TrimSpace(shape.Suggestion),
 		}
+		patch := domain.StatePatch{CurrentFollowUpEvaluation: eval}
 
 		// 更新 critic 信号供 router 做"是否再追"判断
 		if round.CriticResult != nil {
 			hasMore := shape.HasMoreProbe
 			topic := strings.TrimSpace(shape.NextProbeTopic)
-			if hasMore && !sess.WorkingMemory.CanProbe() {
+			if hasMore && !mem.CanProbe() {
 				hasMore = false
 			}
 			if !hasMore {
 				topic = ""
 			}
-			round.CriticResult.HasProbeSignal = hasMore
-			round.CriticResult.ProbeTopic = topic
+			patch.CurrentCriticProbeSignal = &domain.CriticProbeSignalPatch{
+				HasProbeSignal: hasMore,
+				ProbeTopic:     topic,
+			}
 		}
-		return nil
+		if sess.WorkingMemory == nil {
+			patch.WorkingMemory = mem
+		}
+		return patch, nil
 	}
 }
 
@@ -337,8 +358,4 @@ func probeEvalByLLM(
 		return nil, fmt.Errorf("unmarshal probe_eval: %w", err)
 	}
 	return &s, nil
-}
-
-func markProbeEvalFallback(sess *domain.Session, reason string) {
-	markDegradedReason(sess.WorkingMemory, "probe_eval", reason)
 }

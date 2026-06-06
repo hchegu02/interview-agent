@@ -89,6 +89,81 @@ func TestApplyStatePatch_AppendsCurrentRoundFollowUp(t *testing.T) {
 	}
 }
 
+func TestApplyStatePatch_WritesCurrentFollowUpEvaluation(t *testing.T) {
+	eval := &Evaluation{QuestionID: "q1-followup", Score: 76}
+	sess := &Session{
+		Rounds: []AnswerRound{{
+			RoundID:  "r1",
+			Question: Question{ID: "q1"},
+			FollowUps: []FollowUp{
+				{Question: "first", Evaluation: &Evaluation{Score: 50}},
+				{Question: "last"},
+			},
+		}},
+	}
+
+	if err := ApplyStatePatch(sess, StatePatch{CurrentFollowUpEvaluation: eval}); err != nil {
+		t.Fatalf("apply patch: %v", err)
+	}
+
+	if sess.Rounds[0].FollowUps[0].Evaluation.Score != 50 {
+		t.Fatalf("first follow-up evaluation should not change: %+v", sess.Rounds[0].FollowUps)
+	}
+	if sess.Rounds[0].FollowUps[1].Evaluation == nil || sess.Rounds[0].FollowUps[1].Evaluation.Score != 76 {
+		t.Fatalf("last follow-up evaluation = %+v", sess.Rounds[0].FollowUps[1].Evaluation)
+	}
+}
+
+func TestApplyStatePatch_CurrentFollowUpMissingForEvaluationReturnsError(t *testing.T) {
+	err := ApplyStatePatch(&Session{Rounds: []AnswerRound{{RoundID: "r1", Question: Question{ID: "q1"}}}}, StatePatch{
+		CurrentFollowUpEvaluation: &Evaluation{Score: 70},
+	})
+	if err == nil {
+		t.Fatal("expected error when current follow-up is missing")
+	}
+}
+
+func TestApplyStatePatch_WritesCurrentCriticResult(t *testing.T) {
+	critic := &Critic{
+		GroundedScore:  72,
+		NeedRefine:     true,
+		Issues:         []string{"覆盖不全"},
+		Summary:        "需要重评",
+		HasProbeSignal: true,
+		ProbeTopic:     "work stealing",
+	}
+	existingEval := &Evaluation{QuestionID: "q1", Score: 80}
+	sess := &Session{
+		Rounds: []AnswerRound{{
+			RoundID:    "r1",
+			Question:   Question{ID: "q1"},
+			Evaluation: existingEval,
+			FollowUps:  []FollowUp{{Question: "keep"}},
+		}},
+	}
+
+	if err := ApplyStatePatch(sess, StatePatch{CurrentCriticResult: critic}); err != nil {
+		t.Fatalf("apply patch: %v", err)
+	}
+
+	got := sess.Rounds[0].CriticResult
+	if got == nil || got.GroundedScore != 72 || !got.NeedRefine || !got.HasProbeSignal || got.ProbeTopic != "work stealing" {
+		t.Fatalf("critic result = %+v", got)
+	}
+	if sess.Rounds[0].Evaluation != existingEval || len(sess.Rounds[0].FollowUps) != 1 {
+		t.Fatalf("critic patch should not overwrite other round fields: %+v", sess.Rounds[0])
+	}
+}
+
+func TestApplyStatePatch_CurrentRoundMissingForCriticResultReturnsError(t *testing.T) {
+	err := ApplyStatePatch(&Session{}, StatePatch{
+		CurrentCriticResult: &Critic{GroundedScore: 70},
+	})
+	if err == nil {
+		t.Fatal("expected error when current round is missing")
+	}
+}
+
 func TestApplyStatePatch_UpdatesCurrentCriticProbeSignalOnly(t *testing.T) {
 	sess := &Session{
 		Rounds: []AnswerRound{{
@@ -168,6 +243,44 @@ func TestApplyStatePatch_WritesCurrentRoundEvaluationAndCompletion(t *testing.T)
 	}
 	if !sess.Rounds[0].CompletedAt.Equal(completedAt) {
 		t.Fatalf("completed_at = %v, want %v", sess.Rounds[0].CompletedAt, completedAt)
+	}
+}
+
+func TestApplyStatePatch_WritesCurrentRefinedEvaluation(t *testing.T) {
+	refined := &Evaluation{QuestionID: "q1", Score: 55}
+	original := &Evaluation{QuestionID: "q1", Score: 80}
+	sess := &Session{
+		Rounds: []AnswerRound{{
+			RoundID:    "r1",
+			Question:   Question{ID: "q1"},
+			Evaluation: original,
+			CriticResult: &Critic{
+				NeedRefine: true,
+			},
+		}},
+	}
+
+	if err := ApplyStatePatch(sess, StatePatch{CurrentRefinedEvaluation: refined}); err != nil {
+		t.Fatalf("apply patch: %v", err)
+	}
+
+	if sess.Rounds[0].RefinedEval == nil || sess.Rounds[0].RefinedEval.Score != 55 {
+		t.Fatalf("refined eval = %+v", sess.Rounds[0].RefinedEval)
+	}
+	if sess.Rounds[0].Evaluation != original || sess.Rounds[0].CriticResult == nil {
+		t.Fatalf("refine patch should not overwrite existing round fields: %+v", sess.Rounds[0])
+	}
+	if sess.Rounds[0].FinalEvaluation().Score != 55 {
+		t.Fatalf("final evaluation should prefer refined eval, got %+v", sess.Rounds[0].FinalEvaluation())
+	}
+}
+
+func TestApplyStatePatch_CurrentRoundMissingForRefinedEvaluationReturnsError(t *testing.T) {
+	err := ApplyStatePatch(&Session{}, StatePatch{
+		CurrentRefinedEvaluation: &Evaluation{Score: 55},
+	})
+	if err == nil {
+		t.Fatal("expected error when current round is missing")
 	}
 }
 
