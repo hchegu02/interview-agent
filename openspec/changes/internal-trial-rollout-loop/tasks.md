@@ -22,5 +22,7 @@ Note: implementation changes are Markdown-only rollout documents. No Go, fronten
 
 ## 4. Closeout
 
-- [ ] 4.1 Update code-change documentation if implementation changes code.
-- [ ] 4.2 Commit rollout documents and OpenSpec artifacts.
+- [x] 4.1 Update code-change documentation if implementation changes code.
+- [x] 4.2 Commit rollout documents and OpenSpec artifacts.
+
+Note: 4.1 is not applicable because this change did not modify code. Rollout documents and OpenSpec artifacts were committed incrementally on `codex/internal-trial-rollout-loop`.
