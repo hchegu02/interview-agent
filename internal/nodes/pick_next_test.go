@@ -104,6 +104,29 @@ func TestPickNext_LLMSuccess_Suspends(t *testing.T) {
 	}
 }
 
+func TestPickNextPrompt_IncludesDynamicDifficultyGuidance(t *testing.T) {
+	stub := &stubChatModel{responses: []string{
+		`{"next_question_id":"redis-001","reasoning":"动态难度匹配"}`,
+	}}
+	sess := buildPickSession(2, 8, samplePool())
+	sess.WorkingMemory.Difficulty = &domain.DifficultyState{Current: domain.DifficultyHard}
+	node := NewPickNextNode(stub, PickNextOptions{})
+
+	err := node(context.Background(), sess)
+	if !errors.Is(err, graph.ErrSuspended) {
+		t.Fatalf("expected ErrSuspended, got %v", err)
+	}
+	if len(stub.lastConv) == 0 {
+		t.Fatal("expected prompt to be sent to llm")
+	}
+	prompt := stub.lastConv[0].Content
+	for _, want := range []string{"当前动态难度:hard", "目标题目难度:4", "优先选择接近目标题目难度"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func TestPickNextPatchNode_LLMSuccessReturnsSuspendPatch(t *testing.T) {
 	stub := &stubChatModel{responses: []string{
 		`{"next_question_id":"redis-001","reasoning":"go 已 cover,补 redis"}`,
@@ -177,6 +200,39 @@ func TestPickNext_LLMFails_DegradesToRule(t *testing.T) {
 	}
 	if !strings.Contains(sess.PendingDecision.Reasoning, "降级") {
 		t.Errorf("reasoning should mention 降级: %s", sess.PendingDecision.Reasoning)
+	}
+}
+
+func TestPickByRule_PrefersQuestionNearCurrentDifficulty(t *testing.T) {
+	mem := domain.NewWorkingMemory()
+	mem.Difficulty = &domain.DifficultyState{Current: domain.DifficultyHard}
+	mem.SkillCoverage = map[string]float64{"go": 0, "redis": 2}
+	pool := []domain.Question{
+		{ID: "easy-low-coverage", Content: "Go 基础", Difficulty: 1, SkillCategory: "go"},
+		{ID: "hard-higher-coverage", Content: "Redis 高可用", Difficulty: 4, SkillCategory: "redis"},
+	}
+
+	picked, reasoning := pickByRule(pool, mem)
+	if picked.ID != "hard-higher-coverage" {
+		t.Fatalf("picked %s, want difficulty-near hard question; reasoning=%s", picked.ID, reasoning)
+	}
+	if !strings.Contains(reasoning, "难度") {
+		t.Fatalf("reasoning should mention difficulty, got %q", reasoning)
+	}
+}
+
+func TestPickByRule_DoesNotPreferUnknownDifficulty(t *testing.T) {
+	mem := domain.NewWorkingMemory()
+	mem.Difficulty = &domain.DifficultyState{Current: domain.DifficultyMedium}
+	mem.SkillCoverage = map[string]float64{"go": 0, "redis": 2}
+	pool := []domain.Question{
+		{ID: "unknown-low-coverage", Content: "Go 综合题", Difficulty: 0, SkillCategory: "go"},
+		{ID: "medium-higher-coverage", Content: "Redis 持久化", Difficulty: 3, SkillCategory: "redis"},
+	}
+
+	picked, reasoning := pickByRule(pool, mem)
+	if picked.ID != "medium-higher-coverage" {
+		t.Fatalf("picked %s, want known medium difficulty question; reasoning=%s", picked.ID, reasoning)
 	}
 }
 

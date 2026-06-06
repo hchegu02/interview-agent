@@ -221,11 +221,13 @@ func pickByLLM(
 	}
 
 	covJSON, _ := json.Marshal(mem.SkillCoverage)
+	difficultyLabel, targetDifficulty := describePickDifficulty(mem)
 	prompt := fmt.Sprintf(promptPickNext,
 		job.Title, candYears, job.YearsRequired,
 		strategy, gapReason,
 		mem.ConfirmedSkills, mem.WeakSkills,
 		string(covJSON),
+		difficultyLabel, targetDifficulty,
 		mem.AvgScore, mem.RoundsAsked, mem.MaxRounds,
 		formatRecentRounds(sess.Rounds, opts.RecentRoundsForContext),
 		formatCandidatePool(pool),
@@ -268,18 +270,72 @@ func pickByLLM(
 }
 
 // pickByRule 是 LLM 失败时的规则降级:
-//   - 选 skill_coverage 最低的 category 对应的题
-//   - 同分按 candidate pool 顺序取第一个(retrieve_rag 已按相关性排过)
+//   - 优先贴近当前动态难度对应的题库难度
+//   - 同等难度距离下选 skill_coverage 最低的 category 对应的题
+//   - 仍同分按 candidate pool 顺序取第一个(retrieve_rag 已按相关性排过)
 func pickByRule(pool []domain.Question, mem *domain.WorkingMemory) (domain.Question, string) {
 	best := pool[0]
-	bestCov := mem.SkillCoverage[best.SkillCategory]
+	targetDifficulty := targetQuestionDifficulty(mem)
+	bestDistance := difficultyDistance(best.Difficulty, targetDifficulty)
+	bestCov := skillCoverageForPick(mem, best.SkillCategory)
 	for _, q := range pool[1:] {
-		if mem.SkillCoverage[q.SkillCategory] < bestCov {
+		distance := difficultyDistance(q.Difficulty, targetDifficulty)
+		coverage := skillCoverageForPick(mem, q.SkillCategory)
+		if distance < bestDistance || (distance == bestDistance && coverage < bestCov) {
 			best = q
-			bestCov = mem.SkillCoverage[q.SkillCategory]
+			bestDistance = distance
+			bestCov = coverage
 		}
 	}
-	return best, fmt.Sprintf("规则降级: 选 coverage 最低的 %s 类目题", best.SkillCategory)
+	return best, fmt.Sprintf("规则降级: 选接近动态难度 %d 且 coverage 较低的 %s 类目题",
+		targetDifficulty, best.SkillCategory)
+}
+
+func describePickDifficulty(mem *domain.WorkingMemory) (string, int) {
+	current := domain.DifficultyMedium
+	if mem != nil && mem.Difficulty != nil {
+		current = mem.Difficulty.Current
+	}
+	target := targetQuestionDifficulty(mem)
+	switch current {
+	case domain.DifficultyEasy:
+		return "easy", target
+	case domain.DifficultyHard:
+		return "hard", target
+	default:
+		return "medium", target
+	}
+}
+
+func skillCoverageForPick(mem *domain.WorkingMemory, skill string) float64 {
+	if mem == nil || mem.SkillCoverage == nil {
+		return 0
+	}
+	return mem.SkillCoverage[skill]
+}
+
+func targetQuestionDifficulty(mem *domain.WorkingMemory) int {
+	if mem == nil || mem.Difficulty == nil {
+		return 3
+	}
+	switch mem.Difficulty.Current {
+	case domain.DifficultyEasy:
+		return 2
+	case domain.DifficultyHard:
+		return 4
+	default:
+		return 3
+	}
+}
+
+func difficultyDistance(questionDifficulty, targetDifficulty int) int {
+	if questionDifficulty <= 0 {
+		return 100
+	}
+	if questionDifficulty > targetDifficulty {
+		return questionDifficulty - targetDifficulty
+	}
+	return targetDifficulty - questionDifficulty
 }
 
 // markPickFallback 在 DegradedReasons 打降级标记,SSE 层可透出"题目选择降级中"。

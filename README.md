@@ -14,8 +14,9 @@ Interview Agent 面向求职面试训练场景：用户输入岗位 JD 和简历
 - **多轮面试闭环**：支持主题题、追问、答案评分、critic、refine、reflection 和最终报告。
 - **会话与流式交互**：提供 REST API、SSE 事件流、历史会话查询和前端页面。
 - **存储与恢复**：本地默认内存模式；配置 PostgreSQL 后持久化 session 和题库；配置 Redis 后启用 Streams、snapshot 和 lease。
+- **记忆与动态难度**：面试完成后沉淀长期记忆，下一次启动时回填当前 WorkingMemory；动态难度会影响选题 prompt 和规则兜底。
 - **可靠性保护**：LLM 调用支持并发 limiter、熔断器、超时、降级和 `/readyz` degraded 状态。
-- **质量评估**：提供 RAG eval、questionbank lint、mock eval，以及 Agent Tooling verifier 原语。
+- **质量评估**：提供 RAG eval、questionbank lint、mock eval，以及 Agent Graph / Tool event verifier。
 
 ## 架构概览
 
@@ -156,6 +157,7 @@ $env:INTERVIEW_RERANK_ENDPOINT="http://127.0.0.1:9000/rerank"
 | `GET` | `/api/interview/stream?session_id=...` | SSE 事件流 |
 | `GET` | `/api/interview/sessions` | 会话列表 |
 | `GET` | `/api/interview/sessions/:session_id` | 会话详情 |
+| `POST` | `/api/agent/message` | Intent Router + Skill 消息入口 |
 | `POST` | `/api/documents/parse-resume` | 解析 PDF/DOCX/TXT/Markdown 简历 |
 | `GET` | `/api/question-bank` | 题库查询 |
 | `GET` | `/api/question-bank/:id` | 题目详情 |
@@ -338,10 +340,10 @@ go run ./cmd/eval -suite testdata/eval -mode mock -out tmp/eval/mock
 Agent 输出验证：
 
 ```powershell
-go run ./cmd/agent-verify -session testdata/agent_verify/pass_session.json
+go run ./cmd/agent-verify -session testdata/agent_verify/pass_session.json -tool-events testdata/agent_verify/pass_tool_events.json
 ```
 
-`agent-verify` 会检查 session 中的 report 完整性、retrieval trace、Interview Graph 核心 PatchNode 注册 / 写集 / 顺序、累计节点幂等风险，以及可选 tool hook 事件。存在验证失败时返回非 0，适合作为后续 CI gate 的基础。
+`agent-verify` 会检查 session 中的 report 完整性、分数范围、retrieval trace、Interview Graph 核心 PatchNode 注册 / 写集 / 顺序、累计节点幂等风险，以及可选 tool hook 事件。传入 `-tool-events` 后会校验工具 before/after 事件成对、权限为 `read_only`、无 after error，并确认默认项目分析工具被调用。
 
 本地质量门禁：
 
@@ -381,7 +383,7 @@ mingw32-make verify-local
 ## 当前边界
 
 - MCP 当前是 client adapter 抽象和测试替身，没有接入真实生产 MCP Server。
-- Verification 当前是 verifier 原语，尚未接入独立 CI gate。
+- Verification 已有本地和 CI 基础门禁，覆盖强 RAG、strict 题库、Agent Graph 和 tool event fixture；后续仍可补真实链路生成 fixture。
 - rerank 默认是本地 lexical reranker；HTTP 模式只负责调用本地 rerank 服务，模型服务本身需单独部署。
 - PG 模式下 BM25/rule 本地阶段在服务启动时从 active 题库加载，题库运行时变更后的热刷新仍需后续完善。
 - OTel tracing 后端和真实业务规模压测报告仍未完成。

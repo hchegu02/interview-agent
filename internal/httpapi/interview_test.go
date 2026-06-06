@@ -114,6 +114,33 @@ func (failingMemoryStore) UpsertUserMemory(ctx context.Context, memory *memory.U
 	return errors.New("memory store failed")
 }
 
+type readErrorMemoryStore struct{}
+
+func (readErrorMemoryStore) GetUserMemory(ctx context.Context, userID string) (*memory.UserMemory, error) {
+	return nil, errors.New("memory read failed")
+}
+
+func (readErrorMemoryStore) UpsertUserMemory(ctx context.Context, memory *memory.UserMemory) error {
+	return nil
+}
+
+type captureStartMemoryRunner struct {
+	memory *domain.WorkingMemory
+	rounds int
+	report *domain.Report
+}
+
+func (r *captureStartMemoryRunner) Invoke(ctx context.Context, sess *domain.Session) error {
+	r.memory = sess.WorkingMemory
+	r.rounds = len(sess.Rounds)
+	r.report = sess.Report
+	return nil
+}
+
+func (r *captureStartMemoryRunner) Resume(ctx context.Context, sess *domain.Session) error {
+	return nil
+}
+
 type delayingMemoryStore struct {
 	mu       sync.Mutex
 	gets     int
@@ -1012,6 +1039,77 @@ func TestInterviewService_AnswerPersistsLongTermMemory(t *testing.T) {
 	}
 	if len(got.Strengths) == 0 || got.Strengths[0] != "Go 基础清楚" {
 		t.Fatalf("strengths = %+v", got.Strengths)
+	}
+}
+
+func TestInterviewService_StartSeedsWorkingMemoryFromLongTermMemory(t *testing.T) {
+	memStore := memory.NewMemoryStore()
+	if err := memStore.UpsertUserMemory(context.Background(), &memory.UserMemory{
+		UserID: "u-memory",
+		Weaknesses: []memory.Weakness{
+			{Topic: "redis", Evidence: "缓存击穿回答不完整", Severity: 2},
+			{Topic: " redis ", Evidence: "重复弱点", Severity: 1},
+			{Topic: "mysql", Evidence: "索引选择不清楚", Severity: 2},
+		},
+		SkillScores: map[string]float64{
+			"redis": 42,
+			"go":    78,
+			"mysql": 55,
+		},
+	}); err != nil {
+		t.Fatalf("seed memory: %v", err)
+	}
+	runner := &captureStartMemoryRunner{}
+	svc := NewInterviewService(runner)
+	svc.SetMemoryStore(memStore)
+
+	sess, err := svc.Start(context.Background(), startInterviewRequest{
+		SessionID:  "memory-start",
+		UserID:     "u-memory",
+		JDText:     "jd",
+		ResumeText: "resume",
+	})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	mem := sess.WorkingMemory
+	if !containsStringForTest(mem.WeakSkills, "redis") || !containsStringForTest(mem.WeakSkills, "mysql") {
+		t.Fatalf("weak skills = %+v, want redis and mysql", mem.WeakSkills)
+	}
+	if got := mem.SkillCoverage["redis"]; got != 0.42 {
+		t.Fatalf("coverage[redis] = %v, want 0.42", got)
+	}
+	if got := mem.SkillCoverage["mysql"]; got != 0.55 {
+		t.Fatalf("coverage[mysql] = %v, want 0.55", got)
+	}
+	if _, ok := mem.SkillCoverage["go"]; ok {
+		t.Fatalf("high score go should not seed low coverage, got %+v", mem.SkillCoverage)
+	}
+	if len(sess.Rounds) != 0 || sess.Report != nil || runner.rounds != 0 || runner.report != nil {
+		t.Fatalf("long-term memory should not mutate session facts: sess rounds=%d report=%+v runner rounds=%d report=%+v",
+			len(sess.Rounds), sess.Report, runner.rounds, runner.report)
+	}
+}
+
+func TestInterviewService_StartDegradesWhenLongTermMemoryReadFails(t *testing.T) {
+	runner := &captureStartMemoryRunner{}
+	svc := NewInterviewService(runner)
+	svc.SetMemoryStore(readErrorMemoryStore{})
+
+	sess, err := svc.Start(context.Background(), startInterviewRequest{
+		SessionID:  "memory-start-degraded",
+		UserID:     "u-memory",
+		JDText:     "jd",
+		ResumeText: "resume",
+	})
+	if err != nil {
+		t.Fatalf("start should not fail on memory read error: %v", err)
+	}
+	if sess.WorkingMemory.DegradedReasons["memory"] == "" {
+		t.Fatalf("expected memory degraded reason, got %+v", sess.WorkingMemory.DegradedReasons)
+	}
+	if runner.memory == nil || runner.memory.DegradedReasons["memory"] == "" {
+		t.Fatalf("runner should see degraded memory, got %+v", runner.memory)
 	}
 }
 
@@ -1975,4 +2073,13 @@ func readSSEBlock(t *testing.T, r *bufio.Reader) string {
 		lines = append(lines, line)
 	}
 	return strings.Join(lines, "\n")
+}
+
+func containsStringForTest(items []string, want string) bool {
+	for _, item := range items {
+		if item == want {
+			return true
+		}
+	}
+	return false
 }

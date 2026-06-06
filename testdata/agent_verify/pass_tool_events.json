@@ -1,0 +1,19 @@
+[
+  {
+    "Type": "before_tool",
+    "TraceID": "tool-trace-1",
+    "SessionID": "agent-verify-pass",
+    "Name": "github.project_analyze",
+    "InputSummary": "github.com/example/interview-agent",
+    "Permission": "read_only"
+  },
+  {
+    "Type": "after_tool",
+    "TraceID": "tool-trace-1",
+    "SessionID": "agent-verify-pass",
+    "Name": "github.project_analyze",
+    "InputSummary": "github.com/example/interview-agent",
+    "OutputSummary": "mock GitHub project analysis",
+    "Permission": "read_only"
+  }
+]

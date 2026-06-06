@@ -40,6 +40,7 @@ func (s *InterviewService) Start(ctx context.Context, req startInterviewRequest)
 		QuestionBankFilter: cloneQuestionBankFilter(req.QuestionBankFilter),
 		WorkingMemory:      domain.NewWorkingMemory(),
 	}
+	s.hydrateWorkingMemoryFromLongTermMemory(ctx, sess)
 	leaseAcquired := false
 	if err := s.acquireSessionLease(ctx, sess.ID); err != nil {
 		s.publishEvent(ctx, interviewEventSessionFailed, sess, "", err.Error())

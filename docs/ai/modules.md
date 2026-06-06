@@ -15,6 +15,7 @@
 |---|---|
 | `internal/httpapi/router.go` | Gin 路由注册 |
 | `internal/httpapi/interview_*.go` | 面试 API、Session service、SSE、响应构造 |
+| `internal/httpapi/agent_message.go` | `/api/agent/message` Skill 消息入口 |
 | `internal/httpapi/documents.go` | 简历文档解析接口 |
 | `internal/httpapi/web_assets.go` | 嵌入式前端静态资源 |
 | `web/src/apiClient.ts` | 前端 REST 调用 |
@@ -60,6 +61,8 @@
 | 路径 | 说明 |
 |---|---|
 | `internal/agentkit` | Skill、Hook、Tool/MCP adapter、Verification 原语 |
+| `internal/agent` | Intent Router 和 AgentService |
+| `internal/skills` | quiz、explain、project_polish 等 Skill 实现 |
 | `cmd/agent-verify` | Agent 输出验证门禁 |
 
 ## 后续开发优先入口
@@ -67,7 +70,7 @@
 | 方向 | 优先入口 |
 |---|---|
 | Session / Graph 优化 | `internal/domain/session.go`、`internal/graph` |
-| Intent Router + Skill | 新增 `internal/agent`、`internal/skills`，接口从 `internal/httpapi` 接入 |
-| Long-term Memory | 新增 `internal/memory`，不要塞进 `Session` |
+| Intent Router + Skill | `internal/agent`、`internal/skills`，接口从 `internal/httpapi/agent_message.go` 接入 |
+| Long-term Memory | `internal/memory`、`internal/httpapi/interview_memory.go`，不要把长期画像塞进 `Session` |
 | 动态难度 | `internal/nodes/evaluate.go`、`internal/nodes/update_memory.go`、`internal/nodes/pick_next.go` |
-| Tool / MCP Adapter | `internal/agentkit` 或后续 `internal/tools` |
+| Tool / MCP Adapter | `internal/agentkit`，避免再新建重复 `internal/tools` 抽象 |

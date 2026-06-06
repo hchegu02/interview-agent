@@ -91,6 +91,7 @@ GapStrategy:%s    Reason:%s
 确认掌握技能:%v
 薄弱技能:%v
 已被验证次数(skill_coverage):%s
+当前动态难度:%s    目标题目难度:%d
 近三轮平均分:%.1f    已问轮次:%d / %d
 近三轮回顾(按时间顺序):
 %s
@@ -106,7 +107,8 @@ GapStrategy:%s    Reason:%s
 1. validate 倾向: 选难度更高、考点和 confirmed_skills 相关的题
 2. cover_gap 倾向: 选基础题,考点覆盖 missing_skills
 3. explore 倾向: 选 coverage 计数低的技能,做面的探索
-4. 已问过的题不会出现在候选里,不必担心重复
+4. 动态难度: 优先选择接近目标题目难度的题,同等难度距离下再看 coverage
+5. 已问过的题不会出现在候选里,不必担心重复
 `
 
 // promptEvaluate 是 evaluate 节点的 system prompt。
@@ -144,11 +146,12 @@ const promptEvaluate = `你是面试官,评估候选人对一道技术题的回�
 // promptCritic 是 critic 节点的 system prompt。
 //
 // 合并两个判断到一次 LLM 调用:
-//   1. evaluation 是否"靠谱"(grounded_score / need_refine / issues)
-//   2. 这道题是否值得追问(has_probe_signal / probe_topic)
+//  1. evaluation 是否"靠谱"(grounded_score / need_refine / issues)
+//  2. 这道题是否值得追问(has_probe_signal / probe_topic)
+//
 // 两个判断都基于同样的 question + answer + evaluation 上下文,
 // 共用 prompt 省 50%% token,且能让 LLM 在同一推理流里互相校准
-//(比如"评估准确" + "答案值得追问")。
+// (比如"评估准确" + "答案值得追问")。
 const promptCritic = `你是面试官的反思助手,审视一次评估并判断是否值得追问。**只返回 JSON 对象**,不要任何解释或 markdown。
 
 题目:%s
@@ -309,4 +312,3 @@ const promptReflectionCheck = `你是面试官,刚结算完一道题,正在决�
 3. end 只在能力已经明确(均分两端极端) 或 预算即将耗尽 时给出
 4. reflect_topic 必须是 WeakSkills 里出现过的技能名,不要凭空编
 `
-

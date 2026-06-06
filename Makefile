@@ -38,12 +38,12 @@ verify-local: ## run dependency-free local quality gate
 	npm --prefix web run build
 	$(MAKE) verify-agent
 	$(MAKE) eval-rag
-	$(MAKE) questionbank-lint
+	$(MAKE) questionbank-lint-strict
 	$(MAKE) eval-mock
 	git diff --check
 
 verify-agent: ## run Agent output verification fixture
-	$(GO) run ./cmd/agent-verify -session testdata/agent_verify/pass_session.json
+	$(GO) run ./cmd/agent-verify -session testdata/agent_verify/pass_session.json -tool-events testdata/agent_verify/pass_tool_events.json
 
 eval-rag: ## run offline RAG retrieval evaluation
 	$(GO) run ./cmd/rag-eval -cases testdata/rag/golden_queries.jsonl -config $(CONFIG) -out tmp/eval/rag -min-recall-at-5 0.70 -min-recall-at-10 0.80 -min-mrr-at-k 0.90 -min-ndcg-at-k 0.75 -min-group-cases 3 -min-group-recall-at-5 0.50 -min-stage-recall-at-5 vector=0.70,bm25=0.65,rule=0.60,rrf=0.75,rerank=0.70 -min-stage-mrr-at-k rrf=0.88,rerank=0.90

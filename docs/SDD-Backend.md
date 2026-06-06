@@ -269,7 +269,7 @@ rerank 用于：
 go test ./... -count=1
 go run ./cmd/rag-eval -cases testdata/rag/golden_queries.jsonl -config config/config.yaml.example -out tmp/eval/rag -min-recall-at-5 0.70 -min-recall-at-10 0.80 -min-mrr-at-k 0.90 -min-ndcg-at-k 0.75 -min-group-cases 3 -min-group-recall-at-5 0.50 -min-stage-recall-at-5 vector=0.70,bm25=0.65,rule=0.60,rrf=0.75,rerank=0.70 -min-stage-mrr-at-k rrf=0.88,rerank=0.90
 go run ./cmd/questionbank-lint -seed seeds/question_bank.json -min-expected-points 3 -min-scenario-ratio 0.8
-go run ./cmd/agent-verify -session testdata/agent_verify/pass_session.json
+go run ./cmd/agent-verify -session testdata/agent_verify/pass_session.json -tool-events testdata/agent_verify/pass_tool_events.json
 ```
 
 本地统一门禁：
@@ -291,9 +291,11 @@ npm --prefix web run build
 
 - RAG 修改必须跑 RAG eval。
 - Agent 输出结构修改必须跑 agent-verify。
+- Tool / MCP adapter 或 Skill 工具链路修改必须跑带 `-tool-events` 的 agent-verify。
 - `/api/agent/message` 或 Skill 工具链路修改必须跑相关 HTTP / skill 测试。
 - HTTP API 修改必须跑相关 Go 测试。
 - 前端类型和页面修改必须跑前端测试和 build。
+- CI 已对齐本地强 RAG 阈值、strict 题库质量门槛和 tool event fixture。
 
 ## 13. 后续演进计划
 
@@ -631,6 +633,7 @@ type Store interface {
 - `MemoryStore` 是线程安全内存实现，读写时做 defensive copy，避免外部引用污染内部状态。
 - `BuildUpdateFromSession` 从 `domain.Session.Report` 提取 highlights、improvements、skill breakdown、next steps 和 drill plan，生成 `UserMemoryUpdate`。
 - `ApplyUpdate` 将一次面试报告增量合并到 `UserMemory`，字符串集合去重保序，weakness 按主题和证据去重，同名技能分数用新旧均值保守更新，`UpdatedAt` 不接受零值或旧时间回退。
+- `InterviewService.Start` 在 Graph 执行前按 `UserID` 读取长期记忆，把历史弱点 topic 注入当前 `WorkingMemory.WeakSkills`，并把低分技能保守映射为较低 `SkillCoverage` 初值；读取失败只写 `WorkingMemory.DegradedReasons["memory"]`，不阻断面试启动。
 - `InterviewService.Answer` 在 Session 完成并保存后，会把 Report 非阻塞沉淀到长期记忆 Store；服务层串行化 `Get -> Apply -> Upsert`，避免当前进程内并发完成同一用户多场面试时丢更新。
 - `cmd/server` 默认注入内存长期记忆 Store，用于本地演示和测试闭环。
 - 缺少 `user_id`、Session 或 Report 时返回结构化错误，不生成残缺画像。
@@ -638,13 +641,13 @@ type Store interface {
 当前边界：
 
 - 不修改输入 `Session`、`Report` 或 `WorkingMemory`。
-- 不自动写入数据库或缓存，当前只用进程内 Store。
+- 不自动写入数据库或缓存，当前只用进程内 Store，服务重启后长期记忆会丢失。
 - 不新增 HTTP API。
 - 不改变现有 Interview Graph 流程。
 - 不使用 LLM 总结长期画像。
 - 长期记忆写入失败不阻断面试完成响应。
 
-长期记忆后续应影响题目权重和复习建议，但不能覆盖 Session 内已经发生的事实。
+长期记忆已经能影响新 Session 的当前面试策略初值，但不能覆盖 Session 内已经发生的题目、轮次、报告等事实。后续如果需要跨进程长期保存，应补 PostgreSQL store 和只读画像 API。
 
 ### 13.4 第三阶段：动态难度
 
@@ -687,13 +690,14 @@ evaluate
 - 重放同一个 round 时不会重复累计 streak，避免恢复或重试导致难度误升/误降；当前通过 `DifficultyState.LastRoundID` 和 `WorkingMemory.AppliedNodes` 双重保护。
 - Graph 已接入 `update_memory -> update_difficulty -> reflection_check`；`update_difficulty` 在 Graph 中注册为写集 `working_memory` 的 runner-level `PatchNode`，`reflection_check` 注册为写集 `pending_decision/working_memory` 的 runner-level `PatchNode`。
 - `retrieve_rag` 读取 `WorkingMemory.Difficulty.Current` 推导 RAG 基础目标难度：easy -> 2，medium -> 3，hard -> 4。
+- `pick_next` prompt 显式包含当前动态难度和目标题目难度，LLM 选题时优先选择接近目标难度的候选题。
+- `pick_next` 规则降级路径也会优先选择接近当前动态难度的题，同等难度距离下再按技能 coverage 选择。
 - RAG 仍会在动态目标难度上叠加 `GapStrategy` 微调；用户设置的 `QuestionBankFilter.DifficultyMin/DifficultyMax` 继续作为硬过滤条件传给 retriever。
 
 当前边界：
 
 - 不让 LLM 单独决定难度。
-- 尚未读取长期记忆中的历史弱点。
-- 动态难度只影响 RAG 候选题目标难度，尚未显式写入 `pick_next` 的 LLM prompt。
+- 后续轮次暂不自动重跑 `retrieve_rag`，当前优先复用已有候选池并通过 `pick_next` 消费动态难度。
 - 不改变 HTTP 响应结构。
 
 ### 13.5 第四阶段：MCP Adapter
@@ -720,6 +724,9 @@ evaluate
 - `github.project_analyze` 返回项目摘要、主要语言、亮点和风险点。
 - `web.fetch` 返回 URL、标题和正文摘要。
 - 所有工具调用仍经过 `ToolRegistry.Call` 的权限、超时和 before/after hook。
+- `agent-verify -tool-events` 已能校验工具 before/after hook 成对、权限为 `read_only`、after 无错误，并确认默认 `github.project_analyze` 调用存在。
+- `ReportCompletenessVerifier` 会检查 report/session id 一致性、分数范围、技能拆解、转录分析、训练计划、改进建议和下一步。
+- `RetrievalTraceVerifier` 会检查 query、候选非空、final 去重、rank/score 合法等基础质量。
 
 当前工具只是 mock foundation：
 

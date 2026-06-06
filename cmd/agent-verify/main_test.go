@@ -30,6 +30,39 @@ func TestRunPassesCompleteSession(t *testing.T) {
 	}
 }
 
+func TestRunPassesWithToolEvents(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "session.json")
+	writeSession(t, sessionPath, completeSession())
+	toolEventsPath := filepath.Join("..", "..", "testdata", "agent_verify", "pass_tool_events.json")
+
+	var stdout, stderr bytes.Buffer
+	code := run(options{SessionPath: sessionPath, ToolEventsPath: toolEventsPath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d, stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+}
+
+func TestRunFailsWithInvalidToolEvents(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "session.json")
+	toolEventsPath := filepath.Join(dir, "tool_events.json")
+	writeSession(t, sessionPath, completeSession())
+	writeToolEvents(t, toolEventsPath, []map[string]string{
+		{"Type": "before_tool", "Name": "github.project_analyze", "Permission": "read_only", "TraceID": "tr1"},
+		{"Type": "after_tool", "Name": "github.project_analyze", "Permission": "read_only", "TraceID": "tr1", "Error": "timeout"},
+	})
+
+	var stdout, stderr bytes.Buffer
+	code := run(options{SessionPath: sessionPath, ToolEventsPath: toolEventsPath}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("code = %d, want 1, stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "tool_call_failed") {
+		t.Fatalf("summary should include tool failure, got %s", stdout.String())
+	}
+}
+
 func TestRunFailsWhenSessionMissingReportAndRetrievalTrace(t *testing.T) {
 	dir := t.TempDir()
 	sessionPath := filepath.Join(dir, "session.json")
@@ -43,6 +76,17 @@ func TestRunFailsWhenSessionMissingReportAndRetrievalTrace(t *testing.T) {
 	out := stdout.String()
 	if !strings.Contains(out, "report_missing") || !strings.Contains(out, "retrieval_trace_missing") {
 		t.Fatalf("summary should include expected failures, got %s", out)
+	}
+}
+
+func writeToolEvents(t *testing.T, path string, events []map[string]string) {
+	t.Helper()
+	raw, err := json.Marshal(events)
+	if err != nil {
+		t.Fatalf("marshal tool events: %v", err)
+	}
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatalf("write tool events: %v", err)
 	}
 }
 

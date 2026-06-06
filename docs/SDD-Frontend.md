@@ -108,6 +108,9 @@
 当前关键类型在 `web/src/types.ts`：
 
 - `Session`
+- `WorkingMemory`
+- `DifficultyState`
+- `PendingDecision`
 - `InterviewQuestion`
 - `InterviewRound`
 - `InterviewFeedback`
@@ -126,6 +129,7 @@
 | `POST` | `/api/interview/answer` | 提交回答 |
 | `GET` | `/api/interview/sessions` | 获取会话列表 |
 | `GET` | `/api/interview/sessions/:session_id` | 获取会话详情 |
+| `POST` | `/api/agent/message` | 后端 Intent Router + Skill 消息入口；当前前端尚未接入页面 |
 | `GET` | `/api/question-bank` | 题库预览 |
 | `GET` | `/api/question-bank/facets` | 题库筛选项 |
 
@@ -187,7 +191,7 @@ npm --prefix web run build
 
 ### 10.1 Intent Router + Skill 前端入口
 
-后端后续可能新增 `/api/agent/message`，用于接收自然语言请求并路由到不同 skill。前端可以新增一个轻量入口：
+后端已经提供 `/api/agent/message`，用于接收自然语言请求并路由到不同 skill。当前前端尚未接入该入口，后续可以新增一个轻量页面或侧边入口：
 
 ```text
 用户输入自然语言
@@ -200,19 +204,19 @@ npm --prefix web run build
 
 ### 10.2 Long-term Memory 展示
 
-后端若新增长期记忆，前端可以展示用户薄弱点、熟悉技术栈、常错知识点和复习建议。
+后端已有长期记忆基础层，并会在新 Session 启动时把历史弱点注入当前 `WorkingMemory`。当前尚无用户可读的长期记忆 HTTP API；前端如果只做最小展示，应先展示 Session 中的 `working_memory`，例如弱项、已确认技能、平均分、剩余轮次和降级原因。
 
 前端只展示用户可见的画像摘要，不直接编辑底层 memory 结构。
 
 ### 10.3 动态难度展示
 
-后端若新增动态难度状态，前端可以展示当前难度、调难原因和下一题方向。
+后端已有 `WorkingMemory.Difficulty`，并已影响 RAG 目标难度、`pick_next` prompt 和规则兜底。前端可以展示当前难度、连续高分 / 低分 streak 和最近消费的 round。
 
 难度更新策略由后端负责，前端不自行根据分数调整题目难度。
 
 ### 10.4 MCP 工具结果展示
 
-后端若接入 GitHub 项目分析、网页抓取等工具，前端可以展示工具结果摘要、错误信息和是否降级。
+后端已有 mock MCP tool adapter，`project_polish` 可以调用 `github.project_analyze` 并返回项目润色建议。当前 `/api/agent/message` 响应主要通过 `result.content/actions` 表达结果，尚无结构化 tool trace 字段；前端最小展示不应从文案里反推工具状态。
 
 前端不直接调用外部 MCP 服务。
 
