@@ -14,8 +14,8 @@
 - [x] 4. 记录代码变更文档
   - [x] 4.1 创建 `docs/code-changes/06-07-internal-business-trial-stabilization.md`。
   - [x] 4.2 基于真实 diff 写入函数级说明、调用链、数据流、验证和风险。
-- [ ] 5. 验证和收口
-  - [ ] 5.1 运行 `go test ./cmd/internal-trial-smoke ./internal/agentkit/verify -count=1`。
-  - [ ] 5.2 运行 `go run ./cmd/internal-trial-smoke`。
-  - [ ] 5.3 运行 `openspec validate internal-business-trial-stabilization --strict`。
-  - [ ] 5.4 更新 tasks 勾选并进入 Comet verify。
+- [x] 5. 验证和收口
+  - [x] 5.1 运行 `go test ./cmd/internal-trial-smoke ./internal/agentkit/verify -count=1`。
+  - [x] 5.2 运行 `go run ./cmd/internal-trial-smoke`。
+  - [x] 5.3 运行 `openspec validate internal-business-trial-stabilization --strict`。
+  - [x] 5.4 更新 tasks 勾选并进入 Comet verify。
