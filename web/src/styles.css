@@ -508,6 +508,7 @@ h3 {
 .control-panel,
 .profile-analysis,
 .agent-state,
+.agent-tool-trace,
 .user-memory,
 .transcript-analysis,
 .retrieval-trace,
@@ -568,6 +569,73 @@ h3 {
 
 .agent-actions button {
   min-height: 34px;
+}
+
+.agent-tool-trace {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+}
+
+.tool-trace-list {
+  display: grid;
+  gap: 8px;
+}
+
+.tool-trace-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px 12px;
+  align-items: center;
+  padding: 10px 12px;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--muted);
+  border-radius: var(--radius);
+}
+
+.tool-trace-item.success {
+  border-left-color: var(--green);
+}
+
+.tool-trace-item.failed {
+  border-left-color: var(--red);
+}
+
+.tool-trace-item strong,
+.tool-trace-item span,
+.tool-trace-item p {
+  overflow-wrap: anywhere;
+}
+
+.tool-trace-item strong {
+  display: block;
+  font-size: 13px;
+}
+
+.tool-trace-item span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.tool-trace-item > div:last-of-type {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.tool-trace-item p {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #334155;
+  font-size: 13px;
+  line-height: 1.48;
+}
+
+.tool-trace-status {
+  color: var(--ink);
 }
 
 .memory-toolbar {

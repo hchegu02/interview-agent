@@ -23,7 +23,7 @@ describe("apiClient", () => {
   it("sends an agent message to the backend router", async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: true,
-      text: () => Promise.resolve(`{"intent":"skill.quiz","skill":"quiz","confidence":0.9,"reason":"matched","result":{"title":"专项测验","content":"请回答"}}`),
+      text: () => Promise.resolve(`{"intent":"skill.quiz","skill":"quiz","confidence":0.9,"reason":"matched","result":{"title":"专项测验","content":"请回答"},"tool_trace":[{"name":"github.project_analyze","permission":"read_only","status":"success","elapsed_ms":4,"summary":"loaded"}]}`),
     });
     vi.stubGlobal("fetch", fetchMock);
 
@@ -33,6 +33,7 @@ describe("apiClient", () => {
       confidence: 0.9,
       reason: "matched",
       result: { title: "专项测验", content: "请回答" },
+      tool_trace: [{ name: "github.project_analyze", permission: "read_only", status: "success", elapsed_ms: 4, summary: "loaded" }],
     });
 
     expect(fetchMock).toHaveBeenCalledWith("/api/agent/message", expect.objectContaining({

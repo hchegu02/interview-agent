@@ -18,6 +18,7 @@ import type {
   TranscriptAnalysis,
   QuestionFacets,
   SkillAction,
+  ToolTrace,
   UserMemory,
   WorkingMemory,
 } from "./types";
@@ -318,8 +319,37 @@ export function AgentPage({ userId, busy, setBusy, setNotice, goJD, startAgentDr
               </div>
             )}
           </article>
+          <AgentToolTracePanel traces={response.tool_trace} />
         </section>
       )}
+    </section>
+  );
+}
+
+export function AgentToolTracePanel({ traces }: { traces?: ToolTrace[] }) {
+  if (!traces?.length) return null;
+  return (
+    <section className="agent-tool-trace">
+      <div className="review-head">
+        <strong>工具调用 Trace</strong>
+        <span>{traces.length} 次调用</span>
+      </div>
+      <div className="tool-trace-list">
+        {traces.map((trace, index) => (
+          <article key={`${trace.name}-${index}`} className={`tool-trace-item ${trace.status || "unknown"}`}>
+            <div>
+              <strong>{trace.name || "unknown_tool"}</strong>
+              <span>{trace.permission || "permission_unknown"}</span>
+            </div>
+            <div>
+              <span className="tool-trace-status">{trace.status || "unknown"}</span>
+              {trace.error_class && <span>{trace.error_class}</span>}
+              {typeof trace.elapsed_ms === "number" && <span>{trace.elapsed_ms}ms</span>}
+            </div>
+            {trace.summary && <p>{trace.summary}</p>}
+          </article>
+        ))}
+      </div>
     </section>
   );
 }

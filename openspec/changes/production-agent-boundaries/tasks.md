@@ -22,8 +22,8 @@
 
 - [x] 4.1 设计后端 `tool_trace` DTO，字段只包含工具名、权限、状态、错误类别、耗时和必要摘要。
 - [x] 4.2 让 Agent Skill / AgentService 收集工具 trace，并通过 `/api/agent/message` 以 `omitempty` 字段返回。
-- [ ] 4.3 前端补充 `tool_trace` TypeScript 类型和只读展示，缺字段时保持现有 Agent 页面行为。
-- [ ] 4.4 补充 HTTP 和前端测试，覆盖包含 trace、不包含 trace 和工具失败 trace。
+- [x] 4.3 前端补充 `tool_trace` TypeScript 类型和只读展示，缺字段时保持现有 Agent 页面行为。
+- [x] 4.4 补充 HTTP 和前端测试，覆盖包含 trace、不包含 trace 和工具失败 trace。
 
 ## 5. 验证门禁增强
 

@@ -274,12 +274,22 @@ export type AgentResponse = {
   confidence: number;
   reason: string;
   result: SkillResult;
+  tool_trace?: ToolTrace[];
 };
 
 export type SkillResult = {
   title: string;
   content: string;
   actions?: SkillAction[];
+};
+
+export type ToolTrace = {
+  name: string;
+  permission?: string;
+  status: string;
+  error_class?: string;
+  elapsed_ms?: number;
+  summary?: string;
 };
 
 export type SkillAction = {

@@ -1,7 +1,7 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { InterviewPage, ReportPage, UserMemoryPanel } from "./candidatePages";
+import { AgentToolTracePanel, InterviewPage, ReportPage, UserMemoryPanel } from "./candidatePages";
 import type { Session, UserMemory } from "./types";
 
 describe("user memory panel", () => {
@@ -126,5 +126,40 @@ describe("candidate interview page", () => {
     expect(html).toContain("Agent 状态");
     expect(html).toContain("基础难度");
     expect(html).toContain("暂无降级记录");
+  });
+});
+
+describe("agent tool trace panel", () => {
+  it("renders read-only tool trace details", () => {
+    const html = renderToStaticMarkup(<AgentToolTracePanel traces={[{
+      name: "github.project_analyze",
+      permission: "read_only",
+      status: "success",
+      elapsed_ms: 12,
+      summary: "repo metadata loaded",
+    }, {
+      name: "github.project_analyze",
+      permission: "read_only",
+      status: "failed",
+      error_class: "invalid_github_url",
+      elapsed_ms: 2,
+      summary: "generic advice returned",
+    }]} />);
+
+    expect(html).toContain("工具调用 Trace");
+    expect(html).toContain("2 次调用");
+    expect(html).toContain("github.project_analyze");
+    expect(html).toContain("read_only");
+    expect(html).toContain("success");
+    expect(html).toContain("failed");
+    expect(html).toContain("invalid_github_url");
+    expect(html).toContain("12ms");
+    expect(html).toContain("repo metadata loaded");
+  });
+
+  it("omits the panel when trace is missing", () => {
+    const html = renderToStaticMarkup(<AgentToolTracePanel />);
+
+    expect(html).not.toContain("工具调用 Trace");
   });
 });
