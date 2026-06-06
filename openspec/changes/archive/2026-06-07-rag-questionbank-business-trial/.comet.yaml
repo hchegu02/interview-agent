@@ -1,17 +1,17 @@
 workflow: full
-phase: verify
+phase: archive
 build_mode: subagent-driven-development
 isolation: branch
 verify_mode: full
 base_ref: 813a1752c462c0b3e7be39adc54b3377641f66dc
 design_doc: docs/superpowers/specs/2026-06-07-rag-questionbank-business-trial-design.md
 plan: docs/superpowers/plans/2026-06-07-rag-questionbank-business-trial.md
-verify_result: pending
+verify_result: pass
 verification_report: docs/superpowers/reports/2026-06-07-rag-questionbank-business-trial-verify.md
-branch_status: pending
+branch_status: handled
 created_at: 2026-06-07
-verified_at: null
-archived: false
+verified_at: 2026-06-07
+archived: true
 handoff_context: openspec/changes/rag-questionbank-business-trial/.comet/handoff/design-context.json
 handoff_hash: 7b0509444c22e099d4a92d1f2f567a4820d0efd0b5247c2bbd9bfe92d5584d66
 build_command: go test ./internal/questionbank ./internal/nodes ./internal/retriever -count=1

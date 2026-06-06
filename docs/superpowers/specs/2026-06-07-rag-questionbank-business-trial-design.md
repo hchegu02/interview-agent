@@ -2,6 +2,8 @@
 comet_change: rag-questionbank-business-trial
 role: technical-design
 canonical_spec: openspec
+archived-with: 2026-06-07-rag-questionbank-business-trial
+status: final
 ---
 
 # RAG Question Bank Business Trial Design

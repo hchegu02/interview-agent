@@ -2,6 +2,7 @@
 change: rag-questionbank-business-trial
 design-doc: docs/superpowers/specs/2026-06-07-rag-questionbank-business-trial-design.md
 base-ref: 813a1752c462c0b3e7be39adc54b3377641f66dc
+archived-with: 2026-06-07-rag-questionbank-business-trial
 ---
 
 # RAG Question Bank Business Trial Implementation Plan
@@ -14,6 +15,7 @@ base-ref: 813a1752c462c0b3e7be39adc54b3377641f66dc
 
 **Tech Stack:** Go, PostgreSQL migrations, pgvector question bank, existing `internal/questionbank`, `internal/nodes`, `internal/retriever`, `cmd/rag-eval`, OpenSpec, Markdown runbooks.
 
+archived-with: 2026-06-07-rag-questionbank-business-trial
 ---
 
 ## File Structure
