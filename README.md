@@ -164,7 +164,7 @@ $env:INTERVIEW_RERANK_ENDPOINT="http://127.0.0.1:9000/rerank"
 | `GET` | `/api/question-bank/:id` | 题目详情 |
 | `GET` | `/api/question-bank/facets` | 题库筛选项 |
 
-注意：当前长期用户画像 API 还没有接入鉴权和 ownership 校验，只适合本地演示或受信环境；生产暴露前必须接入用户体系，不能只依赖 path 中的 `user_id`。
+注意：当前长期用户画像 API 已有最小 ownership 边界，请求需要通过 `X-User-ID` 或 `owner_user_id` 声明当前 owner，并要求与 path 中的 `user_id` 一致；这不是完整 JWT 登录体系，生产暴露前仍应接入真实用户身份来源。
 
 ## 快速启动
 
@@ -388,7 +388,7 @@ mingw32-make verify-local
 - MCP 当前是 client adapter 抽象和测试替身，没有接入真实生产 MCP Server。
 - Verification 已有本地和 CI 基础门禁，覆盖强 RAG、strict 题库、Agent Graph 和 tool event fixture；后续仍可补真实链路生成 fixture。
 - 长期记忆已有内存 Store、PostgreSQL Store 和只读画像 API；当前不提供画像编辑 API。
-- 画像 API 当前按 path `user_id` 读取，没有鉴权和 ownership 校验；生产接入前必须补用户身份边界。
+- 画像 API 已有最小 owner 校验，默认要求 `X-User-ID` / `owner_user_id` 与 path `user_id` 一致；生产接入前仍需替换为真实鉴权体系。
 - rerank 默认是本地 lexical reranker；HTTP 模式只负责调用本地 rerank 服务，模型服务本身需单独部署。
 - PG 模式下 BM25/rule 本地阶段在服务启动时从 active 题库加载，题库运行时变更后的热刷新仍需后续完善。
 - OTel tracing 后端和真实业务规模压测报告仍未完成。

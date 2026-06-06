@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { apiClient } from "./apiClient";
+import { ApiError, apiClient } from "./apiClient";
 import { buildDraft, clearDraft, DRAFT_KEY, drillJDText, loadDraft, normalizeQuestionBankFilter, saveDraft } from "./draftStore";
 import { formatTime, modeLabel } from "./interviewView";
 import { AgentPage, InterviewPage, JDPage, ProgressBar, ReportPage, ResumePage, UserMemoryPage } from "./candidatePages";
@@ -45,6 +45,7 @@ function App() {
   const [questionJump, setQuestionJump] = useState(() => initialNavigation.questionJump);
   const [deletingSession, setDeletingSession] = useState("");
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const previousRoute = useRef<Route | null>(null);
 
   const navigate = useCallback((next: Route, search = "") => {
     window.history.pushState({}, "", `${next}${search}`);
@@ -87,8 +88,8 @@ function App() {
     refreshSessions();
   }, [refreshSessions]);
 
-  const refreshUserMemory = useCallback(() => {
-    const uid = userId.trim();
+  const loadUserMemory = useCallback((targetUserId: string) => {
+    const uid = targetUserId.trim();
     if (!uid) {
       setUserMemory(null);
       return;
@@ -101,16 +102,22 @@ function App() {
       })
       .catch((err) => {
         setUserMemory(null);
-        if (!String(errorMessage(err)).includes("user memory not found")) {
+        if (!(err instanceof ApiError && err.status === 404)) {
           setNotice(errorMessage(err));
         }
       })
       .finally(() => setBusy(false));
-  }, [userId]);
+  }, []);
+
+  const refreshUserMemory = useCallback(() => {
+    loadUserMemory(userId);
+  }, [loadUserMemory, userId]);
 
   useEffect(() => {
-    if (route === routes.memory) refreshUserMemory();
-  }, [refreshUserMemory, route]);
+    const enteredMemory = previousRoute.current !== routes.memory && route === routes.memory;
+    previousRoute.current = route;
+    if (enteredMemory) loadUserMemory(userId);
+  }, [loadUserMemory, route, userId]);
 
   const updateDraft = useCallback((patch: Partial<Draft>) => {
     setDraft((prev) => {

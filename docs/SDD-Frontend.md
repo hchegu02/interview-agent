@@ -106,10 +106,11 @@
 `UserMemoryPage` 是长期用户画像的只读页面：
 
 - 调用 `GET /api/users/:user_id/memory`。
+- 请求携带 `X-User-ID` 作为当前开发模式 owner 标识，让后端可以拒绝读取非本人画像。
 - 展示跨 Session 沉淀出的优势、弱项、技能分数、最近建议和更新时间。
 - 找不到画像时展示空状态。
 
-前端不编辑长期画像，也不把长期画像塞回当前 Session。当前后端画像 API 尚未提供鉴权和 ownership 校验，前端只作为本地演示或受信环境的只读展示层，生产接入前必须由后端补用户身份边界。
+前端不编辑长期画像，也不把长期画像塞回当前 Session。当前后端只提供最小 owner resolver / authorizer，不是完整 JWT 登录体系；生产接入前仍应替换为真实身份来源。
 
 ## 5. 状态设计
 
@@ -151,12 +152,12 @@
 | `POST` | `/api/interview/answer` | 提交回答 |
 | `GET` | `/api/interview/sessions` | 获取会话列表 |
 | `GET` | `/api/interview/sessions/:session_id` | 获取会话详情 |
-| `GET` | `/api/users/:user_id/memory` | 获取只读长期用户画像 |
+| `GET` | `/api/users/:user_id/memory` | 获取只读长期用户画像，前端通过 `X-User-ID` 声明当前 owner |
 | `POST` | `/api/agent/message` | 后端 Intent Router + Skill 消息入口 |
 | `GET` | `/api/question-bank` | 题库预览 |
 | `GET` | `/api/question-bank/facets` | 题库筛选项 |
 
-`GET /api/users/:user_id/memory` 当前按 path `user_id` 读取画像；在后端接入鉴权前，前端不得把它包装成生产级用户中心能力。
+`GET /api/users/:user_id/memory` 不只依赖 path `user_id`；前端请求会携带 `X-User-ID`，后端在 owner 与 path 用户不一致时拒绝读取。前端不得把当前开发模式 owner header 包装成生产级用户中心能力。
 
 接口对齐要求：
 
@@ -186,6 +187,7 @@ SSE：接收执行进度、节点事件、评分进度、报告生成进度
 前端错误处理保持轻量：
 
 - API 错误展示为用户可理解的 notice。
+- API client 的错误对象保留 HTTP `status`，页面判断 404 等状态码时不得依赖错误文案。
 - 文件上传失败后清空 input，允许重新选择。
 - 面试提交失败时保留当前页面状态。
 - 缺少报告或 Session 时展示空状态页面。

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { apiClient } from "./apiClient";
+import { ApiError, apiClient } from "./apiClient";
 
 describe("apiClient", () => {
   afterEach(() => {
@@ -54,6 +54,24 @@ describe("apiClient", () => {
       skill_scores: { Go: 82 },
     });
 
-    expect(fetchMock).toHaveBeenCalledWith("/api/users/u1/memory", expect.any(Object));
+    expect(fetchMock).toHaveBeenCalledWith("/api/users/u1/memory", expect.objectContaining({
+      headers: expect.objectContaining({ "X-User-ID": "u1" }),
+    }));
+  });
+
+  it("preserves HTTP status on API errors", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: false,
+      status: 404,
+      statusText: "Not Found",
+      text: () => Promise.resolve(`{"error":"user memory not found"}`),
+    }));
+
+    await expect(apiClient.getUserMemory("missing")).rejects.toMatchObject({
+      status: 404,
+      message: "user memory not found",
+    });
+
+    await expect(apiClient.getUserMemory("missing")).rejects.toBeInstanceOf(ApiError);
   });
 });

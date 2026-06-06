@@ -19,6 +19,7 @@ import (
 var (
 	ErrUserMemoryNotFound = errors.New("user memory not found")
 	ErrInvalidMemoryInput = errors.New("invalid memory input")
+	ErrUserMemoryConflict = errors.New("user memory write conflict")
 )
 
 type UserMemory struct {
@@ -28,6 +29,7 @@ type UserMemory struct {
 	SkillScores map[string]float64 `json:"skill_scores"`
 	LastAdvice  []string           `json:"last_advice"`
 	UpdatedAt   time.Time          `json:"updated_at"`
+	RowVersion  int64              `json:"-"`
 }
 
 type Weakness struct {
@@ -87,6 +89,11 @@ func (s *MemoryStore) UpsertUserMemory(_ context.Context, memory *UserMemory) er
 	}
 	cloned := cloneUserMemory(memory)
 	cloned.UserID = userID
+	if cloned.RowVersion <= 0 {
+		cloned.RowVersion = 1
+	} else {
+		cloned.RowVersion++
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.items[userID] = cloned

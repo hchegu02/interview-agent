@@ -32,6 +32,7 @@ func TestGetUserMemory_ReturnsPublicProfile(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/users/u-memory/memory", nil)
+	req.Header.Set("X-User-ID", "u-memory")
 	server.Router().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -52,6 +53,47 @@ func TestGetUserMemory_ReturnsPublicProfile(t *testing.T) {
 	}
 }
 
+func TestGetUserMemory_RejectsNonOwner(t *testing.T) {
+	store := memory.NewMemoryStore()
+	if err := store.UpsertUserMemory(context.Background(), &memory.UserMemory{
+		UserID:      "u-owner",
+		Strengths:   []string{"Go"},
+		SkillScores: map[string]float64{"go": 82},
+		UpdatedAt:   time.Date(2026, 6, 6, 10, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("upsert memory: %v", err)
+	}
+	svc := NewInterviewService(fakeInterviewRunner{})
+	svc.SetMemoryStore(store)
+	server := NewServerWithInterview(&config.Config{}, svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/users/u-owner/memory", nil)
+	req.Header.Set("X-User-ID", "u-other")
+	server.Router().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "Go") {
+		t.Fatalf("forbidden response leaked profile: %s", rec.Body.String())
+	}
+}
+
+func TestGetUserMemory_RequiresOwner(t *testing.T) {
+	svc := NewInterviewService(fakeInterviewRunner{})
+	svc.SetMemoryStore(memory.NewMemoryStore())
+	server := NewServerWithInterview(&config.Config{}, svc)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/users/u-owner/memory", nil)
+	server.Router().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestGetUserMemory_NotFound(t *testing.T) {
 	svc := NewInterviewService(fakeInterviewRunner{})
 	svc.SetMemoryStore(memory.NewMemoryStore())
@@ -59,6 +101,7 @@ func TestGetUserMemory_NotFound(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/users/missing/memory", nil)
+	req.Header.Set("X-User-ID", "missing")
 	server.Router().ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNotFound {

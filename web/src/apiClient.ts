@@ -14,6 +14,20 @@ import type {
 
 type RequestOptions = RequestInit & { form?: FormData };
 
+export class ApiError extends Error {
+  status: number;
+  statusText: string;
+  body: unknown;
+
+  constructor(message: string, status: number, statusText: string, body: unknown) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.statusText = statusText;
+    this.body = body;
+  }
+}
+
 async function api<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const headers = options.form ? options.headers : {
     "Content-Type": "application/json",
@@ -27,7 +41,7 @@ async function api<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const text = await res.text();
   const data = text ? JSON.parse(text) : {};
   if (!res.ok) {
-    throw new Error(data.error || `${res.status} ${res.statusText}`);
+    throw new ApiError(data.error || `${res.status} ${res.statusText}`, res.status, res.statusText, data);
   }
   return data as T;
 }
@@ -76,7 +90,9 @@ export const apiClient = {
     api<{ sessions: SessionSummary[] }>(`/api/interview/sessions?user_id=${encodeURIComponent(userId)}&limit=20`),
 
   getUserMemory: (userId: string) =>
-    api<UserMemory>(`/api/users/${encodeURIComponent(userId)}/memory`),
+    api<UserMemory>(`/api/users/${encodeURIComponent(userId)}/memory`, {
+      headers: { "X-User-ID": userId },
+    }),
 
   deleteSession: (sessionId: string, userId: string) =>
     api<{ deleted: boolean }>(`/api/interview/sessions/${encodeURIComponent(sessionId)}?user_id=${encodeURIComponent(userId)}`, {

@@ -25,7 +25,7 @@ type pgMemoryRow interface {
 	Scan(dest ...any) error
 }
 
-type pgMemoryExec func(ctx context.Context, sql string, args ...any) error
+type pgMemoryExec func(ctx context.Context, sql string, args ...any) (int64, error)
 
 func (s *PGStore) GetUserMemory(ctx context.Context, userID string) (*UserMemory, error) {
 	if s == nil || s.Pool == nil {
@@ -43,7 +43,8 @@ func (s *PGStore) getWithQueryRow(ctx context.Context, userID string, queryRow p
 	}
 	var raw []byte
 	var updatedAt time.Time
-	err := queryRow(ctx, pgMemorySelectSQL, userID).Scan(&raw, &updatedAt)
+	var rowVersion int64
+	err := queryRow(ctx, pgMemorySelectSQL, userID).Scan(&raw, &updatedAt, &rowVersion)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, fmt.Errorf("%w: %s", ErrUserMemoryNotFound, userID)
@@ -56,11 +57,12 @@ func (s *PGStore) getWithQueryRow(ctx context.Context, userID string, queryRow p
 	}
 	mem.UserID = userID
 	mem.UpdatedAt = updatedAt
+	mem.RowVersion = rowVersion
 	return cloneUserMemory(&mem), nil
 }
 
 const pgMemorySelectSQL = `
-SELECT memory_json, updated_at
+SELECT memory_json, updated_at, row_version
 FROM user_memory
 WHERE user_id = $1`
 
@@ -68,9 +70,12 @@ func (s *PGStore) UpsertUserMemory(ctx context.Context, memory *UserMemory) erro
 	if s == nil || s.Pool == nil {
 		return fmt.Errorf("%w: pg memory store pool not initialized", ErrInvalidMemoryInput)
 	}
-	return s.upsertWithExec(ctx, memory, func(ctx context.Context, sql string, args ...any) error {
-		_, err := s.Pool.Exec(ctx, sql, args...)
-		return err
+	return s.upsertWithExec(ctx, memory, func(ctx context.Context, sql string, args ...any) (int64, error) {
+		tag, err := s.Pool.Exec(ctx, sql, args...)
+		if err != nil {
+			return 0, err
+		}
+		return tag.RowsAffected(), nil
 	})
 }
 
@@ -91,15 +96,21 @@ func (s *PGStore) upsertWithExec(ctx context.Context, memory *UserMemory, exec p
 	if err != nil {
 		return fmt.Errorf("marshal user memory: %w", err)
 	}
-	if err := exec(ctx, pgMemoryUpsertSQL, userID, raw, cloned.UpdatedAt); err != nil {
+	rowsAffected, err := exec(ctx, pgMemoryUpsertSQL, userID, raw, cloned.UpdatedAt, cloned.RowVersion)
+	if err != nil {
 		return fmt.Errorf("upsert user memory: %w", err)
+	}
+	if rowsAffected == 0 {
+		return fmt.Errorf("%w: %s", ErrUserMemoryConflict, userID)
 	}
 	return nil
 }
 
 const pgMemoryUpsertSQL = `
-INSERT INTO user_memory (user_id, memory_json, updated_at)
-VALUES ($1, $2::jsonb, $3)
+INSERT INTO user_memory (user_id, memory_json, updated_at, row_version)
+VALUES ($1, $2::jsonb, $3, 1)
 ON CONFLICT (user_id) DO UPDATE SET
 	memory_json = EXCLUDED.memory_json,
-	updated_at = EXCLUDED.updated_at`
+	updated_at = EXCLUDED.updated_at,
+	row_version = user_memory.row_version + 1
+WHERE user_memory.row_version = $4`

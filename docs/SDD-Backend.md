@@ -633,12 +633,12 @@ type Store interface {
 - `MemoryStore` 是线程安全内存实现，读写时做 defensive copy，避免外部引用污染内部状态。
 - `BuildUpdateFromSession` 从 `domain.Session.Report` 提取 highlights、improvements、skill breakdown、next steps 和 drill plan，生成 `UserMemoryUpdate`。
 - `ApplyUpdate` 将一次面试报告增量合并到 `UserMemory`，字符串集合去重保序，weakness 按主题和证据去重，同名技能分数用新旧均值保守更新，`UpdatedAt` 不接受零值或旧时间回退。
-- `PGStore` 是 PostgreSQL 长期记忆实现，以 `user_id` 为主键，把用户画像保存到 `user_memory.memory_json`，并用 `updated_at` 记录画像更新时间。
+- `PGStore` 是 PostgreSQL 长期记忆实现，以 `user_id` 为主键，把用户画像保存到 `user_memory.memory_json`，用 `updated_at` 记录画像更新时间，并通过 `row_version` 做 CAS 写入。
 - `InterviewService.Start` 在 Graph 执行前按 `UserID` 读取长期记忆，把历史弱点 topic 注入当前 `WorkingMemory.WeakSkills`，并把低分技能保守映射为较低 `SkillCoverage` 初值；读取失败只写 `WorkingMemory.DegradedReasons["memory"]`，不阻断面试启动。
 - `InterviewService.Answer` 在 Session 完成并保存后，会把 Report 非阻塞沉淀到长期记忆 Store；服务层串行化 `Get -> Apply -> Upsert`，避免当前进程内并发完成同一用户多场面试时丢更新。
 - `cmd/server` 无 PostgreSQL 时注入内存长期记忆 Store；配置 PostgreSQL 时注入 `memory.PGStore`，让长期画像跨进程和重启保留。
 - `GET /api/users/:user_id/memory` 返回只读用户画像，用于前端展示长期强项、弱项、技能分数和复习建议。
-- 当前画像读取 API 尚未接入鉴权和 ownership 校验，只按 path 中的 `user_id` 读取；生产暴露前必须接入用户身份体系。
+- 画像读取 API 已有最小 ownership 边界：默认开发 resolver 从 `X-User-ID` 或 `owner_user_id` 解析当前 owner，并要求 owner 与 path `user_id` 一致；缺少 owner 信息返回 401，owner 不匹配返回 403。`Server` 支持注入 `UserMemoryOwnerResolver` / `UserMemoryAuthorizer`，后续可替换为真实身份体系。
 - 缺少 `user_id`、Session 或 Report 时返回结构化错误，不生成残缺画像。
 
 当前边界：
@@ -647,10 +647,10 @@ type Store interface {
 - 不改变现有 Interview Graph 流程。
 - 不使用 LLM 总结长期画像。
 - 不提供长期画像编辑 API。
-- 不把只读画像 API 作为生产级用户隔离能力；当前边界是本地演示或受信环境。
+- 不引入完整 JWT 或会话认证；当前只提供可插拔 owner resolver / authorizer 和最小读取隔离边界。
 - 长期记忆写入失败不阻断面试完成响应。
 
-长期记忆已经能影响新 Session 的当前面试策略初值，但不能覆盖 Session 内已经发生的题目、轮次、报告等事实。后续如果需要更强的一致性，应补多实例并发写入的数据库级 CAS / 乐观锁，而不是依赖单进程 `memoryMu`。
+长期记忆已经能影响新 Session 的当前面试策略初值，但不能覆盖 Session 内已经发生的题目、轮次、报告等事实。PG 模式下长期画像写入已使用数据库级 CAS / 乐观锁；内存 Store 仍只适合本地单进程演示。
 
 ### 13.4 第三阶段：动态难度
 

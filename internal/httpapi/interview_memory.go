@@ -11,6 +11,8 @@ import (
 	"interview-agent/internal/memory"
 )
 
+const longTermMemoryWriteMaxAttempts = 3
+
 func (s *InterviewService) persistLongTermMemory(ctx context.Context, sess *domain.Session) error {
 	if s == nil || s.memoryStore == nil || sess == nil || sess.Report == nil {
 		return nil
@@ -21,18 +23,29 @@ func (s *InterviewService) persistLongTermMemory(ctx context.Context, sess *doma
 	}
 	s.memoryMu.Lock()
 	defer s.memoryMu.Unlock()
-	current, err := s.memoryStore.GetUserMemory(ctx, update.UserID)
-	if err != nil && !errors.Is(err, memory.ErrUserMemoryNotFound) {
-		return err
+	var lastConflict error
+	for attempt := 0; attempt < longTermMemoryWriteMaxAttempts; attempt++ {
+		current, err := s.memoryStore.GetUserMemory(ctx, update.UserID)
+		if err != nil && !errors.Is(err, memory.ErrUserMemoryNotFound) {
+			return err
+		}
+		if errors.Is(err, memory.ErrUserMemoryNotFound) {
+			current = nil
+		}
+		next, err := memory.ApplyUpdate(current, update)
+		if err != nil {
+			return err
+		}
+		err = s.memoryStore.UpsertUserMemory(ctx, next)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, memory.ErrUserMemoryConflict) {
+			return err
+		}
+		lastConflict = err
 	}
-	if errors.Is(err, memory.ErrUserMemoryNotFound) {
-		current = nil
-	}
-	next, err := memory.ApplyUpdate(current, update)
-	if err != nil {
-		return err
-	}
-	return s.memoryStore.UpsertUserMemory(ctx, next)
+	return lastConflict
 }
 
 func (s *InterviewService) hydrateWorkingMemoryFromLongTermMemory(ctx context.Context, sess *domain.Session) {

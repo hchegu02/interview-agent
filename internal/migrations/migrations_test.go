@@ -263,3 +263,19 @@ func TestUserMemoryMigration(t *testing.T) {
 		t.Fatal("user memory down migration should drop user_memory table")
 	}
 }
+
+func TestUserMemoryRowVersionMigration(t *testing.T) {
+	up := read(t, "012_user_memory_row_version.up.sql")
+	down := read(t, "012_user_memory_row_version.down.sql")
+	for _, token := range []string{"user_memory", "row_version", "bigint", "DEFAULT 1", "user_memory_row_version_positive"} {
+		if !strings.Contains(up, token) {
+			t.Fatalf("user memory row version migration missing %q", token)
+		}
+	}
+	if !strings.Contains(down, "DROP COLUMN IF EXISTS row_version") {
+		t.Fatal("user memory row version down migration should drop row_version column")
+	}
+	if !strings.Contains(down, "DROP CONSTRAINT IF EXISTS user_memory_row_version_positive") {
+		t.Fatal("user memory row version down migration should drop positive constraint")
+	}
+}

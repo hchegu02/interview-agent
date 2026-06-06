@@ -15,15 +15,17 @@ import (
 
 // Server 持有所有依赖。阶段 0 只放骨架，后续阶段往里加 service。
 type Server struct {
-	cfg             *config.Config
-	agent           *agent.Service
-	interview       *InterviewService
-	documentParser  parser.DocumentParser
-	questionBank    questionbank.Store
-	questionImports *questionbank.ImportService
-	profileAnalyzer ProfileAnalyzer
-	metricsRecorder *metricsRecorder
-	eventHubMetrics func() EventHubMetrics
+	cfg                     *config.Config
+	agent                   *agent.Service
+	interview               *InterviewService
+	documentParser          parser.DocumentParser
+	questionBank            questionbank.Store
+	questionImports         *questionbank.ImportService
+	profileAnalyzer         ProfileAnalyzer
+	metricsRecorder         *metricsRecorder
+	eventHubMetrics         func() EventHubMetrics
+	userMemoryOwnerResolver UserMemoryOwnerResolver
+	userMemoryAuthorizer    UserMemoryAuthorizer
 
 	// breakerState 可选注入：real 模式下接 BreakingChatModel.State，返回
 	// "closed" / "open" / "half_open"。/readyz 在 open 时回报 degraded（仍 200）。

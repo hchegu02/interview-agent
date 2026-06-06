@@ -14,16 +14,17 @@ import (
 )
 
 type fakePGMemoryRow struct {
-	raw       []byte
-	updatedAt time.Time
-	err       error
+	raw        []byte
+	updatedAt  time.Time
+	rowVersion int64
+	err        error
 }
 
 func (r fakePGMemoryRow) Scan(dest ...any) error {
 	if r.err != nil {
 		return r.err
 	}
-	if len(dest) != 2 {
+	if len(dest) != 3 {
 		return errors.New("unexpected scan destination count")
 	}
 	raw, ok := dest[0].(*[]byte)
@@ -34,8 +35,13 @@ func (r fakePGMemoryRow) Scan(dest ...any) error {
 	if !ok {
 		return errors.New("unexpected updated_at destination")
 	}
+	rowVersion, ok := dest[2].(*int64)
+	if !ok {
+		return errors.New("unexpected row_version destination")
+	}
 	*raw = append([]byte(nil), r.raw...)
 	*updatedAt = r.updatedAt
+	*rowVersion = r.rowVersion
 	return nil
 }
 
@@ -67,7 +73,7 @@ func TestPGStore_GetUserMemoryTrimsUserIDAndMapsNotFound(t *testing.T) {
 	}
 }
 
-func TestPGStore_GetUserMemoryDecodesJSONAndUsesRowUpdatedAt(t *testing.T) {
+func TestPGStore_GetUserMemoryDecodesJSONAndUsesRowMetadata(t *testing.T) {
 	store := NewPGStore(nil).(*PGStore)
 	rowUpdatedAt := time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC)
 	staleJSONTime := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
@@ -76,13 +82,14 @@ func TestPGStore_GetUserMemoryDecodesJSONAndUsesRowUpdatedAt(t *testing.T) {
 		Strengths:   []string{"项目表达清楚"},
 		SkillScores: map[string]float64{"go": 80},
 		UpdatedAt:   staleJSONTime,
+		RowVersion:  99,
 	})
 	if err != nil {
 		t.Fatalf("marshal fixture: %v", err)
 	}
 
 	got, err := store.getWithQueryRow(context.Background(), "u1", func(ctx context.Context, sql string, args ...any) pgMemoryRow {
-		return fakePGMemoryRow{raw: raw, updatedAt: rowUpdatedAt}
+		return fakePGMemoryRow{raw: raw, updatedAt: rowUpdatedAt, rowVersion: 7}
 	})
 	if err != nil {
 		t.Fatalf("get: %v", err)
@@ -93,14 +100,17 @@ func TestPGStore_GetUserMemoryDecodesJSONAndUsesRowUpdatedAt(t *testing.T) {
 	if !got.UpdatedAt.Equal(rowUpdatedAt) {
 		t.Fatalf("UpdatedAt = %v, want row updated_at %v", got.UpdatedAt, rowUpdatedAt)
 	}
+	if got.RowVersion != 7 {
+		t.Fatalf("RowVersion = %d, want row_version 7", got.RowVersion)
+	}
 }
 
 func TestPGStore_UpsertUserMemoryValidatesUserID(t *testing.T) {
 	store := NewPGStore(nil).(*PGStore)
 	called := false
-	err := store.upsertWithExec(context.Background(), &UserMemory{UserID: "   "}, func(ctx context.Context, sql string, args ...any) error {
+	err := store.upsertWithExec(context.Background(), &UserMemory{UserID: "   "}, func(ctx context.Context, sql string, args ...any) (int64, error) {
 		called = true
-		return nil
+		return 0, nil
 	})
 	if !errors.Is(err, ErrInvalidMemoryInput) {
 		t.Fatalf("err = %v, want ErrInvalidMemoryInput", err)
@@ -109,9 +119,9 @@ func TestPGStore_UpsertUserMemoryValidatesUserID(t *testing.T) {
 		t.Fatal("exec should not be called for invalid user_id")
 	}
 
-	err = store.upsertWithExec(context.Background(), nil, func(ctx context.Context, sql string, args ...any) error {
+	err = store.upsertWithExec(context.Background(), nil, func(ctx context.Context, sql string, args ...any) (int64, error) {
 		called = true
-		return nil
+		return 0, nil
 	})
 	if !errors.Is(err, ErrInvalidMemoryInput) {
 		t.Fatalf("nil err = %v, want ErrInvalidMemoryInput", err)
@@ -128,17 +138,21 @@ func TestPGStore_UpsertUserMemoryEncodesDefensiveCopyAndUpserts(t *testing.T) {
 		SkillScores: map[string]float64{"redis": 62},
 		LastAdvice:  []string{"复习 Redis"},
 		UpdatedAt:   updatedAt,
+		RowVersion:  4,
 	}
 	var rawArg []byte
-	err := store.upsertWithExec(context.Background(), mem, func(ctx context.Context, sql string, args ...any) error {
+	err := store.upsertWithExec(context.Background(), mem, func(ctx context.Context, sql string, args ...any) (int64, error) {
 		if !strings.Contains(sql, "ON CONFLICT (user_id) DO UPDATE") {
 			t.Fatalf("upsert SQL missing conflict update: %s", sql)
 		}
-		if !strings.Contains(sql, "memory_json = EXCLUDED.memory_json") {
-			t.Fatalf("upsert SQL missing memory_json update: %s", sql)
+		if !strings.Contains(sql, "row_version = user_memory.row_version + 1") {
+			t.Fatalf("upsert SQL missing row_version increment: %s", sql)
 		}
-		if len(args) != 3 {
-			t.Fatalf("args len = %d, want 3", len(args))
+		if !strings.Contains(sql, "WHERE user_memory.row_version = $4") {
+			t.Fatalf("upsert SQL missing CAS predicate: %s", sql)
+		}
+		if len(args) != 4 {
+			t.Fatalf("args len = %d, want 4", len(args))
 		}
 		if got := args[0]; got != "u1" {
 			t.Fatalf("user id arg = %#v, want trimmed u1", got)
@@ -151,7 +165,10 @@ func TestPGStore_UpsertUserMemoryEncodesDefensiveCopyAndUpserts(t *testing.T) {
 		if got := args[2].(time.Time); !got.Equal(updatedAt) {
 			t.Fatalf("updated_at arg = %v, want %v", got, updatedAt)
 		}
-		return nil
+		if got := args[3].(int64); got != 4 {
+			t.Fatalf("row_version arg = %d, want 4", got)
+		}
+		return 1, nil
 	})
 	if err != nil {
 		t.Fatalf("upsert: %v", err)
@@ -168,6 +185,24 @@ func TestPGStore_UpsertUserMemoryEncodesDefensiveCopyAndUpserts(t *testing.T) {
 	if stored.UserID != "u1" || stored.Strengths[0] != "原始强项" || stored.SkillScores["redis"] != 62 {
 		t.Fatalf("stored memory was not a defensive copy: %+v", stored)
 	}
+	if stored.RowVersion != 0 {
+		t.Fatalf("stored JSON should not include row_version, got %+v", stored)
+	}
+}
+
+func TestPGStore_UpsertUserMemoryMapsZeroRowsToConflict(t *testing.T) {
+	store := NewPGStore(nil).(*PGStore)
+	err := store.upsertWithExec(context.Background(), &UserMemory{
+		UserID:      "u1",
+		SkillScores: map[string]float64{"go": 80},
+		UpdatedAt:   time.Date(2026, 6, 6, 12, 0, 0, 0, time.UTC),
+		RowVersion:  3,
+	}, func(ctx context.Context, sql string, args ...any) (int64, error) {
+		return 0, nil
+	})
+	if !errors.Is(err, ErrUserMemoryConflict) {
+		t.Fatalf("err = %v, want ErrUserMemoryConflict", err)
+	}
 }
 
 func TestIntegration_PGStore_SaveGet(t *testing.T) {
@@ -178,7 +213,8 @@ func TestIntegration_PGStore_SaveGet(t *testing.T) {
 CREATE TABLE IF NOT EXISTS user_memory (
 	user_id text PRIMARY KEY,
 	memory_json jsonb NOT NULL,
-	updated_at timestamptz NOT NULL DEFAULT now()
+	updated_at timestamptz NOT NULL DEFAULT now(),
+	row_version bigint NOT NULL DEFAULT 1
 )`); err != nil {
 		t.Fatalf("ensure table: %v", err)
 	}
