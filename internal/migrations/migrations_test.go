@@ -237,3 +237,16 @@ func TestQuestionBankImportLeaseMigration(t *testing.T) {
 		t.Fatal("import lease migration should add lease index")
 	}
 }
+
+func TestSessionRowVersionMigration(t *testing.T) {
+	up := read(t, "010_session_row_version.up.sql")
+	down := read(t, "010_session_row_version.down.sql")
+	for _, token := range []string{"sessions", "row_version", "bigint", "DEFAULT 1"} {
+		if !strings.Contains(up, token) {
+			t.Fatalf("session row version migration missing %q", token)
+		}
+	}
+	if !strings.Contains(down, "DROP COLUMN IF EXISTS row_version") {
+		t.Fatal("session row version down migration should drop row_version column")
+	}
+}

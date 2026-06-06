@@ -8,11 +8,31 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"interview-agent/internal/domain"
 )
+
+type fakePGSessionRow struct {
+	rowVersion int64
+	err        error
+}
+
+func (r fakePGSessionRow) Scan(dest ...any) error {
+	if r.err != nil {
+		return r.err
+	}
+	if len(dest) != 1 {
+		return errors.New("unexpected scan destination count")
+	}
+	ptr, ok := dest[0].(*int64)
+	if !ok {
+		return errors.New("unexpected scan destination type")
+	}
+	*ptr = r.rowVersion
+	return nil
+}
 
 func skipIfNoPGStoreIntegration(t *testing.T) {
 	t.Helper()
@@ -119,25 +139,35 @@ func TestPGInterval_DefaultsWhenNonPositive(t *testing.T) {
 	}
 }
 
-func TestPGSessionStore_SaveWithExecRejectsStaleWrite(t *testing.T) {
+func TestPGSessionStore_SaveWithQueryRowRejectsStaleWrite(t *testing.T) {
 	store := NewPGSessionStore(nil, time.Hour)
-	err := store.saveWithExec(context.Background(), &domain.Session{
-		ID:        "stale",
-		UserID:    "u1",
-		Status:    domain.StatusRunning,
-		UpdatedAt: time.Now(),
-	}, func(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-		if !strings.Contains(sql, "sessions.state_json->>'updated_at'") {
-			t.Fatalf("upsert SQL missing state_json updated_at guard: %s", sql)
+	err := store.saveWithQueryRow(context.Background(), &domain.Session{
+		ID:         "stale",
+		UserID:     "u1",
+		Status:     domain.StatusRunning,
+		UpdatedAt:  time.Now(),
+		RowVersion: 3,
+	}, func(ctx context.Context, sql string, args ...any) pgSessionRow {
+		if !strings.Contains(sql, "WHERE sessions.row_version = $8") {
+			t.Fatalf("upsert SQL missing row_version guard: %s", sql)
 		}
-		return pgconn.NewCommandTag("UPDATE 0"), nil
+		if !strings.Contains(sql, "row_version = sessions.row_version + 1") {
+			t.Fatalf("upsert SQL should increment row_version: %s", sql)
+		}
+		if len(args) != 8 {
+			t.Fatalf("args len = %d, want 8", len(args))
+		}
+		if got := args[7]; got != int64(3) {
+			t.Fatalf("row_version arg = %#v, want 3", got)
+		}
+		return fakePGSessionRow{err: pgx.ErrNoRows}
 	})
 	if !errors.Is(err, ErrStaleSessionWrite) {
 		t.Fatalf("err = %v, want ErrStaleSessionWrite", err)
 	}
 }
 
-func TestPGSessionStore_SaveWithExecFillsZeroUpdatedAt(t *testing.T) {
+func TestPGSessionStore_SaveWithQueryRowFillsZeroUpdatedAtAndRowVersion(t *testing.T) {
 	store := NewPGSessionStore(nil, time.Hour)
 	sess := &domain.Session{
 		ID:     "zero-updated",
@@ -145,14 +175,17 @@ func TestPGSessionStore_SaveWithExecFillsZeroUpdatedAt(t *testing.T) {
 		Status: domain.StatusRunning,
 	}
 
-	if err := store.saveWithExec(context.Background(), sess, func(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-		if len(args) != 7 {
-			t.Fatalf("args len = %d, want 7", len(args))
+	if err := store.saveWithQueryRow(context.Background(), sess, func(ctx context.Context, sql string, args ...any) pgSessionRow {
+		if len(args) != 8 {
+			t.Fatalf("args len = %d, want 8", len(args))
 		}
 		if _, ok := args[6].(time.Time); !ok {
 			t.Fatalf("updated_at arg type = %T", args[6])
 		}
-		return pgconn.NewCommandTag("INSERT 0 1"), nil
+		if got := args[7]; got != int64(0) {
+			t.Fatalf("initial row_version arg = %#v, want 0", got)
+		}
+		return fakePGSessionRow{rowVersion: 1}
 	}); err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -162,20 +195,56 @@ func TestPGSessionStore_SaveWithExecFillsZeroUpdatedAt(t *testing.T) {
 	if sess.CreatedAt.IsZero() {
 		t.Fatal("CreatedAt should be filled with zero UpdatedAt")
 	}
+	if sess.RowVersion != 1 {
+		t.Fatalf("RowVersion = %d, want 1", sess.RowVersion)
+	}
 }
 
-func TestPGSessionStore_SaveWithExecPropagatesExecError(t *testing.T) {
+func TestPGSessionStore_SaveWithQueryRowPropagatesQueryError(t *testing.T) {
 	store := NewPGSessionStore(nil, time.Hour)
 	dbErr := errors.New("db down")
-	err := store.saveWithExec(context.Background(), &domain.Session{
-		ID:        "exec-error",
-		UserID:    "u1",
-		Status:    domain.StatusRunning,
-		UpdatedAt: time.Now(),
-	}, func(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
-		return pgconn.CommandTag{}, dbErr
+	err := store.saveWithQueryRow(context.Background(), &domain.Session{
+		ID:         "exec-error",
+		UserID:     "u1",
+		Status:     domain.StatusRunning,
+		UpdatedAt:  time.Now(),
+		RowVersion: 2,
+	}, func(ctx context.Context, sql string, args ...any) pgSessionRow {
+		return fakePGSessionRow{err: dbErr}
 	})
 	if !errors.Is(err, dbErr) {
 		t.Fatalf("err = %v, want dbErr", err)
+	}
+}
+
+func TestPGSessionStore_SaveWithQueryRowUsesReturnedVersionForNextSave(t *testing.T) {
+	store := NewPGSessionStore(nil, time.Hour)
+	sess := &domain.Session{
+		ID:         "versioned",
+		UserID:     "u1",
+		Status:     domain.StatusRunning,
+		UpdatedAt:  time.Now(),
+		RowVersion: 1,
+	}
+	var seenVersions []int64
+
+	for _, returnedVersion := range []int64{2, 3} {
+		if err := store.saveWithQueryRow(context.Background(), sess, func(ctx context.Context, sql string, args ...any) pgSessionRow {
+			v, ok := args[7].(int64)
+			if !ok {
+				t.Fatalf("row_version arg type = %T", args[7])
+			}
+			seenVersions = append(seenVersions, v)
+			return fakePGSessionRow{rowVersion: returnedVersion}
+		}); err != nil {
+			t.Fatalf("save returned version %d: %v", returnedVersion, err)
+		}
+	}
+
+	if got, want := seenVersions, []int64{1, 2}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("seen row versions = %v, want %v", got, want)
+	}
+	if sess.RowVersion != 3 {
+		t.Fatalf("RowVersion = %d, want 3", sess.RowVersion)
 	}
 }

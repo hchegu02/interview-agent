@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"interview-agent/internal/domain"
@@ -22,21 +21,27 @@ func NewPGSessionStore(pool *pgxpool.Pool, ttl time.Duration) *PGSessionStore {
 	return &PGSessionStore{Pool: pool, TTL: ttl}
 }
 
-type pgSessionExec func(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+type pgSessionQueryRow func(ctx context.Context, sql string, args ...any) pgSessionRow
+
+type pgSessionRow interface {
+	Scan(dest ...any) error
+}
 
 func (s *PGSessionStore) Save(ctx context.Context, sess *domain.Session) error {
 	if s == nil || s.Pool == nil {
 		return fmt.Errorf("pg session store: pool not initialized")
 	}
-	return s.saveWithExec(ctx, sess, s.Pool.Exec)
+	return s.saveWithQueryRow(ctx, sess, func(ctx context.Context, sql string, args ...any) pgSessionRow {
+		return s.Pool.QueryRow(ctx, sql, args...)
+	})
 }
 
-func (s *PGSessionStore) saveWithExec(ctx context.Context, sess *domain.Session, exec pgSessionExec) error {
+func (s *PGSessionStore) saveWithQueryRow(ctx context.Context, sess *domain.Session, queryRow pgSessionQueryRow) error {
 	if sess == nil || sess.ID == "" {
 		return fmt.Errorf("pg session store: session id required")
 	}
-	if exec == nil {
-		return fmt.Errorf("pg session store: exec required")
+	if queryRow == nil {
+		return fmt.Errorf("pg session store: query row required")
 	}
 	ensureSessionUpdatedAt(sess)
 	raw, err := json.Marshal(sess)
@@ -47,28 +52,32 @@ func (s *PGSessionStore) saveWithExec(ctx context.Context, sess *domain.Session,
 	if ttl <= 0 {
 		ttl = 24 * time.Hour
 	}
-	tag, err := exec(ctx, pgSessionUpsertSQL,
-		sess.ID, sess.UserID, string(sess.Status), sess.CurrentNode, string(raw), pgInterval(ttl), sess.UpdatedAt)
+	var rowVersion int64
+	err = queryRow(ctx, pgSessionUpsertSQL,
+		sess.ID, sess.UserID, string(sess.Status), sess.CurrentNode, string(raw), pgInterval(ttl), sess.UpdatedAt, sess.RowVersion).Scan(&rowVersion)
 	if err != nil {
+		if err == pgx.ErrNoRows {
+			return fmt.Errorf("%w: %q", ErrStaleSessionWrite, sess.ID)
+		}
 		return fmt.Errorf("upsert session: %w", err)
 	}
-	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("%w: %q", ErrStaleSessionWrite, sess.ID)
-	}
+	sess.RowVersion = rowVersion
 	return nil
 }
 
 const pgSessionUpsertSQL = `
-INSERT INTO sessions (id, user_id, status, current_node, state_json, expires_at, updated_at)
-VALUES ($1, $2, $3, $4, $5::jsonb, now() + $6::interval, $7)
+INSERT INTO sessions (id, user_id, status, current_node, state_json, expires_at, updated_at, row_version)
+VALUES ($1, $2, $3, $4, $5::jsonb, now() + $6::interval, $7, 1)
 ON CONFLICT (id) DO UPDATE SET
 	user_id = EXCLUDED.user_id,
 	status = EXCLUDED.status,
 	current_node = EXCLUDED.current_node,
 	state_json = EXCLUDED.state_json,
 	expires_at = EXCLUDED.expires_at,
-	updated_at = EXCLUDED.updated_at
-WHERE COALESCE((sessions.state_json->>'updated_at')::timestamptz, sessions.updated_at) <= EXCLUDED.updated_at`
+	updated_at = EXCLUDED.updated_at,
+	row_version = sessions.row_version + 1
+WHERE sessions.row_version = $8
+RETURNING row_version`
 
 func ensureSessionUpdatedAt(sess *domain.Session) {
 	if sess == nil || !sess.UpdatedAt.IsZero() {
@@ -86,7 +95,8 @@ func (s *PGSessionStore) Get(ctx context.Context, id string) (*domain.Session, e
 		return nil, fmt.Errorf("pg session store: pool not initialized")
 	}
 	var raw []byte
-	err := s.Pool.QueryRow(ctx, `SELECT state_json FROM sessions WHERE id = $1`, id).Scan(&raw)
+	var rowVersion int64
+	err := s.Pool.QueryRow(ctx, `SELECT state_json, row_version FROM sessions WHERE id = $1`, id).Scan(&raw, &rowVersion)
 	if err != nil {
 		if err == pgx.ErrNoRows {
 			return nil, fmt.Errorf("%w: %q", ErrSessionNotFound, id)
@@ -97,6 +107,7 @@ func (s *PGSessionStore) Get(ctx context.Context, id string) (*domain.Session, e
 	if err := json.Unmarshal(raw, &sess); err != nil {
 		return nil, fmt.Errorf("unmarshal session: %w", err)
 	}
+	sess.RowVersion = rowVersion
 	sess.MigrateLegacyState()
 	return &sess, nil
 }
@@ -107,7 +118,7 @@ func (s *PGSessionStore) ListByUser(ctx context.Context, userID string, limit in
 	}
 	limit = normalizeSessionListLimit(limit)
 	rows, err := s.Pool.Query(ctx, `
-SELECT state_json
+SELECT state_json, row_version
 FROM sessions
 WHERE user_id = $1
 ORDER BY updated_at DESC
@@ -120,13 +131,15 @@ LIMIT $2`, userID, limit)
 	var out []*domain.Session
 	for rows.Next() {
 		var raw []byte
-		if err := rows.Scan(&raw); err != nil {
+		var rowVersion int64
+		if err := rows.Scan(&raw, &rowVersion); err != nil {
 			return nil, fmt.Errorf("scan session: %w", err)
 		}
 		var sess domain.Session
 		if err := json.Unmarshal(raw, &sess); err != nil {
 			return nil, fmt.Errorf("unmarshal session: %w", err)
 		}
+		sess.RowVersion = rowVersion
 		sess.MigrateLegacyState()
 		out = append(out, &sess)
 	}

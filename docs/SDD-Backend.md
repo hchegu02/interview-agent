@@ -215,6 +215,7 @@ rerank 用于：
 存储设计要求：
 
 - Session JSON 字段新增必须兼容老数据。
+- PG `sessions.row_version` 是 Session 乐观锁的权威版本，`state_json.row_version` 只作为运行时载体，读取时以表列覆盖。
 - PostgreSQL 和 Redis 是增强能力，不应破坏默认本地模式。
 - Redis lease 和事件流服务于多实例协调，但不能替代 Session 事实源。
 
@@ -343,8 +344,8 @@ type Suspension struct {
 - 默认暂停类型先使用 `answer`，人工确认、工具审批和题目确认后续按节点语义写入。
 - `Payload` 当前只做 HTTP 响应层 map 拷贝；如果后续放入嵌套结构，需要补深层 clone 或改成明确 schema。
 - `CurrentNode` 仍是兼容字段，不能立即删除，否则会破坏旧 Session 恢复。
-- PG Session Store 已通过 `updated_at` stale write guard 拒绝明显旧快照覆盖新状态。
-- lease heartbeat、强 fencing token / row version 和 Redis Streams 精确裁剪检测尚未实现，后续单独设计。
+- PG Session Store 已通过 `sessions.row_version` CAS 拒绝旧快照覆盖新状态；`updated_at` 保留为展示、排序和旧数据兼容字段。
+- lease heartbeat、强 Redis fencing token 和 Redis Streams 精确裁剪检测尚未实现，后续单独设计。
 
 收益：
 

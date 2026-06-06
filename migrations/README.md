@@ -17,6 +17,8 @@
 | `006_question_bank_import_lease.up.sql` | 给导入 job 增加 owner_id / lease_until，支持异步任务恢复 |
 | `007_question_bank_import_review_status.up.sql` | 给导入 item 增加人工 accept / reject 状态 |
 | `008_question_bank_import_field_provenance.up.sql` | 给导入 item 增加 field_provenance，追踪字段来源 |
+| `009_question_bank_content_trgm.up.sql` | 给题库内容增加 trigram GIN 索引，提升关键词检索 |
+| `010_session_row_version.up.sql` | 给 sessions 增加 row_version，支持 PG 乐观锁写入 |
 | `seed_question_bank.sql` | 演示种子数据（15 道题），不走版本控制，可重复执行 |
 
 ## 本地开发：用 docker-compose 跑
@@ -54,7 +56,31 @@ psql "postgres://interview:interview@localhost:5432/interview" \
 psql "postgres://interview:interview@localhost:5432/interview" \
     -v ON_ERROR_STOP=1 \
     -f migrations/008_question_bank_import_field_provenance.up.sql
+psql "postgres://interview:interview@localhost:5432/interview" \
+    -v ON_ERROR_STOP=1 \
+    -f migrations/009_question_bank_content_trgm.up.sql
+psql "postgres://interview:interview@localhost:5432/interview" \
+    -v ON_ERROR_STOP=1 \
+    -f migrations/010_session_row_version.up.sql
 ```
+
+PowerShell 示例：
+
+```powershell
+$dsn = "postgres://interview:interview@localhost:5432/interview"
+psql $dsn -v ON_ERROR_STOP=1 -f migrations/001_init.up.sql
+psql $dsn -v ON_ERROR_STOP=1 -f migrations/002_question_bank_expected_points.up.sql
+psql $dsn -v ON_ERROR_STOP=1 -f migrations/003_question_bank_metadata.up.sql
+psql $dsn -v ON_ERROR_STOP=1 -f migrations/004_question_bank_imports.up.sql
+psql $dsn -v ON_ERROR_STOP=1 -f migrations/005_question_bank_embedding_status.up.sql
+psql $dsn -v ON_ERROR_STOP=1 -f migrations/006_question_bank_import_lease.up.sql
+psql $dsn -v ON_ERROR_STOP=1 -f migrations/007_question_bank_import_review_status.up.sql
+psql $dsn -v ON_ERROR_STOP=1 -f migrations/008_question_bank_import_field_provenance.up.sql
+psql $dsn -v ON_ERROR_STOP=1 -f migrations/009_question_bank_content_trgm.up.sql
+psql $dsn -v ON_ERROR_STOP=1 -f migrations/010_session_row_version.up.sql
+```
+
+`010_session_row_version.down.sql` 会删除 `sessions.row_version` 并丢失版本历史；生产回滚前应停写或确认没有并发 Session mutation。
 
 ## CI / 生产
 

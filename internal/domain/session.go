@@ -111,6 +111,12 @@ type Session struct {
 	// PG/Redis 恢复后也靠它判断用户最近一次操作。
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+
+	// RowVersion 是 PG Session Store 的乐观锁版本。
+	// 表列 sessions.row_version 是权威值；这里保存 expected/new version，
+	// 用于防止旧快照覆盖新状态。它不进入 state_json / Redis snapshot，
+	// 避免形成落后一版的非权威副本。
+	RowVersion int64 `json:"-"`
 }
 
 // CurrentRound 返回最近一个未完成的 Round，没有就返回 nil。
