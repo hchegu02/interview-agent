@@ -23,6 +23,11 @@ type UserMemoryOwnerResolver func(*http.Request) (UserMemoryOwner, error)
 
 type UserMemoryAuthorizer func(owner UserMemoryOwner, targetUserID string) bool
 
+type UserMemoryOwnerResolverOptions struct {
+	TrustedHeader    string
+	AllowDevFallback bool
+}
+
 type userMemoryResponse struct {
 	UserID      string             `json:"user_id"`
 	Strengths   []string           `json:"strengths,omitempty"`
@@ -45,6 +50,21 @@ func (s *Server) SetUserMemoryOwnerResolver(resolver UserMemoryOwnerResolver) {
 
 func (s *Server) SetUserMemoryAuthorizer(authorizer UserMemoryAuthorizer) {
 	s.userMemoryAuthorizer = authorizer
+}
+
+func NewUserMemoryOwnerResolver(opts UserMemoryOwnerResolverOptions) UserMemoryOwnerResolver {
+	trustedHeader := strings.TrimSpace(opts.TrustedHeader)
+	return func(r *http.Request) (UserMemoryOwner, error) {
+		if trustedHeader != "" {
+			if userID := strings.TrimSpace(r.Header.Get(trustedHeader)); userID != "" {
+				return UserMemoryOwner{UserID: userID, Authenticated: true}, nil
+			}
+		}
+		if opts.AllowDevFallback {
+			return defaultUserMemoryOwnerResolver(r)
+		}
+		return UserMemoryOwner{}, errors.New("trusted user memory owner is required")
+	}
 }
 
 func (s *Server) getUserMemory(c *gin.Context) {

@@ -80,6 +80,36 @@ func TestGetUserMemory_RejectsNonOwner(t *testing.T) {
 	}
 }
 
+func TestGetUserMemory_RejectsNonOwnerWithTrustedHeaderResolver(t *testing.T) {
+	store := memory.NewMemoryStore()
+	if err := store.UpsertUserMemory(context.Background(), &memory.UserMemory{
+		UserID:      "u-owner",
+		Strengths:   []string{"Go"},
+		SkillScores: map[string]float64{"go": 82},
+		UpdatedAt:   time.Date(2026, 6, 6, 10, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("upsert memory: %v", err)
+	}
+	svc := NewInterviewService(fakeInterviewRunner{})
+	svc.SetMemoryStore(store)
+	server := NewServerWithInterview(&config.Config{}, svc)
+	server.SetUserMemoryOwnerResolver(NewUserMemoryOwnerResolver(UserMemoryOwnerResolverOptions{
+		TrustedHeader: "X-Internal-User",
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/users/u-owner/memory", nil)
+	req.Header.Set("X-Internal-User", "u-other")
+	server.Router().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "Go") {
+		t.Fatalf("forbidden response leaked profile: %s", rec.Body.String())
+	}
+}
+
 func TestGetUserMemory_RequiresOwner(t *testing.T) {
 	svc := NewInterviewService(fakeInterviewRunner{})
 	svc.SetMemoryStore(memory.NewMemoryStore())
@@ -91,6 +121,57 @@ func TestGetUserMemory_RequiresOwner(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGetUserMemory_RequiresTrustedOwnerWhenDevFallbackDisabled(t *testing.T) {
+	svc := NewInterviewService(fakeInterviewRunner{})
+	svc.SetMemoryStore(memory.NewMemoryStore())
+	server := NewServerWithInterview(&config.Config{}, svc)
+	server.SetUserMemoryOwnerResolver(NewUserMemoryOwnerResolver(UserMemoryOwnerResolverOptions{
+		TrustedHeader: "X-Internal-User",
+	}))
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/users/u-owner/memory?owner_user_id=u-owner", nil)
+	req.Header.Set("X-User-ID", "u-owner")
+	server.Router().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestNewUserMemoryOwnerResolverUsesTrustedHeader(t *testing.T) {
+	resolver := NewUserMemoryOwnerResolver(UserMemoryOwnerResolverOptions{
+		TrustedHeader: "X-Internal-User",
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/users/u1/memory?owner_user_id=u-dev", nil)
+	req.Header.Set("X-Internal-User", "u1")
+	req.Header.Set("X-User-ID", "u-dev")
+
+	owner, err := resolver(req)
+	if err != nil {
+		t.Fatalf("resolve owner: %v", err)
+	}
+	if owner.UserID != "u1" || !owner.Authenticated {
+		t.Fatalf("owner = %+v, want trusted header u1", owner)
+	}
+}
+
+func TestNewUserMemoryOwnerResolverAllowsDevFallbackWhenConfigured(t *testing.T) {
+	resolver := NewUserMemoryOwnerResolver(UserMemoryOwnerResolverOptions{
+		TrustedHeader:    "X-Internal-User",
+		AllowDevFallback: true,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/api/users/u1/memory?owner_user_id=u1", nil)
+
+	owner, err := resolver(req)
+	if err != nil {
+		t.Fatalf("resolve owner: %v", err)
+	}
+	if owner.UserID != "u1" || !owner.Authenticated {
+		t.Fatalf("owner = %+v, want dev fallback u1", owner)
 	}
 }
 

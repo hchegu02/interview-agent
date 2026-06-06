@@ -74,6 +74,7 @@ func main() {
 	server := httpapi.NewServer(cfg)
 	server.SetEventHubMetrics(eventHubMetricsProvider(events))
 	server.SetAgentService(buildAgentService())
+	server.SetUserMemoryOwnerResolver(buildUserMemoryOwnerResolver(cfg))
 
 	// ProfileAnalyzer 是“开始面试前的 JD/简历解释”能力。
 	// 它和真正的面试 Graph 分开装配，避免用户只点分析时也创建 session。
@@ -183,4 +184,16 @@ func shutdownServer(ctx context.Context, srv *http.Server, questionImports inter
 
 func buildAgentService() *agent.Service {
 	return agent.NewDefaultService()
+}
+
+func buildUserMemoryOwnerResolver(cfg *config.Config) httpapi.UserMemoryOwnerResolver {
+	if cfg != nil && cfg.InternalTrial.Enabled {
+		return httpapi.NewUserMemoryOwnerResolver(httpapi.UserMemoryOwnerResolverOptions{
+			TrustedHeader:    cfg.InternalTrial.OwnerHeader,
+			AllowDevFallback: cfg.InternalTrial.AllowDevFallback,
+		})
+	}
+	return httpapi.NewUserMemoryOwnerResolver(httpapi.UserMemoryOwnerResolverOptions{
+		AllowDevFallback: true,
+	})
 }

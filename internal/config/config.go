@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -20,6 +21,8 @@ type Config struct {
 	Embedding EmbeddingConfig `yaml:"embedding"`
 	Rerank    RerankConfig    `yaml:"rerank"`
 	RateLimit RateLimitConfig `yaml:"rate_limit"`
+
+	InternalTrial InternalTrialConfig `yaml:"internal_trial"`
 
 	// 敏感字段：yaml:"-" 防止序列化时泄漏；Load 会按规则单独注入。
 	PostgresDSN     string `yaml:"-"`
@@ -93,6 +96,14 @@ type RateLimitConfig struct {
 	GlobalBurst  int     `yaml:"global_burst"`
 }
 
+type InternalTrialConfig struct {
+	Enabled          bool   `yaml:"enabled"`
+	OwnerHeader      string `yaml:"owner_header"`
+	AllowDevFallback bool   `yaml:"allow_dev_fallback"`
+	GitHubToolMode   string `yaml:"github_tool_mode"` // mock | real
+	GitHubAPIBaseURL string `yaml:"github_api_base_url"`
+}
+
 // Load 读取 YAML 并把敏感字段从环境变量注入。
 // 优先级：env > yaml > default。
 func Load(path string) (*Config, error) {
@@ -159,6 +170,29 @@ func Load(path string) (*Config, error) {
 	}
 	if v := os.Getenv("INTERVIEW_IMPORT_SPOOL_DIR"); v != "" {
 		cfg.Server.ImportSpoolDir = v
+	}
+	if v := os.Getenv("INTERVIEW_INTERNAL_TRIAL_ENABLED"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid INTERVIEW_INTERNAL_TRIAL_ENABLED %q: %w", v, err)
+		}
+		cfg.InternalTrial.Enabled = enabled
+	}
+	if v := os.Getenv("INTERVIEW_INTERNAL_TRIAL_OWNER_HEADER"); v != "" {
+		cfg.InternalTrial.OwnerHeader = v
+	}
+	if v := os.Getenv("INTERVIEW_INTERNAL_TRIAL_ALLOW_DEV_FALLBACK"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("invalid INTERVIEW_INTERNAL_TRIAL_ALLOW_DEV_FALLBACK %q: %w", v, err)
+		}
+		cfg.InternalTrial.AllowDevFallback = enabled
+	}
+	if v := os.Getenv("INTERVIEW_INTERNAL_TRIAL_GITHUB_TOOL_MODE"); v != "" {
+		cfg.InternalTrial.GitHubToolMode = v
+	}
+	if v := os.Getenv("INTERVIEW_INTERNAL_TRIAL_GITHUB_API_BASE_URL"); v != "" {
+		cfg.InternalTrial.GitHubAPIBaseURL = v
 	}
 
 	if err := cfg.validate(); err != nil {
@@ -232,6 +266,13 @@ func defaults() *Config {
 			GlobalQPS:    20,
 			GlobalBurst:  40,
 		},
+		InternalTrial: InternalTrialConfig{
+			Enabled:          false,
+			OwnerHeader:      "X-Internal-User",
+			AllowDevFallback: false,
+			GitHubToolMode:   "mock",
+			GitHubAPIBaseURL: "https://api.github.com",
+		},
 	}
 }
 
@@ -270,6 +311,12 @@ func (c *Config) validate() error {
 	}
 	if c.RateLimit.Backend != "local" && c.RateLimit.Backend != "redis_lua" {
 		return fmt.Errorf("invalid rate_limit.backend %q", c.RateLimit.Backend)
+	}
+	if c.InternalTrial.GitHubToolMode != "mock" && c.InternalTrial.GitHubToolMode != "real" {
+		return fmt.Errorf("invalid internal_trial.github_tool_mode %q (must be mock|real)", c.InternalTrial.GitHubToolMode)
+	}
+	if c.InternalTrial.Enabled && strings.TrimSpace(c.InternalTrial.OwnerHeader) == "" {
+		return fmt.Errorf("internal_trial.owner_header is required when internal trial is enabled")
 	}
 	return nil
 }

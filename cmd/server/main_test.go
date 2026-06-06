@@ -519,6 +519,101 @@ func TestBuildAgentService_ProjectPolishUsesMockTool(t *testing.T) {
 	}
 }
 
+func TestBuildUserMemoryOwnerResolverUsesInternalTrialHeader(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.InternalTrial.Enabled = true
+	cfg.InternalTrial.OwnerHeader = "X-Internal-User"
+
+	resolver := buildUserMemoryOwnerResolver(cfg)
+	req := httptest.NewRequest(http.MethodGet, "/api/users/u1/memory", nil)
+	req.Header.Set("X-Internal-User", "u1")
+
+	owner, err := resolver(req)
+	if err != nil {
+		t.Fatalf("resolve owner: %v", err)
+	}
+	if owner.UserID != "u1" || !owner.Authenticated {
+		t.Fatalf("owner = %+v, want authenticated u1", owner)
+	}
+}
+
+func TestBuildUserMemoryOwnerResolverRejectsDevFallbackInInternalTrial(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.InternalTrial.Enabled = true
+	cfg.InternalTrial.OwnerHeader = "X-Internal-User"
+
+	resolver := buildUserMemoryOwnerResolver(cfg)
+	req := httptest.NewRequest(http.MethodGet, "/api/users/u1/memory?owner_user_id=u1", nil)
+	req.Header.Set("X-User-ID", "u1")
+
+	if _, err := resolver(req); err == nil {
+		t.Fatal("resolve owner succeeded with dev fallback in internal trial, want error")
+	}
+}
+
+func TestBuildUserMemoryOwnerResolverAllowsExplicitDevFallbackInInternalTrial(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.InternalTrial.Enabled = true
+	cfg.InternalTrial.OwnerHeader = "X-Internal-User"
+	cfg.InternalTrial.AllowDevFallback = true
+
+	resolver := buildUserMemoryOwnerResolver(cfg)
+	req := httptest.NewRequest(http.MethodGet, "/api/users/u1/memory?owner_user_id=u1", nil)
+
+	owner, err := resolver(req)
+	if err != nil {
+		t.Fatalf("resolve owner: %v", err)
+	}
+	if owner.UserID != "u1" || !owner.Authenticated {
+		t.Fatalf("owner = %+v, want dev fallback owner u1", owner)
+	}
+}
+
+func TestConfigLoadInternalTrialEnvOverrides(t *testing.T) {
+	t.Setenv("INTERVIEW_INTERNAL_TRIAL_ENABLED", "true")
+	t.Setenv("INTERVIEW_INTERNAL_TRIAL_OWNER_HEADER", "X-Trial-Owner")
+	t.Setenv("INTERVIEW_INTERNAL_TRIAL_ALLOW_DEV_FALLBACK", "true")
+	t.Setenv("INTERVIEW_INTERNAL_TRIAL_GITHUB_TOOL_MODE", "real")
+	t.Setenv("INTERVIEW_INTERNAL_TRIAL_GITHUB_API_BASE_URL", "https://github.example/api")
+
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if !cfg.InternalTrial.Enabled {
+		t.Fatal("internal trial should be enabled")
+	}
+	if cfg.InternalTrial.OwnerHeader != "X-Trial-Owner" {
+		t.Fatalf("owner header = %q", cfg.InternalTrial.OwnerHeader)
+	}
+	if !cfg.InternalTrial.AllowDevFallback {
+		t.Fatal("allow dev fallback should be true")
+	}
+	if cfg.InternalTrial.GitHubToolMode != "real" {
+		t.Fatalf("github tool mode = %q", cfg.InternalTrial.GitHubToolMode)
+	}
+	if cfg.InternalTrial.GitHubAPIBaseURL != "https://github.example/api" {
+		t.Fatalf("github api base url = %q", cfg.InternalTrial.GitHubAPIBaseURL)
+	}
+}
+
+func TestConfigLoadRejectsInvalidInternalTrialGitHubToolMode(t *testing.T) {
+	t.Setenv("INTERVIEW_INTERNAL_TRIAL_GITHUB_TOOL_MODE", "live")
+
+	if _, err := config.Load(""); err == nil || !strings.Contains(err.Error(), "internal_trial.github_tool_mode") {
+		t.Fatalf("load error = %v, want internal trial github tool mode validation", err)
+	}
+}
+
+func TestConfigLoadRejectsEnabledInternalTrialWithoutOwnerHeader(t *testing.T) {
+	t.Setenv("INTERVIEW_INTERNAL_TRIAL_ENABLED", "true")
+	t.Setenv("INTERVIEW_INTERNAL_TRIAL_OWNER_HEADER", " ")
+
+	if _, err := config.Load(""); err == nil || !strings.Contains(err.Error(), "internal_trial.owner_header") {
+		t.Fatalf("load error = %v, want owner header validation", err)
+	}
+}
+
 func TestShutdownServerClosesQuestionBankImportService(t *testing.T) {
 	imports := questionbank.NewImportService(questionbank.ImportServiceDeps{
 		Imports: questionbank.NewMemoryImportStore(),
