@@ -156,10 +156,18 @@ type CandidateProfile struct {
 // RetrievalTrace 是一次 RAG 检索的可序列化审计信息。
 // 结构刻意镜像 retriever.RetrievalTrace，但放在 domain 包避免领域模型依赖检索实现包。
 type RetrievalTrace struct {
-	Query           string                 `json:"query"`
-	Stages          []RetrievalStageTrace  `json:"stages,omitempty"`
-	Final           []RetrievalResultTrace `json:"final,omitempty"`
-	FallbackReasons []string               `json:"fallback_reasons,omitempty"`
+	Query                string                 `json:"query"`
+	OriginalQuery        string                 `json:"original_query,omitempty"`
+	RewrittenQuery       string                 `json:"rewritten_query,omitempty"`
+	QueryRewriteReason   string                 `json:"query_rewrite_reason,omitempty"`
+	QueryRewriteFallback string                 `json:"query_rewrite_fallback,omitempty"`
+	HyDEMode             string                 `json:"hyde_mode,omitempty"`
+	HyDEStatus           string                 `json:"hyde_status,omitempty"`
+	HyDEFallback         string                 `json:"hyde_fallback,omitempty"`
+	HyDETextHash         string                 `json:"hyde_text_hash,omitempty"`
+	Stages               []RetrievalStageTrace  `json:"stages,omitempty"`
+	Final                []RetrievalResultTrace `json:"final,omitempty"`
+	FallbackReasons      []string               `json:"fallback_reasons,omitempty"`
 }
 
 // RetrievalStageTrace 是单个检索阶段的诊断信息。

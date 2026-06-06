@@ -122,8 +122,16 @@ type ResultTrace struct {
 
 // RetrievalTrace 记录一次检索请求的阶段路径和最终结果。
 type RetrievalTrace struct {
-	Query           string        `json:"query"`
-	Stages          []StageTrace  `json:"stages"`
-	Final           []ResultTrace `json:"final"`
-	FallbackReasons []string      `json:"fallback_reasons,omitempty"`
+	Query                string        `json:"query"`
+	OriginalQuery        string        `json:"original_query,omitempty"`
+	RewrittenQuery       string        `json:"rewritten_query,omitempty"`
+	QueryRewriteReason   string        `json:"query_rewrite_reason,omitempty"`
+	QueryRewriteFallback string        `json:"query_rewrite_fallback,omitempty"`
+	HyDEMode             string        `json:"hyde_mode,omitempty"`
+	HyDEStatus           string        `json:"hyde_status,omitempty"`
+	HyDEFallback         string        `json:"hyde_fallback,omitempty"`
+	HyDETextHash         string        `json:"hyde_text_hash,omitempty"`
+	Stages               []StageTrace  `json:"stages"`
+	Final                []ResultTrace `json:"final"`
+	FallbackReasons      []string      `json:"fallback_reasons,omitempty"`
 }

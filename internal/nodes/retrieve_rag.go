@@ -2,6 +2,8 @@ package nodes
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 	"time"
@@ -15,6 +17,35 @@ import (
 
 type retrievalSearcher interface {
 	Search(context.Context, retriever.Query) (retriever.PipelineResult, error)
+}
+
+type QueryRewriter interface {
+	RewriteQuery(context.Context, QueryRewriteInput) (QueryRewriteResult, error)
+}
+
+type QueryRewriteInput struct {
+	Query              string
+	JobTitle           string
+	Tags               []string
+	TargetDifficulty   int
+	QuestionBankFilter *domain.QuestionBankFilter
+	Locale             string
+}
+
+type QueryRewriteResult struct {
+	RewrittenQuery string
+	NormalizedTags []string
+	Reason         string
+}
+
+type HyDEGenerator interface {
+	GenerateHyDE(context.Context, HyDEInput) (string, error)
+}
+
+type HyDEInput struct {
+	Query            string
+	Tags             []string
+	TargetDifficulty int
 }
 
 // retrieve_rag 节点设计：
@@ -71,6 +102,9 @@ type RetrieveRAGOptions struct {
 	VectorCandidates int // SQL 召回 vector 候选数，默认 K*5
 	TagCandidates    int // SQL 召回 tag 候选数，默认 K*3
 	Hook             agentkit.Hook
+	QueryRewriter    QueryRewriter
+	HyDEMode         string
+	HyDEGenerator    HyDEGenerator
 }
 
 // NewRetrieveRAGNode 构造 retrieve_rag 节点。
@@ -161,15 +195,41 @@ func NewRetrieveRAGPatchNode(
 
 		queryTags := buildQueryTags(sess.GapReport, sess.JobProfile)
 		queryText := buildQueryText(queryTags, sess.JobProfile.Title)
+		originalQueryText := queryText
+		var rewriteReason string
+		var rewriteFallback string
 		targetDiff := tuneDifficulty(resolveRAGTargetDifficulty(sess, opts.TargetDifficulty), sess.GapReport.Strategy)
+		if opts.QueryRewriter != nil {
+			rewritten, rewriteErr := opts.QueryRewriter.RewriteQuery(ctx, QueryRewriteInput{
+				Query:              originalQueryText,
+				JobTitle:           sess.JobProfile.Title,
+				Tags:               append([]string(nil), queryTags...),
+				TargetDifficulty:   targetDiff,
+				QuestionBankFilter: cloneQuestionBankFilter(sess.QuestionBankFilter),
+				Locale:             "zh-CN",
+			})
+			if rewriteErr != nil {
+				rewriteFallback = rewriteErr.Error()
+			} else if strings.TrimSpace(rewritten.RewrittenQuery) == "" {
+				rewriteFallback = "empty rewritten query"
+			} else {
+				queryText = strings.TrimSpace(rewritten.RewrittenQuery)
+				rewriteReason = strings.TrimSpace(rewritten.Reason)
+				if len(rewritten.NormalizedTags) > 0 {
+					queryTags = retriever.CanonicalizeTags(rewritten.NormalizedTags)
+				}
+			}
+		}
+		hydeStatus, hydeFallback, hydeHash := runHyDEShadow(ctx, opts.HyDEMode, opts.HyDEGenerator, queryText, queryTags, targetDiff)
 
 		// 1. Embed query
 		vectors, err := embedder.Embed(ctx, []string{queryText})
 		if err != nil || len(vectors) != 1 || len(vectors[0]) == 0 {
 			mem := workingMemoryWithDegradedReason(sess.WorkingMemory, "rag", fmt.Sprintf("embed failed: %v", err))
 			pool := cloneFallback(targetDiff, sess.QuestionBankFilter)
+			trace := retrievalDiagnosticsTrace(originalQueryText, queryText, rewriteReason, rewriteFallback, opts.HyDEMode, hydeStatus, hydeFallback, hydeHash)
 			outputSummary = fmt.Sprintf("candidate_pool=%d", len(pool))
-			return domain.StatePatch{CandidatePool: &pool, WorkingMemory: mem}, nil
+			return domain.StatePatch{CandidatePool: &pool, RetrievalTrace: trace, WorkingMemory: mem}, nil
 		}
 
 		// 2. Retrieve
@@ -188,6 +248,7 @@ func NewRetrieveRAGPatchNode(
 			TagCandidates:    opts.TagCandidates,
 		}
 		results, trace, err := retrieveWithTrace(ctx, r, query)
+		trace = annotateRetrievalTrace(trace, originalQueryText, queryText, rewriteReason, rewriteFallback, opts.HyDEMode, hydeStatus, hydeFallback, hydeHash)
 		if err != nil {
 			mem := workingMemoryWithDegradedReason(sess.WorkingMemory, "rag", fmt.Sprintf("retrieve failed: %v", err))
 			pool := cloneFallback(targetDiff, sess.QuestionBankFilter)
@@ -229,12 +290,22 @@ func retrieveWithTrace(ctx context.Context, r retriever.Retriever, q retriever.Q
 }
 
 func toDomainRetrievalTrace(trace retriever.RetrievalTrace) *domain.RetrievalTrace {
-	if trace.Query == "" && len(trace.Stages) == 0 && len(trace.Final) == 0 && len(trace.FallbackReasons) == 0 {
+	if trace.Query == "" && trace.OriginalQuery == "" && trace.RewrittenQuery == "" && trace.QueryRewriteFallback == "" &&
+		trace.HyDEMode == "" && trace.HyDEStatus == "" && trace.HyDEFallback == "" && trace.HyDETextHash == "" &&
+		len(trace.Stages) == 0 && len(trace.Final) == 0 && len(trace.FallbackReasons) == 0 {
 		return nil
 	}
 	out := &domain.RetrievalTrace{
-		Query:           trace.Query,
-		FallbackReasons: append([]string(nil), trace.FallbackReasons...),
+		Query:                trace.Query,
+		OriginalQuery:        trace.OriginalQuery,
+		RewrittenQuery:       trace.RewrittenQuery,
+		QueryRewriteReason:   trace.QueryRewriteReason,
+		QueryRewriteFallback: trace.QueryRewriteFallback,
+		HyDEMode:             trace.HyDEMode,
+		HyDEStatus:           trace.HyDEStatus,
+		HyDEFallback:         trace.HyDEFallback,
+		HyDETextHash:         trace.HyDETextHash,
+		FallbackReasons:      append([]string(nil), trace.FallbackReasons...),
 	}
 	for _, stage := range trace.Stages {
 		dst := domain.RetrievalStageTrace{
@@ -248,6 +319,69 @@ func toDomainRetrievalTrace(trace retriever.RetrievalTrace) *domain.RetrievalTra
 	}
 	out.Final = toDomainResultTrace(trace.Final)
 	return out
+}
+
+func annotateRetrievalTrace(trace *domain.RetrievalTrace, originalQuery, query, rewriteReason, rewriteFallback, hydeMode, hydeStatus, hydeFallback, hydeHash string) *domain.RetrievalTrace {
+	if trace == nil {
+		trace = retrievalDiagnosticsTrace(originalQuery, query, rewriteReason, rewriteFallback, hydeMode, hydeStatus, hydeFallback, hydeHash)
+	} else {
+		trace.OriginalQuery = originalQuery
+		if query != originalQuery {
+			trace.RewrittenQuery = query
+		}
+		trace.QueryRewriteReason = rewriteReason
+		trace.QueryRewriteFallback = rewriteFallback
+		trace.HyDEMode = hydeMode
+		trace.HyDEStatus = hydeStatus
+		trace.HyDEFallback = hydeFallback
+		trace.HyDETextHash = hydeHash
+	}
+	if trace.Query == "" {
+		trace.Query = query
+	}
+	return trace
+}
+
+func retrievalDiagnosticsTrace(originalQuery, query, rewriteReason, rewriteFallback, hydeMode, hydeStatus, hydeFallback, hydeHash string) *domain.RetrievalTrace {
+	trace := &domain.RetrievalTrace{
+		Query:                query,
+		OriginalQuery:        originalQuery,
+		QueryRewriteReason:   rewriteReason,
+		QueryRewriteFallback: rewriteFallback,
+		HyDEMode:             hydeMode,
+		HyDEStatus:           hydeStatus,
+		HyDEFallback:         hydeFallback,
+		HyDETextHash:         hydeHash,
+	}
+	if query != originalQuery {
+		trace.RewrittenQuery = query
+	}
+	return trace
+}
+
+func runHyDEShadow(ctx context.Context, mode string, generator HyDEGenerator, query string, tags []string, targetDiff int) (status, fallback, hash string) {
+	mode = strings.TrimSpace(mode)
+	if mode != "shadow" || generator == nil {
+		return "", "", ""
+	}
+	text, err := generator.GenerateHyDE(ctx, HyDEInput{
+		Query:            query,
+		Tags:             append([]string(nil), tags...),
+		TargetDifficulty: targetDiff,
+	})
+	if err != nil {
+		return "fallback", err.Error(), ""
+	}
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return "fallback", "empty hyde text", ""
+	}
+	return "shadow", "", shortTextHash(text)
+}
+
+func shortTextHash(text string) string {
+	sum := sha256.Sum256([]byte(text))
+	return hex.EncodeToString(sum[:])[:12]
 }
 
 func toDomainResultTrace(items []retriever.ResultTrace) []domain.RetrievalResultTrace {
@@ -305,6 +439,19 @@ func filterTags(filter *domain.QuestionBankFilter) []string {
 		return nil
 	}
 	return append([]string(nil), filter.Tags...)
+}
+
+func cloneQuestionBankFilter(filter *domain.QuestionBankFilter) *domain.QuestionBankFilter {
+	if filter == nil {
+		return nil
+	}
+	return &domain.QuestionBankFilter{
+		SkillCategories: append([]string(nil), filter.SkillCategories...),
+		Scenarios:       append([]string(nil), filter.Scenarios...),
+		DifficultyMin:   filter.DifficultyMin,
+		DifficultyMax:   filter.DifficultyMax,
+		Tags:            append([]string(nil), filter.Tags...),
+	}
 }
 
 // buildQueryTags 决定本次 RAG 的目标标签集。

@@ -409,6 +409,34 @@ func (r *fakePipelineRetriever) Search(ctx context.Context, q retriever.Query) (
 	return r.searchResult, r.searchErr
 }
 
+type fixedQueryRewriter struct {
+	out QueryRewriteResult
+	err error
+}
+
+func (f fixedQueryRewriter) RewriteQuery(context.Context, QueryRewriteInput) (QueryRewriteResult, error) {
+	return f.out, f.err
+}
+
+type fixedHyDEGenerator struct {
+	out string
+	err error
+}
+
+func (f fixedHyDEGenerator) GenerateHyDE(context.Context, HyDEInput) (string, error) {
+	return f.out, f.err
+}
+
+type capturingQueryRewriter struct {
+	out  QueryRewriteResult
+	last QueryRewriteInput
+}
+
+func (r *capturingQueryRewriter) RewriteQuery(_ context.Context, in QueryRewriteInput) (QueryRewriteResult, error) {
+	r.last = in
+	return r.out, nil
+}
+
 // newFakeRetriever 用 id 列表快速构造结果。
 func newFakeRetriever(ids []string, err error) *fakeRetriever {
 	out := make([]retriever.Result, len(ids))
@@ -487,6 +515,153 @@ func TestRetrieveRAG_SavesRetrievalTraceWhenSearcherAvailable(t *testing.T) {
 	}
 	if sess.RetrievalTrace.Stages[0].Stage != retriever.StageRerank {
 		t.Fatalf("trace stage = %+v, want rerank", sess.RetrievalTrace.Stages[0])
+	}
+}
+
+func TestRetrieveRAGRecordsRewriteAndHyDEShadowTrace(t *testing.T) {
+	embedder := &stubEmbedder{dim: 1024}
+	r := &fakePipelineRetriever{
+		searchResult: retriever.PipelineResult{
+			Results: []retriever.Result{{
+				ID:         "go-scheduler-001",
+				Content:    "Go GMP 调度中 P 的作用是什么？",
+				Tags:       []string{"go_concurrency", "scheduler"},
+				Difficulty: 3,
+				Category:   "go",
+			}},
+			Trace: retriever.RetrievalTrace{
+				Query: "Go 后端岗位中关于 GMP 调度的中级面试题",
+			},
+		},
+	}
+	rewriter := &capturingQueryRewriter{out: QueryRewriteResult{
+		RewrittenQuery: "Go 后端岗位中关于 GMP 调度的中级面试题",
+		NormalizedTags: []string{"go_concurrency", "scheduler"},
+		Reason:         "normalize interview question style",
+	}}
+	node := NewRetrieveRAGPatchNode(embedder, r, RetrieveRAGOptions{
+		TopK:          5,
+		QueryRewriter: rewriter,
+		HyDEMode:      "shadow",
+		HyDEGenerator: fixedHyDEGenerator{
+			out: "Question: Go GMP 调度中 P 的作用是什么？\nExpected points: local queue, work stealing",
+		},
+	})
+
+	sess := buildRAGSession([]string{"go"}, []string{"go"})
+	sess.QuestionBankFilter = &domain.QuestionBankFilter{
+		SkillCategories: []string{"go"},
+		Scenarios:       []string{"backend"},
+		DifficultyMin:   2,
+		DifficultyMax:   4,
+		Tags:            []string{"scheduler"},
+	}
+	patch, err := node(context.Background(), sess)
+	if err != nil {
+		t.Fatalf("node failed: %v", err)
+	}
+	if patch.RetrievalTrace == nil {
+		t.Fatal("retrieval trace missing")
+	}
+	if patch.RetrievalTrace.OriginalQuery == "" {
+		t.Fatalf("original query missing: %+v", patch.RetrievalTrace)
+	}
+	if patch.RetrievalTrace.RewrittenQuery != "Go 后端岗位中关于 GMP 调度的中级面试题" {
+		t.Fatalf("rewritten query = %q", patch.RetrievalTrace.RewrittenQuery)
+	}
+	if patch.RetrievalTrace.QueryRewriteReason != "normalize interview question style" {
+		t.Fatalf("rewrite reason = %q", patch.RetrievalTrace.QueryRewriteReason)
+	}
+	if patch.RetrievalTrace.HyDEMode != "shadow" || patch.RetrievalTrace.HyDEStatus != "shadow" {
+		t.Fatalf("hyde trace = mode:%q status:%q", patch.RetrievalTrace.HyDEMode, patch.RetrievalTrace.HyDEStatus)
+	}
+	if len(patch.RetrievalTrace.HyDETextHash) != 12 {
+		t.Fatalf("HyDETextHash = %q, want short hash", patch.RetrievalTrace.HyDETextHash)
+	}
+	if r.lastQ.Text != "Go 后端岗位中关于 GMP 调度的中级面试题" {
+		t.Fatalf("retriever query = %q", r.lastQ.Text)
+	}
+	if rewriter.last.Locale != "zh-CN" {
+		t.Fatalf("rewrite locale = %q, want zh-CN", rewriter.last.Locale)
+	}
+	if rewriter.last.QuestionBankFilter == nil || rewriter.last.QuestionBankFilter.SkillCategories[0] != "go" {
+		t.Fatalf("rewrite filter missing: %+v", rewriter.last.QuestionBankFilter)
+	}
+	if patch.CandidatePool == nil || len(*patch.CandidatePool) != 1 || (*patch.CandidatePool)[0].ID != "go-scheduler-001" {
+		t.Fatalf("candidate pool = %+v", patch.CandidatePool)
+	}
+}
+
+func TestRetrieveRAGRewriteFailureFallsBackToOriginalQuery(t *testing.T) {
+	embedder := &stubEmbedder{dim: 1024}
+	r := newFakeRetriever([]string{"go-001"}, nil)
+	node := NewRetrieveRAGPatchNode(embedder, r, RetrieveRAGOptions{
+		TopK:          5,
+		QueryRewriter: fixedQueryRewriter{err: errors.New("rewrite unavailable")},
+	})
+
+	sess := buildRAGSession([]string{"go"}, []string{"go"})
+	patch, err := node(context.Background(), sess)
+	if err != nil {
+		t.Fatalf("node failed: %v", err)
+	}
+	if patch.RetrievalTrace == nil {
+		t.Fatal("retrieval trace missing")
+	}
+	if patch.RetrievalTrace.QueryRewriteFallback != "rewrite unavailable" {
+		t.Fatalf("rewrite fallback = %q", patch.RetrievalTrace.QueryRewriteFallback)
+	}
+	if r.lastQ.Text != patch.RetrievalTrace.OriginalQuery {
+		t.Fatalf("retriever query = %q, original = %q", r.lastQ.Text, patch.RetrievalTrace.OriginalQuery)
+	}
+}
+
+func TestRetrieveRAGEmptyRewriteFallsBackToOriginalQuery(t *testing.T) {
+	embedder := &stubEmbedder{dim: 1024}
+	r := newFakeRetriever([]string{"go-001"}, nil)
+	node := NewRetrieveRAGPatchNode(embedder, r, RetrieveRAGOptions{
+		TopK:          5,
+		QueryRewriter: fixedQueryRewriter{out: QueryRewriteResult{RewrittenQuery: "  "}},
+	})
+
+	sess := buildRAGSession([]string{"go"}, []string{"go"})
+	patch, err := node(context.Background(), sess)
+	if err != nil {
+		t.Fatalf("node failed: %v", err)
+	}
+	if patch.RetrievalTrace == nil {
+		t.Fatal("retrieval trace missing")
+	}
+	if patch.RetrievalTrace.QueryRewriteFallback != "empty rewritten query" {
+		t.Fatalf("rewrite fallback = %q", patch.RetrievalTrace.QueryRewriteFallback)
+	}
+	if r.lastQ.Text != patch.RetrievalTrace.OriginalQuery {
+		t.Fatalf("retriever query = %q, original = %q", r.lastQ.Text, patch.RetrievalTrace.OriginalQuery)
+	}
+}
+
+func TestRetrieveRAGHyDEShadowFailureRecordsFallback(t *testing.T) {
+	embedder := &stubEmbedder{dim: 1024}
+	r := newFakeRetriever([]string{"go-001"}, nil)
+	node := NewRetrieveRAGPatchNode(embedder, r, RetrieveRAGOptions{
+		TopK:          5,
+		HyDEMode:      "shadow",
+		HyDEGenerator: fixedHyDEGenerator{err: errors.New("hyde unavailable")},
+	})
+
+	sess := buildRAGSession([]string{"go"}, []string{"go"})
+	patch, err := node(context.Background(), sess)
+	if err != nil {
+		t.Fatalf("node failed: %v", err)
+	}
+	if patch.RetrievalTrace == nil {
+		t.Fatal("retrieval trace missing")
+	}
+	if patch.RetrievalTrace.HyDEStatus != "fallback" || patch.RetrievalTrace.HyDEFallback != "hyde unavailable" {
+		t.Fatalf("hyde trace = status:%q fallback:%q", patch.RetrievalTrace.HyDEStatus, patch.RetrievalTrace.HyDEFallback)
+	}
+	if patch.CandidatePool == nil || len(*patch.CandidatePool) != 1 || (*patch.CandidatePool)[0].ID != "go-001" {
+		t.Fatalf("candidate pool changed by hyde fallback: %+v", patch.CandidatePool)
 	}
 }
 
