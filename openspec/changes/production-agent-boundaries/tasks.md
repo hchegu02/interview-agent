@@ -13,10 +13,10 @@
 
 ## 3. 真实 MCP / Tool MVP
 
-- [ ] 3.1 梳理 `internal/agentkit` ToolRegistry、MCP mock client、hook 和权限测试。
-- [ ] 3.2 选择第一版低风险真实工具，并明确配置、超时、错误分类和 mock 回退策略。
-- [ ] 3.3 在 ToolRegistry 边界内实现真实工具适配，保留 deterministic mock 用例。
-- [ ] 3.4 补充工具调用测试，覆盖成功、权限拒绝、超时或配置缺失错误、before/after hook 成对。
+- [x] 3.1 梳理 `internal/agentkit` ToolRegistry、MCP mock client、hook 和权限测试。
+- [x] 3.2 选择第一版低风险真实工具，并明确配置、超时、错误分类和 mock 回退策略。
+- [x] 3.3 在 ToolRegistry 边界内实现真实工具适配，保留 deterministic mock 用例。
+- [x] 3.4 补充工具调用测试，覆盖成功、权限拒绝、超时或配置缺失错误、before/after hook 成对。
 
 ## 4. Agent / Tool Trace 展示
 
