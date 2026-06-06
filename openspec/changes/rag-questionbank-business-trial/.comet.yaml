@@ -7,7 +7,7 @@ base_ref: 813a1752c462c0b3e7be39adc54b3377641f66dc
 design_doc: docs/superpowers/specs/2026-06-07-rag-questionbank-business-trial-design.md
 plan: docs/superpowers/plans/2026-06-07-rag-questionbank-business-trial.md
 verify_result: pending
-verification_report: null
+verification_report: docs/superpowers/reports/2026-06-07-rag-questionbank-business-trial-verify.md
 branch_status: pending
 created_at: 2026-06-07
 verified_at: null
