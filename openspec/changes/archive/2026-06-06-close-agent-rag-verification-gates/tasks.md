@@ -1,0 +1,15 @@
+- [x] 1.1 新增 Makefile `verify-agent` 目标。
+- [x] 1.2 将 `verify-agent` 加入 `.PHONY` 和 `verify-local`。
+- [x] 2.1 新增 `testdata/agent_message/project_polish_mock_request.json`。
+- [x] 2.2 新增 HTTP fixture 测试覆盖 `/api/agent/message` project polish mock tool 链路。
+- [x] 3.1 修正 `docs/SDD-Backend.md` 中 RAG eval / agent verify 命令。
+- [x] 3.2 修正 `docs/ai/commands.md` 中 RAG eval / agent verify 命令。
+- [x] 3.3 更新 README 质量门禁说明。
+- [x] 3.4 创建 `docs/code-changes/06-06-quality-gates.md`。
+- [x] 4.1 运行 `go test ./internal/httpapi -run TestAgentMessage_ProjectPolishUsesDefaultMockToolFixture -count=1`。
+- [x] 4.2 运行 `go run ./cmd/agent-verify -session testdata/agent_verify/pass_session.json`。
+- [x] 4.3 运行 `mingw32-make verify-agent` 或等价 `make verify-agent`。
+- [x] 4.4 运行 `go test ./... -count=1`。
+- [x] 4.5 运行 `openspec validate close-agent-rag-verification-gates --strict`。
+- [x] 4.6 运行 `mingw32-make eval-rag`。
+- [x] 4.7 运行 `mingw32-make verify-local`。

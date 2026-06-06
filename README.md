@@ -338,10 +338,18 @@ go run ./cmd/eval -suite testdata/eval -mode mock -out tmp/eval/mock
 Agent 输出验证：
 
 ```powershell
-go run ./cmd/agent-verify -session tmp/session.json
+go run ./cmd/agent-verify -session testdata/agent_verify/pass_session.json
 ```
 
 `agent-verify` 会检查 session 中的 report 完整性、retrieval trace 和可选 tool hook 事件。存在验证失败时返回非 0，适合作为后续 CI gate 的基础。
+
+本地质量门禁：
+
+```powershell
+mingw32-make verify-agent
+mingw32-make eval-rag
+mingw32-make verify-local
+```
 
 生成的 `tmp/eval/*` 是临时评估输出，可在验证后删除。
 

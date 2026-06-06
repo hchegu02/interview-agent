@@ -1,4 +1,4 @@
-.PHONY: help tidy build web-build run test test-core test-race lint verify-local eval-rag questionbank-lint questionbank-lint-strict eval-mock migrate-up migrate-down seed real-rag-reindex demo demo-web demo-web-real demo-pg demo-pg-full demo-mock demo-real demo-real-full e2e-smoke load-test chaos-dry-run docker-up docker-up-cluster docker-down clean
+.PHONY: help tidy build web-build run test test-core test-race lint verify-local verify-agent eval-rag questionbank-lint questionbank-lint-strict eval-mock migrate-up migrate-down seed real-rag-reindex demo demo-web demo-web-real demo-pg demo-pg-full demo-mock demo-real demo-real-full e2e-smoke load-test chaos-dry-run docker-up docker-up-cluster docker-down clean
 
 GO ?= go
 APP := bin/server
@@ -36,10 +36,14 @@ verify-local: ## run dependency-free local quality gate
 	$(GO) test ./... -count=1
 	npm --prefix web run test
 	npm --prefix web run build
+	$(MAKE) verify-agent
 	$(MAKE) eval-rag
 	$(MAKE) questionbank-lint
 	$(MAKE) eval-mock
 	git diff --check
+
+verify-agent: ## run Agent output verification fixture
+	$(GO) run ./cmd/agent-verify -session testdata/agent_verify/pass_session.json
 
 eval-rag: ## run offline RAG retrieval evaluation
 	$(GO) run ./cmd/rag-eval -cases testdata/rag/golden_queries.jsonl -config $(CONFIG) -out tmp/eval/rag -min-recall-at-5 0.70 -min-recall-at-10 0.80 -min-mrr-at-k 0.90 -min-ndcg-at-k 0.75 -min-group-cases 3 -min-group-recall-at-5 0.50 -min-stage-recall-at-5 vector=0.70,bm25=0.65,rule=0.60,rrf=0.75,rerank=0.70 -min-stage-mrr-at-k rrf=0.88,rerank=0.90

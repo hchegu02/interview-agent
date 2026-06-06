@@ -22,8 +22,8 @@ npm --prefix web run build
 ## RAG 与题库
 
 ```powershell
-go run ./cmd/rag-eval -config testdata/rag_eval/config.json -min-recall-at-5 0.6 -min-mrr 0.4 -min-ndcg-at-5 0.5
-go run ./cmd/questionbank-lint -input seeds/question_bank.json
+go run ./cmd/rag-eval -cases testdata/rag/golden_queries.jsonl -config config/config.yaml.example -out tmp/eval/rag -min-recall-at-5 0.70 -min-recall-at-10 0.80 -min-mrr-at-k 0.90 -min-ndcg-at-k 0.75 -min-group-cases 3 -min-group-recall-at-5 0.50 -min-stage-recall-at-5 vector=0.70,bm25=0.65,rule=0.60,rrf=0.75,rerank=0.70 -min-stage-mrr-at-k rrf=0.88,rerank=0.90
+go run ./cmd/questionbank-lint -seed seeds/question_bank.json -min-expected-points 3 -min-scenario-ratio 0.8
 go run ./cmd/reindex -config config/config.yaml.example
 ```
 
@@ -31,6 +31,14 @@ go run ./cmd/reindex -config config/config.yaml.example
 
 ```powershell
 go run ./cmd/agent-verify -session testdata/agent_verify/pass_session.json
+```
+
+## 本地质量门禁
+
+```powershell
+mingw32-make verify-agent
+mingw32-make eval-rag
+mingw32-make verify-local
 ```
 
 ## 本地服务
@@ -74,6 +82,7 @@ openspec validate <capability> --strict
 
 ```powershell
 go test ./... -count=1
+mingw32-make verify-agent
 openspec validate <change> --strict
 openspec archive <change> --yes
 openspec validate <capability> --strict

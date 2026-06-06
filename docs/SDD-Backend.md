@@ -265,10 +265,18 @@ rerank 用于：
 后端验证命令：
 
 ```powershell
-go test ./...
-go run ./cmd/rag-eval -config testdata/rag_eval/config.json -min-recall-at-5 0.6 -min-mrr 0.4 -min-ndcg-at-5 0.5
-go run ./cmd/questionbank-lint -input seeds/question_bank.json
+go test ./... -count=1
+go run ./cmd/rag-eval -cases testdata/rag/golden_queries.jsonl -config config/config.yaml.example -out tmp/eval/rag -min-recall-at-5 0.70 -min-recall-at-10 0.80 -min-mrr-at-k 0.90 -min-ndcg-at-k 0.75 -min-group-cases 3 -min-group-recall-at-5 0.50 -min-stage-recall-at-5 vector=0.70,bm25=0.65,rule=0.60,rrf=0.75,rerank=0.70 -min-stage-mrr-at-k rrf=0.88,rerank=0.90
+go run ./cmd/questionbank-lint -seed seeds/question_bank.json -min-expected-points 3 -min-scenario-ratio 0.8
 go run ./cmd/agent-verify -session testdata/agent_verify/pass_session.json
+```
+
+本地统一门禁：
+
+```powershell
+mingw32-make verify-local
+mingw32-make verify-agent
+mingw32-make eval-rag
 ```
 
 前端和嵌入式页面验证：
@@ -282,6 +290,7 @@ npm --prefix web run build
 
 - RAG 修改必须跑 RAG eval。
 - Agent 输出结构修改必须跑 agent-verify。
+- `/api/agent/message` 或 Skill 工具链路修改必须跑相关 HTTP / skill 测试。
 - HTTP API 修改必须跑相关 Go 测试。
 - 前端类型和页面修改必须跑前端测试和 build。
 

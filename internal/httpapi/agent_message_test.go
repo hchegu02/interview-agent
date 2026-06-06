@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"strings"
 	"testing"
 
 	"interview-agent/internal/agent"
@@ -33,6 +35,40 @@ func TestAgentMessage_RoutesSkill(t *testing.T) {
 	}
 	if resp.Confidence <= 0 || resp.Reason == "" || resp.Result.Title == "" || resp.Result.Content == "" {
 		t.Fatalf("structured response fields should be populated: %+v", resp)
+	}
+}
+
+func TestAgentMessage_ProjectPolishUsesDefaultMockToolFixture(t *testing.T) {
+	raw, err := os.ReadFile("../../testdata/agent_message/project_polish_mock_request.json")
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	server := NewServer(&config.Config{})
+	server.SetAgentService(agent.NewDefaultService())
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/agent/message", bytes.NewReader(raw))
+	req.Header.Set("Content-Type", "application/json")
+	server.Router().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp agent.AgentResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Intent != agent.IntentSkillProjectPolish || resp.Skill != "project_polish" {
+		t.Fatalf("response = %+v", resp)
+	}
+	for _, marker := range []string{
+		"项目亮点提炼",
+		"interview-agent mock GitHub project analysis",
+		"uses layered backend structure",
+	} {
+		if !strings.Contains(resp.Result.Title+" "+resp.Result.Content, marker) {
+			t.Fatalf("response missing marker %q: %+v", marker, resp)
+		}
 	}
 }
 
