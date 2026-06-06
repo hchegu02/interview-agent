@@ -1,4 +1,6 @@
 import type {
+  AgentMessageRequest,
+  AgentResponse,
   ProfileAnalyzeResponse,
   QuestionBankFilter,
   QuestionBankImportItem,
@@ -31,6 +33,12 @@ async function api<T>(path: string, options: RequestOptions = {}): Promise<T> {
 
 export const apiClient = {
   ping: () => api<{ pong: boolean; llm_mode: string }>("/api/ping"),
+
+  sendAgentMessage: (payload: AgentMessageRequest) =>
+    api<AgentResponse>("/api/agent/message", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
 
   parseResume: (file: File) => {
     const form = new FormData();

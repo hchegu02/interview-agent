@@ -531,6 +531,43 @@ h3 {
   background: #ffffff;
 }
 
+.agent-composer {
+  display: grid;
+  gap: 12px;
+}
+
+.agent-examples button {
+  width: 100%;
+}
+
+.agent-result {
+  display: grid;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.agent-route,
+.agent-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.agent-route span {
+  padding: 6px 10px;
+  color: #0f3c67;
+  font-size: 12px;
+  font-weight: 900;
+  background: #eaf4ff;
+  border: 1px solid #c6def9;
+  border-radius: 999px;
+}
+
+.agent-actions button {
+  min-height: 34px;
+}
+
 .scope-panel {
   display: grid;
   gap: 8px;

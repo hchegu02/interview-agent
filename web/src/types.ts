@@ -218,6 +218,32 @@ export type SessionSummary = {
   updated_at: string;
 };
 
+export type AgentMessageRequest = {
+  user_id?: string;
+  message: string;
+  context?: Record<string, string>;
+};
+
+export type AgentResponse = {
+  intent: string;
+  skill?: string;
+  confidence: number;
+  reason: string;
+  result: SkillResult;
+};
+
+export type SkillResult = {
+  title: string;
+  content: string;
+  actions?: SkillAction[];
+};
+
+export type SkillAction = {
+  type: string;
+  label: string;
+  value?: string;
+};
+
 export type QuestionBankItem = {
   id: string;
   content: string;

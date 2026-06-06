@@ -19,4 +19,25 @@ describe("apiClient", () => {
       method: "DELETE",
     }));
   });
+
+  it("sends an agent message to the backend router", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: () => Promise.resolve(`{"intent":"skill.quiz","skill":"quiz","confidence":0.9,"reason":"matched","result":{"title":"专项测验","content":"请回答"}}`),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(apiClient.sendAgentMessage({ user_id: "u1", message: "考我 Redis" })).resolves.toEqual({
+      intent: "skill.quiz",
+      skill: "quiz",
+      confidence: 0.9,
+      reason: "matched",
+      result: { title: "专项测验", content: "请回答" },
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/agent/message", expect.objectContaining({
+      method: "POST",
+      body: JSON.stringify({ user_id: "u1", message: "考我 Redis" }),
+    }));
+  });
 });

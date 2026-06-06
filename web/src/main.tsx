@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { apiClient } from "./apiClient";
 import { buildDraft, clearDraft, DRAFT_KEY, drillJDText, loadDraft, normalizeQuestionBankFilter, saveDraft } from "./draftStore";
 import { formatTime, modeLabel } from "./interviewView";
-import { InterviewPage, JDPage, ProgressBar, ReportPage, ResumePage } from "./candidatePages";
+import { AgentPage, InterviewPage, JDPage, ProgressBar, ReportPage, ResumePage } from "./candidatePages";
 import { QuestionBankPage } from "./questionBankPage";
 import { defaultRouteForWorkspace, navItemsForWorkspace, resolveNavigationState, routes, workspaceForRoute, type Route, type Workspace } from "./routes";
 import { useInterviewStream, type StreamEvent } from "./useInterviewStream";
@@ -218,6 +218,14 @@ function App() {
     navigate(routes.jd);
   };
 
+  const startAgentDrill = (topic: string) => {
+    const cleanTopic = topic.trim() || "专项训练";
+    const nextJD = `${draft.jd_text}\n\n专项训练重点：${cleanTopic}`;
+    updateDraft({ jd_text: nextJD, analysis: undefined });
+    setNotice("已按 Agent 动作预填专项训练重点。");
+    navigate(routes.jd);
+  };
+
   const navItems = navItemsForWorkspace(workspace);
 
   return (
@@ -288,6 +296,9 @@ function App() {
         )}
         {route === routes.report && (
           <ReportPage session={session} startDrill={startDrill} jumpQuestion={(id) => navigate(routes.questions, `?q=${encodeURIComponent(id)}`)} />
+        )}
+        {route === routes.agent && (
+          <AgentPage userId={userId} busy={busy} setBusy={setBusy} setNotice={setNotice} goJD={() => navigate(routes.jd)} startAgentDrill={startAgentDrill} />
         )}
         {route === routes.questions && <QuestionBankPage jumpId={questionJump} adminDefault={workspace === "admin"} />}
       </section>

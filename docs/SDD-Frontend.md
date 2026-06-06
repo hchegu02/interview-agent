@@ -29,7 +29,7 @@
 | 路径 | 职责 |
 |---|---|
 | `web/src/main.tsx` | 应用入口、路由切换、Session 拉取和页面组合 |
-| `web/src/candidatePages.tsx` | 简历页、JD 页、面试页、报告页 |
+| `web/src/candidatePages.tsx` | 简历页、JD 页、面试页、报告页、Agent Skill 入口 |
 | `web/src/apiClient.ts` | REST API 调用封装 |
 | `web/src/useInterviewStream.ts` | SSE 事件订阅 |
 | `web/src/types.ts` | 前后端共享 JSON 响应的 TypeScript 类型 |
@@ -89,6 +89,18 @@
 
 `retrieval_trace` 是后端写入 Session 的检索证据。前端只展示 query、阶段统计、降级原因、最终候选和来源分数，不参与排序和 rerank。
 
+### 4.5 AgentPage
+
+`AgentPage` 是 `/api/agent/message` 的轻量前端入口：
+
+- 输入自然语言任务。
+- 调用后端 Intent Router + Skill。
+- 展示 `intent`、`skill`、`confidence`、`reason` 和 `result`。
+- 对 `start_interview` 动作跳转到 JD 页面。
+- 对 `start_drill` 动作把训练主题写入 JD 草稿。
+
+前端不实现意图判断、Skill 执行、工具调用或权限判断。
+
 ## 5. 状态设计
 
 前端状态分两类：
@@ -129,7 +141,7 @@
 | `POST` | `/api/interview/answer` | 提交回答 |
 | `GET` | `/api/interview/sessions` | 获取会话列表 |
 | `GET` | `/api/interview/sessions/:session_id` | 获取会话详情 |
-| `POST` | `/api/agent/message` | 后端 Intent Router + Skill 消息入口；当前前端尚未接入页面 |
+| `POST` | `/api/agent/message` | 后端 Intent Router + Skill 消息入口 |
 | `GET` | `/api/question-bank` | 题库预览 |
 | `GET` | `/api/question-bank/facets` | 题库筛选项 |
 
@@ -191,7 +203,7 @@ npm --prefix web run build
 
 ### 10.1 Intent Router + Skill 前端入口
 
-后端已经提供 `/api/agent/message`，用于接收自然语言请求并路由到不同 skill。当前前端尚未接入该入口，后续可以新增一个轻量页面或侧边入口：
+后端已经提供 `/api/agent/message`，用于接收自然语言请求并路由到不同 skill。前端已接入轻量 `/agent` 页面：
 
 ```text
 用户输入自然语言
@@ -200,7 +212,7 @@ npm --prefix web run build
   -> 前端按响应展示测验、讲解、项目润色或面试入口
 ```
 
-前端不实现 intent 判断，只展示后端路由结果。
+前端不实现 intent 判断，只展示后端路由结果。后续若后端新增结构化 tool trace 字段，前端再增加只读展示。
 
 ### 10.2 Long-term Memory 展示
 

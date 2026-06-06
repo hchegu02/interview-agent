@@ -6,6 +6,7 @@ import { drillPlanSummary, retrievalTraceSummary } from "./reportView";
 import { routes, type Route } from "./routes";
 import { EmptyPage, PageHeader, Select } from "./sharedView";
 import type {
+  AgentResponse,
   Draft,
   DrillPlanItem,
   InterviewFeedback,
@@ -16,6 +17,7 @@ import type {
   Session,
   TranscriptAnalysis,
   QuestionFacets,
+  SkillAction,
 } from "./types";
 import type { StreamEvent } from "./useInterviewStream";
 
@@ -225,6 +227,95 @@ export function ReportPage({ session, startDrill, jumpQuestion }: {
         <h2>逐题评分</h2>
         {(session.rounds || []).map((round) => <RoundReview key={round.round_id} round={round} />)}
       </section>
+    </section>
+  );
+}
+
+export function AgentPage({ userId, busy, setBusy, setNotice, goJD, startAgentDrill }: {
+  userId: string;
+  busy: boolean;
+  setBusy: (busy: boolean) => void;
+  setNotice: (message: string) => void;
+  goJD: () => void;
+  startAgentDrill: (topic: string) => void;
+}) {
+  const [message, setMessage] = useState("帮我把 GitHub 项目亮点整理成面试表达：https://github.com/hchegu02/interview-agent");
+  const [response, setResponse] = useState<AgentResponse | null>(null);
+  const send = async (evt: React.FormEvent) => {
+    evt.preventDefault();
+    const value = message.trim();
+    if (!value) {
+      setNotice("请输入要交给 Agent 的任务。");
+      return;
+    }
+    setBusy(true);
+    setNotice("正在路由意图并执行 Skill...");
+    try {
+      const next = await apiClient.sendAgentMessage({ user_id: userId.trim(), message: value });
+      setResponse(next);
+      setNotice("");
+    } catch (err) {
+      setNotice(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const runAction = (action: SkillAction) => {
+    switch (action.type) {
+    case "start_interview":
+      goJD();
+      break;
+    case "start_drill":
+      startAgentDrill(action.value || message);
+      break;
+    default:
+      setNotice(`当前前端只展示动作：${action.label}`);
+    }
+  };
+  return (
+    <section className="page agent-page">
+      <PageHeader eyebrow="Agent Skill" title="把零散需求路由到专项训练能力" copy="前端只提交消息并展示后端结果；意图判断、Skill 执行和工具边界都在后端。" />
+      <div className="two-column">
+        <form className="agent-composer" onSubmit={send}>
+          <label className="field tall">
+            <span>任务消息</span>
+            <textarea value={message} onChange={(evt) => setMessage(evt.target.value)} />
+          </label>
+          <button className="primary" disabled={busy || !message.trim()}>{busy ? "处理中" : "发送给 Agent"}</button>
+        </form>
+        <aside className="control-panel agent-examples">
+          <h2>可处理的任务</h2>
+          <button className="secondary" onClick={() => setMessage("考我 Redis 缓存击穿和热点 key")}>专项测验</button>
+          <button className="secondary" onClick={() => setMessage("解释一下 Go GMP 调度和 work stealing")}>知识讲解</button>
+          <button className="secondary" onClick={() => setMessage("帮我润色项目亮点：https://github.com/hchegu02/interview-agent")}>项目润色</button>
+          <button className="secondary" onClick={() => setMessage("开始模拟面试")}>面试入口</button>
+        </aside>
+      </div>
+      {response && (
+        <section className="agent-result">
+          <div className="agent-route">
+            <span>{response.intent}</span>
+            {response.skill && <span>{response.skill}</span>}
+            <span>{Math.round(response.confidence * 100)}%</span>
+          </div>
+          <article className="feedback-card">
+            <div className="review-head">
+              <strong>{response.result.title || "Agent 结果"}</strong>
+              <span>{response.reason}</span>
+            </div>
+            <p>{response.result.content}</p>
+            {!!response.result.actions?.length && (
+              <div className="agent-actions">
+                {response.result.actions.map((action) => (
+                  <button key={`${action.type}-${action.label}-${action.value || ""}`} className="secondary" onClick={() => runAction(action)}>
+                    {action.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </article>
+        </section>
+      )}
     </section>
   );
 }

@@ -229,7 +229,7 @@ mingw32-make demo-web
 make demo-web
 ```
 
-Web 页面支持输入 JD、粘贴简历、上传简历文档、查看题库预览、订阅 SSE 事件流和查看最终报告。简历解析接口为 `POST /api/documents/parse-resume`。
+Web 页面支持输入 JD、粘贴简历、上传简历文档、调用 Agent Skill 入口、查看题库预览、订阅 SSE 事件流和查看最终报告。简历解析接口为 `POST /api/documents/parse-resume`。
 
 ### 真实完整演示
 

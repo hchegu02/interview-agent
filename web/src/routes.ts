@@ -1,4 +1,4 @@
-export type Route = "/" | "/resume" | "/jd" | "/interview" | "/report" | "/questions";
+export type Route = "/" | "/resume" | "/jd" | "/interview" | "/report" | "/agent" | "/questions";
 export type Workspace = "candidate" | "admin";
 export type NavItem = { label: string; route: Route };
 
@@ -8,6 +8,7 @@ export const routes = {
   jd: "/jd" as Route,
   interview: "/interview" as Route,
   report: "/report" as Route,
+  agent: "/agent" as Route,
   questions: "/questions" as Route,
 };
 
@@ -18,6 +19,7 @@ export function normalizeRoute(pathname: string): Route {
     case "/jd":
     case "/interview":
     case "/report":
+    case "/agent":
     case "/questions":
       return pathname;
     default:
@@ -36,6 +38,7 @@ export function navItemsForWorkspace(workspace: Workspace): NavItem[] {
     { label: "JD 分析", route: routes.jd },
     { label: "面试", route: routes.interview },
     { label: "报告", route: routes.report },
+    { label: "Agent", route: routes.agent },
   ];
 }
 
