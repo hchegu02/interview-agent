@@ -112,8 +112,8 @@ func (s *ImportService) commitReadyJob(ctx context.Context, jobID string) (Impor
 	job.Status = ImportStatusCommitting
 	job, _ = s.imports.UpdateJob(ctx, job)
 
-	// 只导入“有效且未拒绝”的 item。无审核状态默认视为接受，
-	// 是为了兼容旧流程：没有前端逐条审核时，ready 任务仍可直接提交。
+	// 只导入“有效且发布策略允许”的 item。无 Agent 审核状态的旧导入保持兼容；
+	// Agent 标记为 needs_human_review/rejected 的题不能静默进入正式题库。
 	importItems, err := s.imports.ListItems(ctx, job.ID)
 	if err != nil {
 		return s.failJob(ctx, job, err)
@@ -179,7 +179,7 @@ func (s *ImportService) embedCommittedItems(ctx context.Context, items []Item) e
 }
 
 func importItemAccepted(item ImportItem) bool {
-	if item.AgentReviewStatus == ImportAgentReviewRejected {
+	if item.AgentReviewStatus != "" && item.AgentReviewStatus != ImportAgentReviewAutoApproved {
 		return false
 	}
 	return item.ReviewStatus == "" || item.ReviewStatus == ImportReviewStatusAccepted

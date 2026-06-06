@@ -210,6 +210,98 @@ func TestCommitSkipsAgentRejectedItems(t *testing.T) {
 	}
 }
 
+func TestCommitSkipsAgentNeedsHumanReviewItems(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore(nil)
+	imports := NewMemoryImportStore()
+	service := NewImportService(ImportServiceDeps{
+		Imports: imports,
+		Writer:  store,
+	})
+
+	job, err := service.ImportLocalQuestionBank(ctx, ImportFile{
+		Filename: "questions.json",
+		Reader: strings.NewReader(`[{
+			"id":"review-agent-001",
+			"content":"Go channel 关闭后接收行为是什么？",
+			"skill_category":"go",
+			"difficulty":3,
+			"tags":["channel"],
+			"expected_points":["zero value","ok flag","panic on send"]
+		}]`),
+		Size: 256,
+	})
+	if err != nil {
+		t.Fatalf("ImportLocalQuestionBank: %v", err)
+	}
+	items, err := imports.ListItems(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	items[0].AgentReviewStatus = ImportAgentReviewNeedsHumanReview
+	items[0].AgentReviewReason = "requires human confirmation"
+	if err := imports.UpdateItems(ctx, items); err != nil {
+		t.Fatalf("UpdateItems: %v", err)
+	}
+
+	committed, err := service.Commit(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if committed.ImportedItems != 0 {
+		t.Fatalf("ImportedItems = %d, want 0", committed.ImportedItems)
+	}
+	if _, err := store.Get(ctx, "review-agent-001"); err == nil {
+		t.Fatal("needs_human_review item should not be written to question bank")
+	}
+}
+
+func TestCommitAllowsAgentAutoApprovedItems(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore(nil)
+	imports := NewMemoryImportStore()
+	service := NewImportService(ImportServiceDeps{
+		Imports: imports,
+		Writer:  store,
+	})
+
+	job, err := service.ImportLocalQuestionBank(ctx, ImportFile{
+		Filename: "questions.json",
+		Reader: strings.NewReader(`[{
+			"id":"auto-agent-001",
+			"content":"Go channel 关闭后接收行为是什么？",
+			"skill_category":"go",
+			"difficulty":3,
+			"tags":["channel"],
+			"expected_points":["zero value","ok flag","panic on send"]
+		}]`),
+		Size: 256,
+	})
+	if err != nil {
+		t.Fatalf("ImportLocalQuestionBank: %v", err)
+	}
+	items, err := imports.ListItems(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	items[0].AgentReviewStatus = ImportAgentReviewAutoApproved
+	items[0].AgentReviewReason = "complete and grounded"
+	if err := imports.UpdateItems(ctx, items); err != nil {
+		t.Fatalf("UpdateItems: %v", err)
+	}
+
+	committed, err := service.Commit(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if committed.ImportedItems != 1 {
+		t.Fatalf("ImportedItems = %d, want 1", committed.ImportedItems)
+	}
+	if _, err := store.Get(ctx, "auto-agent-001"); err != nil {
+		t.Fatalf("auto_approved item should be written to question bank: %v", err)
+	}
+}
+
 func TestImportService_ImportLocalQuestionOnlyUsesLLMEnrichment(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemoryStore(nil)

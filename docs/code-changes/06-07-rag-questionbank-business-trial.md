@@ -13,8 +13,8 @@
 - `internal/questionbank/imports_stage.go`：源文档生成题默认标记为 `needs_human_review`，并保存来源信息。
 - `internal/questionbank/imports.go`：真实 `ImportDocument` 路径生成 source/chunk hash provenance。
 - `internal/questionbank/imports_pg.go`：通过现有 `field_provenance` jsonb 保留 Agent review/source metadata，避免新增迁移。
-- `internal/questionbank/imports_commit.go`：阻止 `ImportAgentReviewRejected` 项提交到正式题库。
-- `internal/questionbank/imports_test.go`：覆盖 source provenance、PG metadata packing、Agent rejected commit blocking。
+- `internal/questionbank/imports_commit.go`：阻止 `needs_human_review` 和 `rejected` 项提交到正式题库，只允许旧导入空状态或 `auto_approved` 通过。
+- `internal/questionbank/imports_test.go`：覆盖 source provenance、PG metadata packing、Agent review commit blocking。
 - `internal/retriever/retriever.go`：扩展 retriever trace 字段。
 - `internal/domain/session.go`：扩展 session 级 `RetrievalTrace` 字段。
 - `internal/nodes/retrieve_rag.go`：增加 Query Rewriter / HyDE shadow 接口、fallback 和 trace 注入。
@@ -45,7 +45,7 @@
 
 ### `internal/questionbank/imports_commit.go`
 
-- `importItemAccepted`：增加 Agent review rejected 判断。`ImportAgentReviewRejected` 优先阻止提交，即使 human review status 是 accepted。
+- `importItemAccepted`：增加 Agent review 发布策略判断。空 Agent review 状态保持旧导入兼容；`auto_approved` 可提交；`needs_human_review` 和 `rejected` 均不能提交。
 
 ### `internal/nodes/retrieve_rag.go`
 
@@ -103,7 +103,7 @@ PG 模式下：
 
 ## 数据流
 
-源文档数据从上传文件进入 `ImportFile.Reader`，parser 生成文本，chunk 生成题目。系统用原始文件内容和 chunk 内容计算 hash，并把 provenance 写到暂存项。Agent review 状态跟随 `ImportItem` 在内存 store 和 PG store 中保存。提交时 `ImportAgentReviewRejected` 阻断正式题库写入。
+源文档数据从上传文件进入 `ImportFile.Reader`，parser 生成文本，chunk 生成题目。系统用原始文件内容和 chunk 内容计算 hash，并把 provenance 写到暂存项。Agent review 状态跟随 `ImportItem` 在内存 store 和 PG store 中保存。提交时 `needs_human_review` 和 `rejected` 均阻断正式题库写入，避免 Agent 生成题绕过发布策略。
 
 RAG query 数据从 `JobProfile`、`GapReport` 和 `QuestionBankFilter` 生成基础 query。可选 rewriter 返回 rewritten query 和 normalized tags；失败时保留原 query。HyDE shadow 生成的文本只写 hash 和状态，不参与候选池排序。
 
@@ -121,6 +121,7 @@ RAG query 数据从 `JobProfile`、`GapReport` 和 `QuestionBankFilter` 生成�
 
 ```powershell
 go test ./internal/questionbank -count=1
+go test ./internal/questionbank -run "TestCommitSkipsAgentRejectedItems|TestCommitSkipsAgentNeedsHumanReviewItems|TestCommitAllowsAgentAutoApprovedItems" -count=1
 go test ./internal/nodes -run "TestRetrieveRAGRecordsRewriteAndHyDEShadowTrace|TestRetrieveRAGRewriteFailureFallsBackToOriginalQuery|TestRetrieveRAGEmptyRewriteFallsBackToOriginalQuery|TestRetrieveRAGHyDEShadowFailureRecordsFallback" -count=1
 go test ./internal/nodes ./internal/retriever ./internal/domain -count=1
 go test ./internal/questionbank ./internal/nodes ./internal/retriever -count=1
