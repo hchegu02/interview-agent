@@ -1284,6 +1284,94 @@ func TestInterviewService_LongTermMemoryMergeIsSerialized(t *testing.T) {
 	}
 }
 
+func TestUserMemoryAPI_UsesInjectedOwnerResolver(t *testing.T) {
+	store := memory.NewMemoryStore()
+	if err := store.UpsertUserMemory(context.Background(), &memory.UserMemory{
+		UserID:      "user-prod",
+		Strengths:   []string{"Go"},
+		SkillScores: map[string]float64{"go": 82},
+		UpdatedAt:   time.Date(2026, 6, 6, 10, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("seed memory: %v", err)
+	}
+	svc := NewInterviewService(fakeInterviewRunner{})
+	svc.SetMemoryStore(store)
+	server := NewServerWithInterview(&config.Config{}, svc)
+	server.SetUserMemoryOwnerResolver(func(*http.Request) (UserMemoryOwner, error) {
+		return UserMemoryOwner{UserID: "user-prod", Authenticated: true}, nil
+	})
+	server.SetUserMemoryAuthorizer(func(owner UserMemoryOwner, target string) bool {
+		return owner.Authenticated && owner.UserID == target
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/users/user-prod/memory", nil)
+	server.Router().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var got userMemoryResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.UserID != "user-prod" || got.SkillScores["go"] != 82 {
+		t.Fatalf("memory response = %+v", got)
+	}
+}
+
+func TestUserMemoryAPI_RejectsMissingResolvedOwner(t *testing.T) {
+	svc := NewInterviewService(fakeInterviewRunner{})
+	svc.SetMemoryStore(memory.NewMemoryStore())
+	server := NewServerWithInterview(&config.Config{}, svc)
+	server.SetUserMemoryOwnerResolver(func(*http.Request) (UserMemoryOwner, error) {
+		return UserMemoryOwner{}, errors.New("missing current user")
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/users/user-1/memory", nil)
+	server.Router().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"code":"owner_resolve_failed"`) {
+		t.Fatalf("body should include owner_resolve_failed, got %s", rec.Body.String())
+	}
+}
+
+func TestUserMemoryAPI_RejectsCrossUserAccess(t *testing.T) {
+	store := memory.NewMemoryStore()
+	if err := store.UpsertUserMemory(context.Background(), &memory.UserMemory{
+		UserID:      "user-target",
+		Strengths:   []string{"private profile"},
+		SkillScores: map[string]float64{"go": 82},
+		UpdatedAt:   time.Date(2026, 6, 6, 10, 0, 0, 0, time.UTC),
+	}); err != nil {
+		t.Fatalf("seed memory: %v", err)
+	}
+	svc := NewInterviewService(fakeInterviewRunner{})
+	svc.SetMemoryStore(store)
+	server := NewServerWithInterview(&config.Config{}, svc)
+	server.SetUserMemoryOwnerResolver(func(*http.Request) (UserMemoryOwner, error) {
+		return UserMemoryOwner{UserID: "user-other", Authenticated: true}, nil
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/users/user-target/memory", nil)
+	server.Router().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"code":"user_memory_forbidden"`) {
+		t.Fatalf("body should include user_memory_forbidden, got %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "private profile") {
+		t.Fatalf("forbidden response leaked profile: %s", rec.Body.String())
+	}
+}
+
 func TestInterviewResponse_PracticeShowsFeedbackBeforeCompletion(t *testing.T) {
 	now := time.Now()
 	sess := &domain.Session{

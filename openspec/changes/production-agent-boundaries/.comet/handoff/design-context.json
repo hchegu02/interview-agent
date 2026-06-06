@@ -1,0 +1,18 @@
+{
+  "change": "production-agent-boundaries",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "83e9a3a0dc3230885609e98bf550e727af84c195728c0fd188c630f95e3af9ac",
+  "files": [
+    { "path": "openspec/changes/production-agent-boundaries/proposal.md", "sha256": "182fcebc8cd540d698be155aec7ff62723913af0d2c6c5b310885bc929fb2203" },
+    { "path": "openspec/changes/production-agent-boundaries/design.md", "sha256": "0c723e0ed2982b274ceb34ac7155f69c23a30c581d2cf84d0a4259271115c2d0" },
+    { "path": "openspec/changes/production-agent-boundaries/tasks.md", "sha256": "18685567bc81bcb56d33be9cb7cbe746579f1eaf9c22c1a6ff8a6a92f39be842" },
+    { "path": "openspec/changes/production-agent-boundaries/specs/agentkit-mcp-tools/spec.md", "sha256": "4fe00b26d5ad61fb47caf598a29f748c00c3e5d0fd0f1b19afce9603ad6d0ce2" },
+    { "path": "openspec/changes/production-agent-boundaries/specs/agent-router-skills/spec.md", "sha256": "02e38439c7de582d57af7807be4a6073119357ff43001d6cd655ffd72870ef77" },
+    { "path": "openspec/changes/production-agent-boundaries/specs/identity-access-boundary/spec.md", "sha256": "9f8ad7368b1985c1341506406ad2caf7f71f992f16b14e370d4a8e6c9be03ef4" },
+    { "path": "openspec/changes/production-agent-boundaries/specs/long-term-memory/spec.md", "sha256": "fc313e16fdff2a9d92d2149ec0d9c37f60fbabf2fecb68efc7db0307abfcb152" },
+    { "path": "openspec/changes/production-agent-boundaries/specs/quality-gates/spec.md", "sha256": "9de7ecf3b19b0f4457c101c5ddd656299ca4f87e23ae5dc1313f4e10b4869334" }
+  ]
+}
