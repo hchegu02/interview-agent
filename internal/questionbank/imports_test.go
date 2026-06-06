@@ -287,6 +287,56 @@ func TestImportService_StageGeneratedItemFieldProvenance(t *testing.T) {
 	})
 }
 
+func TestStageItemsPreservesAgentReviewAndSourceProvenance(t *testing.T) {
+	ctx := context.Background()
+	imports := NewMemoryImportStore()
+	service := NewImportService(ImportServiceDeps{
+		Imports: imports,
+		Writer:  NewMemoryStore(nil),
+	})
+	job, err := imports.CreateJob(ctx, newImportJob(ImportSourceDocument, "go-runtime.md"))
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	job, err = service.stageItemsWithOriginalsAndProvenance(ctx, job, "chunk-001", []Item{{
+		ID:             "go-runtime-001",
+		Content:        "Go GMP 调度中 P 的作用是什么？",
+		SkillCategory:  "go",
+		Difficulty:     3,
+		Tags:           []string{"go_concurrency", "scheduler"},
+		ExpectedPoints: []string{"P 持有本地队列", "work stealing"},
+	}}, nil, []map[string]string{{
+		"source_type": "document",
+		"source_hash": "sha256:abc",
+	}})
+	if err != nil {
+		t.Fatalf("stageItemsWithOriginalsAndProvenance: %v", err)
+	}
+	if job.ValidItems != 1 {
+		t.Fatalf("ValidItems = %d, want 1", job.ValidItems)
+	}
+	items, err := imports.ListItems(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %+v, want one item", items)
+	}
+	if items[0].AgentReviewStatus != ImportAgentReviewNeedsHumanReview {
+		t.Fatalf("AgentReviewStatus = %q, want %q", items[0].AgentReviewStatus, ImportAgentReviewNeedsHumanReview)
+	}
+	if items[0].SourceProvenance["source_hash"] != "sha256:abc" {
+		t.Fatalf("SourceProvenance = %+v, want source_hash", items[0].SourceProvenance)
+	}
+
+	cloned := cloneImportItem(items[0])
+	cloned.SourceProvenance["source_hash"] = "changed"
+	if items[0].SourceProvenance["source_hash"] != "sha256:abc" {
+		t.Fatalf("clone mutated original provenance: %+v", items[0].SourceProvenance)
+	}
+}
+
 func TestPGImportStoreJSONMetadataEncodingUsesObjects(t *testing.T) {
 	if got := string(marshalOriginalItemJSON(nil)); got != "{}" {
 		t.Fatalf("nil original raw json = %s, want {}", got)

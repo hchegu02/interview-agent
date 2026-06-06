@@ -26,9 +26,13 @@ func (s *ImportService) stageItemsWithOriginalsAndProvenance(ctx context.Context
 		parsedItem := item
 		item = normalizeImportedItem(item)
 		fieldProvenance := importFieldProvenance(parsedItem, item, original)
+		var sourceProvenance map[string]string
 		if i < len(provenances) {
 			for field, source := range provenances[i] {
 				fieldProvenance[field] = source
+			}
+			if job.SourceType == ImportSourceDocument {
+				sourceProvenance = cloneStringMap(provenances[i])
 			}
 		}
 		errs := validateImportedItem(item)
@@ -37,18 +41,20 @@ func (s *ImportService) stageItemsWithOriginalsAndProvenance(ctx context.Context
 			status = ImportItemStatusInvalid
 		}
 		staged = append(staged, ImportItem{
-			ID:              job.ID + ":" + item.ID,
-			JobID:           job.ID,
-			ChunkID:         chunkID,
-			QuestionID:      item.ID,
-			Status:          status,
-			ReviewStatus:    ImportReviewStatusAccepted,
-			Item:            item,
-			OriginalItem:    original,
-			FieldProvenance: fieldProvenance,
-			Errors:          errs,
-			CreatedAt:       time.Now().UTC(),
-			UpdatedAt:       time.Now().UTC(),
+			ID:                job.ID + ":" + item.ID,
+			JobID:             job.ID,
+			ChunkID:           chunkID,
+			QuestionID:        item.ID,
+			Status:            status,
+			ReviewStatus:      ImportReviewStatusAccepted,
+			AgentReviewStatus: defaultAgentReviewStatus(job.SourceType),
+			Item:              item,
+			OriginalItem:      original,
+			FieldProvenance:   fieldProvenance,
+			SourceProvenance:  sourceProvenance,
+			Errors:            errs,
+			CreatedAt:         time.Now().UTC(),
+			UpdatedAt:         time.Now().UTC(),
 		})
 		if status == ImportItemStatusValid {
 			job.ValidItems++
@@ -62,6 +68,13 @@ func (s *ImportService) stageItemsWithOriginalsAndProvenance(ctx context.Context
 	job.TotalItems += len(staged)
 	job.Status = ImportStatusReady
 	return s.imports.UpdateJob(ctx, job)
+}
+
+func defaultAgentReviewStatus(sourceType string) string {
+	if sourceType == ImportSourceDocument {
+		return ImportAgentReviewNeedsHumanReview
+	}
+	return ""
 }
 
 func (s *ImportService) failJob(ctx context.Context, job ImportJob, err error) (ImportJob, error) {

@@ -17,6 +17,7 @@ func cloneImportItem(item ImportItem) ImportItem {
 		item.OriginalItem = &original
 	}
 	item.FieldProvenance = cloneStringMap(item.FieldProvenance)
+	item.SourceProvenance = cloneStringMap(item.SourceProvenance)
 	item.Errors = append([]string(nil), item.Errors...)
 	return item
 }

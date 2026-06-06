@@ -35,6 +35,10 @@ const (
 	ImportReviewStatusAccepted = "accepted"
 	ImportReviewStatusRejected = "rejected"
 
+	ImportAgentReviewAutoApproved     = "auto_approved"
+	ImportAgentReviewNeedsHumanReview = "needs_human_review"
+	ImportAgentReviewRejected         = "rejected"
+
 	localEnrichmentBatchSize = 2
 )
 
@@ -69,18 +73,21 @@ type ImportChunk struct {
 }
 
 type ImportItem struct {
-	ID              string            `json:"id"`
-	JobID           string            `json:"job_id"`
-	ChunkID         string            `json:"chunk_id,omitempty"`
-	QuestionID      string            `json:"question_id"`
-	Status          string            `json:"status"`
-	ReviewStatus    string            `json:"review_status"`
-	Item            Item              `json:"item"`
-	OriginalItem    *Item             `json:"original_item,omitempty"`
-	FieldProvenance map[string]string `json:"field_provenance,omitempty"`
-	Errors          []string          `json:"errors,omitempty"`
-	CreatedAt       time.Time         `json:"created_at"`
-	UpdatedAt       time.Time         `json:"updated_at"`
+	ID                string            `json:"id"`
+	JobID             string            `json:"job_id"`
+	ChunkID           string            `json:"chunk_id,omitempty"`
+	QuestionID        string            `json:"question_id"`
+	Status            string            `json:"status"`
+	ReviewStatus      string            `json:"review_status"`
+	AgentReviewStatus string            `json:"agent_review_status,omitempty"`
+	AgentReviewReason string            `json:"agent_review_reason,omitempty"`
+	Item              Item              `json:"item"`
+	OriginalItem      *Item             `json:"original_item,omitempty"`
+	FieldProvenance   map[string]string `json:"field_provenance,omitempty"`
+	SourceProvenance  map[string]string `json:"source_provenance,omitempty"`
+	Errors            []string          `json:"errors,omitempty"`
+	CreatedAt         time.Time         `json:"created_at"`
+	UpdatedAt         time.Time         `json:"updated_at"`
 }
 
 type ImportFile struct {
