@@ -1,0 +1,15 @@
+{
+  "change": "internal-business-trial-stabilization",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "60d3439bb16b7a311024e22df35b89c9206686636640206f5adfb23a6ace3505",
+  "files": [
+    { "path": "openspec/changes/internal-business-trial-stabilization/proposal.md", "sha256": "772d08d6e52ed7937d930d6f00d0e5b47c47d8db598bb1d154d4baec26d9ce42" },
+    { "path": "openspec/changes/internal-business-trial-stabilization/design.md", "sha256": "065e99024e7ddfeee64191dc2a768f65d4cd0442b11608edd3684a70742bef6d" },
+    { "path": "openspec/changes/internal-business-trial-stabilization/tasks.md", "sha256": "457902e3c56b4be4338f1bf3054f5904cd0c9a0ea150d64331dd6b9024b650a3" },
+    { "path": "openspec/changes/internal-business-trial-stabilization/specs/internal-trial-rollout/spec.md", "sha256": "5f90a80929fdf88be378b62cd1c8573cb4567d4227f8cf69a8ce597745899a99" },
+    { "path": "openspec/changes/internal-business-trial-stabilization/specs/quality-gates/spec.md", "sha256": "95a7af44a2b6fe4137f0e05803e563445bde05b8bc1c17a831525efc23139199" }
+  ]
+}

@@ -1,0 +1,21 @@
+- [x] 1. 增加业务试用反馈 fixture 校验
+  - [x] 1.1 定义最小业务反馈数据结构，限制为非敏感字段。
+  - [x] 1.2 实现校验逻辑：脚本完成、评分范围、扩大结论、阻断项冲突。
+  - [x] 1.3 增加通过和失败单测。
+- [x] 2. 扩展内部试用 smoke
+  - [x] 2.1 新增默认业务反馈 fixture 路径。
+  - [x] 2.2 将业务反馈校验纳入默认离线 smoke。
+  - [x] 2.3 输出稳定 `business_trial` marker。
+- [x] 3. 更新内部试用文档
+  - [x] 3.1 更新启动清单，加入业务反馈 fixture / smoke marker。
+  - [x] 3.2 更新业务试用 runbook，说明扩大条件和阻断条件。
+  - [x] 3.3 更新 Go/No-Go，明确内部业务试用稳定版不是生产上线。
+  - [x] 3.4 如接口或边界说明变化，同步 SDD。
+- [x] 4. 记录代码变更文档
+  - [x] 4.1 创建 `docs/code-changes/06-07-internal-business-trial-stabilization.md`。
+  - [x] 4.2 基于真实 diff 写入函数级说明、调用链、数据流、验证和风险。
+- [ ] 5. 验证和收口
+  - [ ] 5.1 运行 `go test ./cmd/internal-trial-smoke ./internal/agentkit/verify -count=1`。
+  - [ ] 5.2 运行 `go run ./cmd/internal-trial-smoke`。
+  - [ ] 5.3 运行 `openspec validate internal-business-trial-stabilization --strict`。
+  - [ ] 5.4 更新 tasks 勾选并进入 Comet verify。
