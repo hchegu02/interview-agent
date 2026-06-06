@@ -29,6 +29,34 @@ openspec/changes/<change>/
 - 是否影响 PG / Redis / 前端类型。
 - 测试和回滚方式。
 
+## 阶段收口
+
+每个阶段必须先收口再进入下一阶段。推荐顺序：
+
+```text
+写 OpenSpec
+  -> 写测试或验证点
+  -> 实现
+  -> 相关测试
+  -> 全量测试
+  -> OpenSpec strict 校验
+  -> archive
+  -> 主 spec strict 校验
+  -> 精确暂存
+  -> commit
+  -> 必要时 push
+```
+
+不要在一个未提交的大改动上继续叠新功能。`main` 长期 ahead 时，应优先提交和 push，再开下一阶段。
+
+## OpenSpec 规则
+
+- `proposal.md` 写为什么做、做什么、不做什么。
+- `design.md` 写接口、状态、数据流、失败语义和取舍。
+- `tasks.md` 必须和真实完成状态一致，不能为了归档提前打勾。
+- delta spec 的 requirement 必须和真实代码行为一致；如果代码会二次调整，例如动态难度再叠加 `GapStrategy`，spec 不能写成固定最终值。
+- archive 后必须校验主 spec。
+
 ## Go 修改规则
 
 - Handler 只负责参数解析、调用 service、返回响应。
@@ -66,6 +94,17 @@ openspec/changes/<change>/
 - 提交前必须查看 `git diff --cached --name-status`。
 - 不提交 `.vscode`、密钥、私有配置。
 - 不默认提交 `docs/code-changes`、`docs/superpowers`、`docs/项目讲解`。
+- `.vscode/` 属于本地 IDE 配置，默认放入 `.gitignore`。
+- 提交前先看 `git status --short --branch`，确认没有误纳入未跟踪文件。
+- push 前先确认本地提交数量和远端目标，不在大改未验证时 push。
+
+## Sub-agent 规则
+
+- sub-agent 用于提效，不代表项目运行时支持 sub-agent。
+- 优先并发做代码审查、规格审查、下一阶段调研。
+- 实现型 sub-agent 必须有不重叠的文件范围。
+- sub-agent 结论必须由主 agent 复核，并通过真实测试或构建验证。
+- 不能用 sub-agent 的“PASS”替代 `go test`、OpenSpec 校验或前端 build。
 
 ## 验证规则
 

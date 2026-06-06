@@ -34,6 +34,30 @@ Interview Agent 是基于 Go 后端、Agent Graph、RAG、多轮评分和报告�
 5. 修改后运行最小必要验证。
 6. 如果改变架构、接口或运行链路，更新 SDD 或 OpenSpec。
 
+## 阶段收口流程
+
+每个 OpenSpec change 必须按以下顺序收口，避免代码、规格和 Git 状态分裂：
+
+```text
+proposal/design/tasks
+  -> 先补测试或明确验证点
+  -> 实现
+  -> go test ./...
+  -> openspec validate <change> --strict
+  -> openspec archive <change> --yes
+  -> openspec validate <capability> --strict
+  -> 精确 git add
+  -> git diff --cached --name-status
+  -> git commit
+  -> 阶段性 push
+```
+
+例外：
+
+- 纯文档或配置微调可以跳过完整 OpenSpec，但仍要说明影响范围和验证方式。
+- 归档后如果主 spec 和代码行为不一致，必须先修 spec 或代码，再提交。
+- 本地分支长期 ahead 时，优先收口、提交和 push，不继续叠大功能。
+
 ## 禁止事项
 
 - 不使用 `git add .`，提交时必须精确暂存文件。
@@ -104,3 +128,13 @@ docs/code-changes/MM-DD-简短变更名.md
 - sub-agent 输出必须包含：已检查文件、结论、修改内容、验证结果、剩余风险。
 - sub-agent 的结论不能替代真实测试、构建、浏览器检查或人工集成审查。
 - 集成前主 agent 必须复核所有改动，确认没有接口冲突、重复实现或行为漂移。
+
+### 推荐并发模式
+
+优先使用以下三类并发任务：
+
+- 代码审查 agent：检查 bug、兼容性、测试缺口和边界条件。
+- 规格审查 agent：检查 OpenSpec、SDD、tasks 和真实代码是否一致。
+- 下一阶段调研 agent：只读分析后续入口和风险，不直接改文件。
+
+实现型 sub-agent 只在文件范围不重叠时使用；涉及同一接口、同一状态结构或同一 Graph 流程时，由主 agent 本地实现。

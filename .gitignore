@@ -96,10 +96,7 @@ postgres-data/
 # IDE / editor
 # =========================
 .idea/
-
-.vscode/*
-!.vscode/settings.json
-!.vscode/extensions.json
+.vscode/
 
 .claude/
 .history/

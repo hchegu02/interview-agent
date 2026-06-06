@@ -43,10 +43,13 @@ go run ./cmd/server -config config/config.yaml.example
 
 ```powershell
 git status --short --untracked-files=all
+git status --short --branch
 git diff --name-status
 git diff --cached --name-status
 git add "file1" "file2"
 git commit -m "type: message"
+git log --oneline -5
+git log --oneline "origin/main..HEAD"
 ```
 
 禁止默认使用：
@@ -54,4 +57,26 @@ git commit -m "type: message"
 ```powershell
 git add .
 git add -A
+```
+
+## OpenSpec
+
+```powershell
+openspec list --json
+openspec validate <change> --strict
+openspec archive <change> --yes
+openspec validate <capability> --strict
+```
+
+如果 OpenSpec CLI 在沙箱内因访问用户目录失败，需要提升权限后重跑同一条命令；不能把沙箱错误当成 spec 通过。
+
+## 阶段收口组合
+
+```powershell
+go test ./... -count=1
+openspec validate <change> --strict
+openspec archive <change> --yes
+openspec validate <capability> --strict
+git status --short --branch
+git diff --cached --name-status
 ```
