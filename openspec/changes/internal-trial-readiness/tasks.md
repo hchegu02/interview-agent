@@ -12,7 +12,7 @@
 
 - [x] 3.1 Add explicit internal-trial wiring for real read-only GitHub tool client without changing default mock behavior.
 - [x] 3.2 Ensure missing real tool configuration produces stable diagnostic state and trace.
-- [ ] 3.3 Update `project_polish` behavior/spec tests so real, mock and failed tool paths are distinguishable.
+- [x] 3.3 Update `project_polish` behavior/spec tests so real, mock and failed tool paths are distinguishable.
 
 ## 4. Memory Observability Trial Gate
 

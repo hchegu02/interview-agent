@@ -177,7 +177,7 @@ func (s projectPolishSkill) tryAnalyzeProject(ctx context.Context, githubURL, to
 	highlights := stringSliceFromAny(out["highlights"])
 	risks := stringSliceFromAny(out["risk_points"])
 	var b strings.Builder
-	b.WriteString("基于 mock GitHub 项目分析：")
+	b.WriteString("基于 GitHub 项目分析：")
 	b.WriteString(summary)
 	b.WriteString("。简历表述建议仍按“背景问题、你的动作、技术取舍、量化结果、复盘改进”组织。")
 	if len(highlights) > 0 {

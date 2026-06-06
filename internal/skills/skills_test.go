@@ -100,6 +100,37 @@ func TestProjectPolishSkill_UsesGithubAnalyzeToolFromMessage(t *testing.T) {
 	}
 }
 
+func TestProjectPolishSkill_SuccessContentDoesNotClaimMockForRealLikeTool(t *testing.T) {
+	tools := agentkit.NewToolRegistry(agentkit.NoopHook{})
+	if err := tools.Register(staticTool{
+		spec: agentkit.ToolSpec{Name: "github.project_analyze", Permission: agentkit.PermissionReadOnly},
+		result: agentkit.ToolResult{
+			Output: map[string]any{
+				"summary":     "repository metadata summary from read-only GitHub analysis",
+				"highlights":  []string{"public metadata fetched"},
+				"risk_points": []string{"network errors remain visible in tool_trace"},
+			},
+			Summary: "github analysis for acme/demo",
+		},
+	}); err != nil {
+		t.Fatalf("register static tool: %v", err)
+	}
+	reg := NewDefaultRegistryWithTools(tools)
+
+	result, err := reg.Run(context.Background(), "project_polish", SkillInput{
+		Message: "帮我润色 https://github.com/acme/demo 这个项目",
+	})
+	if err != nil {
+		t.Fatalf("run skill: %v", err)
+	}
+	if strings.Contains(result.Content, "mock GitHub") {
+		t.Fatalf("content claims mock for real-like tool output: %s", result.Content)
+	}
+	if len(result.ToolTrace) != 1 || result.ToolTrace[0].Summary != "github analysis for acme/demo" {
+		t.Fatalf("tool trace = %+v, want real-like summary to identify source", result.ToolTrace)
+	}
+}
+
 func TestProjectPolishSkill_ToolFailureFallsBack(t *testing.T) {
 	tools := agentkit.NewToolRegistry(agentkit.NoopHook{})
 	if err := tools.Register(failingTool{
