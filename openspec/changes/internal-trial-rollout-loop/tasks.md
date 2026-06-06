@@ -8,8 +8,8 @@
 - [x] 2.1 Update the internal trial launch checklist as the single entry point.
 - [x] 2.2 Add technical trial Runbook with startup, validation, diagnosis, and rollback steps.
 - [x] 2.3 Add business trial Runbook with fixed user flow and feedback collection steps.
-- [ ] 2.4 Add issue record template with required reproduction and diagnostic fields.
-- [ ] 2.5 Add product feedback scoring template.
+- [x] 2.4 Add issue record template with required reproduction and diagnostic fields.
+- [x] 2.5 Add product feedback scoring template.
 - [ ] 2.6 Add Go/No-Go standard for continuing, pausing, rolling back, or expanding trial scope.
 
 ## 3. Verification
