@@ -1,5 +1,5 @@
 workflow: full
-phase: build
+phase: verify
 build_mode: subagent-driven-development
 isolation: branch
 verify_mode: null
@@ -14,3 +14,5 @@ verified_at: null
 archived: false
 handoff_context: openspec/changes/internal-trial-rollout-loop/.comet/handoff/design-context.json
 handoff_hash: 92914082e2e1b3c6b55a5961f45402cc3f61257a7895d629366bee4f8b5a3174
+build_command: openspec validate internal-trial-rollout-loop --strict
+verify_command: openspec validate internal-trial-rollout-loop --strict
