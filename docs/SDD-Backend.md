@@ -646,54 +646,41 @@ evaluate
 
 目标：提供统一工具调用边界，为后续 GitHub 项目分析、网页抓取等外部工具接入做准备。
 
-建议先做抽象和 mock，不急着接真实 MCP Server、容器 sandbox 或完整 Gateway。
+当前阶段复用 `internal/agentkit`，不再新建重复的 `internal/tools` 抽象。`agentkit` 已提供：
 
-建议目录：
+- `Tool`
+- `ToolSpec`
+- `ToolCall`
+- `ToolResult`
+- `ToolRegistry`
+- `MCPClient`
+- `MCPToolAdapter`
+- `Permission`
+- Hook 事件
 
-```text
-internal/tools
-  registry.go
-  tool.go
-  mcp_adapter.go
-  mock_mcp.go
-  github_project.go
-  web_fetch.go
-```
+已落地 foundation：
 
-建议接口：
+- `ToolRegistry.List` 稳定返回已注册工具清单。
+- `MockMCPClient` 提供 deterministic mock 输出，便于本地测试和演示。
+- `RegisterDefaultMCPTools` 注册默认 mock MCP 工具。
+- `github.project_analyze` 返回项目摘要、主要语言、亮点和风险点。
+- `web.fetch` 返回 URL、标题和正文摘要。
+- 所有工具调用仍经过 `ToolRegistry.Call` 的权限、超时和 before/after hook。
 
-```go
-type Tool interface {
-    Name() string
-    Description() string
-    Call(ctx context.Context, input ToolInput) (ToolOutput, error)
-}
+当前工具只是 mock foundation：
 
-type ToolInput struct {
-    Arguments map[string]any
-}
+- 不接真实 GitHub API。
+- 不接真实网页抓取。
+- 不实现完整 MCP Server / Client 协议生命周期。
+- 不实现 Gateway、daemon、Sandbox 或 runtime sub-agent。
+- 不改变 `/api/agent/message` 响应结构。
 
-type ToolOutput struct {
-    Result map[string]any
-    Error  string
-}
-
-type MCPAdapter interface {
-    CallTool(ctx context.Context, name string, args map[string]any) (ToolOutput, error)
-}
-```
-
-推荐先接两个工具场景：
-
-- `github.project_analyze`
-- `web.fetch`
-
-用途：
+后续用途：
 
 ```text
 用户输入 GitHub 项目地址
-  -> Tool 拉取 README / 项目结构
-  -> ResumeProfilerAgent 分析项目亮点
+  -> 后续接入真实工具后拉取 / 分析项目资料
+  -> 当前阶段 github.project_analyze 只返回 mock 项目分析结果
   -> ProjectPolishSkill 生成简历项目描述
   -> InterviewerAgent 针对项目追问
 ```

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -46,6 +47,8 @@ type ToolRegistry struct {
 	hook  Hook
 }
 
+// NewToolRegistry 创建工具注册表。
+// 当前约定是启动 / 装配阶段注册工具，运行期只读调用；不要在运行期并发 Register。
 func NewToolRegistry(hook Hook) *ToolRegistry {
 	if hook == nil {
 		hook = NoopHook{}
@@ -64,6 +67,19 @@ func (r *ToolRegistry) Register(tool Tool) error {
 	}
 	r.tools[name] = tool
 	return nil
+}
+
+// List 按工具名升序返回已注册工具的规格快照。
+// 调用方只能拿到 ToolSpec，不能绕过 ToolRegistry 直接执行 Tool。
+func (r *ToolRegistry) List() []ToolSpec {
+	out := make([]ToolSpec, 0, len(r.tools))
+	for _, tool := range r.tools {
+		out = append(out, tool.Spec())
+	}
+	sort.Slice(out, func(i, j int) bool {
+		return out[i].Name < out[j].Name
+	})
+	return out
 }
 
 func (r *ToolRegistry) Call(ctx context.Context, call ToolCall) (ToolResult, error) {

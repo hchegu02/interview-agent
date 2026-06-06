@@ -1,0 +1,9 @@
+- [x] 1.1 为 `ToolRegistry` 增加只读工具清单能力，并补排序测试。
+- [x] 1.2 实现 deterministic mock MCP client，支持按工具名返回结构化 mock 输出。
+- [x] 1.3 实现默认 MCP 工具注册函数，注册 `github.project_analyze` 和 `web.fetch`。
+- [x] 1.4 补测试覆盖默认注册、mock 调用、权限校验和未知工具错误。
+- [x] 2.1 更新 `docs/SDD-Backend.md`，明确阶段 4 复用 `internal/agentkit`。
+- [x] 2.2 创建 `docs/code-changes/06-06-agentkit-mcp-tool-registry.md`。
+- [x] 3.1 运行 `go test ./internal/agentkit -count=1`。
+- [x] 3.2 运行 `go test ./... -count=1`。
+- [x] 3.3 运行 `openspec validate add-agentkit-mcp-tool-registry --strict`。

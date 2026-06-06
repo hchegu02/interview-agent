@@ -3,6 +3,7 @@ package agentkit
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -75,5 +76,27 @@ func TestToolRegistryTimeout(t *testing.T) {
 	}
 	if _, err := reg.Call(context.Background(), ToolCall{Name: "slow", Permission: PermissionReadOnly}); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("timeout err = %v", err)
+	}
+}
+
+func TestToolRegistryListReturnsSortedSpecs(t *testing.T) {
+	reg := NewToolRegistry(NoopHook{})
+	for _, name := range []string{"web.fetch", "github.project_analyze"} {
+		err := reg.Register(stubTool{
+			spec: ToolSpec{Name: name, Permission: PermissionReadOnly},
+			run:  func(context.Context, ToolCall) (ToolResult, error) { return ToolResult{}, nil },
+		})
+		if err != nil {
+			t.Fatalf("register %s: %v", name, err)
+		}
+	}
+
+	specs := reg.List()
+	names := make([]string, 0, len(specs))
+	for _, spec := range specs {
+		names = append(names, spec.Name)
+	}
+	if want := []string{"github.project_analyze", "web.fetch"}; !reflect.DeepEqual(names, want) {
+		t.Fatalf("tool names = %+v, want %+v", names, want)
 	}
 }
