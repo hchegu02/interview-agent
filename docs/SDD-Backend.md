@@ -632,12 +632,14 @@ evaluate
 - 中间分数清空 streak，降级评分 `score < 0` 不影响难度。
 - 重放同一个 round 时不会重复累计 streak，避免恢复或重试导致难度误升/误降。
 - Graph 已接入 `update_memory -> update_difficulty -> reflection_check`。
+- `retrieve_rag` 读取 `WorkingMemory.Difficulty.Current` 推导 RAG 基础目标难度：easy -> 2，medium -> 3，hard -> 4。
+- RAG 仍会在动态目标难度上叠加 `GapStrategy` 微调；用户设置的 `QuestionBankFilter.DifficultyMin/DifficultyMax` 继续作为硬过滤条件传给 retriever。
 
 当前边界：
 
 - 不让 LLM 单独决定难度。
 - 尚未读取长期记忆中的历史弱点。
-- 尚未把动态难度写入 RAG 检索目标难度。
+- 动态难度只影响 RAG 候选题目标难度，尚未显式写入 `pick_next` 的 LLM prompt。
 - 不改变 HTTP 响应结构。
 
 ### 13.5 第四阶段：MCP Adapter

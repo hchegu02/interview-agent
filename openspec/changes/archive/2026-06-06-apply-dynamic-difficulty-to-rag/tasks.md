@@ -1,0 +1,8 @@
+- [x] 1.1 新增 RAG 动态难度目标测试，覆盖 easy/medium/hard 映射。
+- [x] 1.2 覆盖缺少动态难度状态时的兼容默认行为。
+- [x] 1.3 覆盖用户手动难度过滤不会被动态目标覆盖。
+- [x] 2.1 在 `retrieve_rag` 中根据 `WorkingMemory.Difficulty` 解析基础目标难度。
+- [x] 2.2 保留 `GapStrategy` 微调和题库硬过滤字段。
+- [x] 3.1 更新后端 SDD。
+- [x] 3.2 运行相关 Go 测试和全量 Go 测试。
+- [x] 3.3 运行 OpenSpec strict 校验。

@@ -142,7 +142,7 @@ func NewRetrieveRAGNode(
 
 		queryTags := buildQueryTags(sess.GapReport, sess.JobProfile)
 		queryText := buildQueryText(queryTags, sess.JobProfile.Title)
-		targetDiff := tuneDifficulty(opts.TargetDifficulty, sess.GapReport.Strategy)
+		targetDiff := tuneDifficulty(resolveRAGTargetDifficulty(sess, opts.TargetDifficulty), sess.GapReport.Strategy)
 
 		// 1. Embed query
 		vectors, err := embedder.Embed(ctx, []string{queryText})
@@ -339,6 +339,28 @@ func tuneDifficulty(base int, s domain.GapStrategy) int {
 		return 5
 	}
 	return base
+}
+
+// resolveRAGTargetDifficulty 把 Agent 运行时三档难度映射到题库 1-5 难度。
+//
+// 设计取舍：
+//   - Easy/Medium/Hard 只表达面试节奏倾向，不直接等同题库难度 1/2/3。
+//   - 映射到 2/3/4，给 GapStrategy 仍保留 ±1 的调整空间。
+//   - 旧 Session 没有 WorkingMemory/Difficulty 时，回退到静态 option，保持兼容。
+func resolveRAGTargetDifficulty(sess *domain.Session, defaultTarget int) int {
+	if sess == nil || sess.WorkingMemory == nil || sess.WorkingMemory.Difficulty == nil {
+		return defaultTarget
+	}
+	switch sess.WorkingMemory.Difficulty.Current {
+	case domain.DifficultyEasy:
+		return 2
+	case domain.DifficultyMedium:
+		return 3
+	case domain.DifficultyHard:
+		return 4
+	default:
+		return defaultTarget
+	}
 }
 
 // markDegraded 在 WorkingMemory 上打降级标记,供 SSE / 报告页透出。

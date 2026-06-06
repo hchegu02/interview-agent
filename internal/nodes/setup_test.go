@@ -575,6 +575,134 @@ func TestRetrieveRAG_PassesQuestionBankFilterToRetriever(t *testing.T) {
 	}
 }
 
+func TestRetrieveRAG_UsesDynamicDifficultyAsTarget(t *testing.T) {
+	tests := []struct {
+		name       string
+		difficulty domain.Difficulty
+		want       int
+	}{
+		{name: "easy lowers target", difficulty: domain.DifficultyEasy, want: 2},
+		{name: "medium keeps target", difficulty: domain.DifficultyMedium, want: 3},
+		{name: "hard raises target", difficulty: domain.DifficultyHard, want: 4},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			embedder := &stubEmbedder{dim: 1024}
+			r := newFakeRetriever([]string{"go-001"}, nil)
+			node := NewRetrieveRAGNode(embedder, r, RetrieveRAGOptions{TopK: 10})
+
+			sess := buildRAGSession([]string{"go"}, []string{"go"})
+			sess.WorkingMemory = domain.NewWorkingMemory()
+			sess.WorkingMemory.Difficulty.Current = tt.difficulty
+
+			if err := node(context.Background(), sess); err != nil {
+				t.Fatalf("node failed: %v", err)
+			}
+			if r.lastQ.Difficulty != tt.want {
+				t.Fatalf("target difficulty = %d, want %d", r.lastQ.Difficulty, tt.want)
+			}
+		})
+	}
+}
+
+func TestRetrieveRAG_DefaultsDynamicDifficultyWhenMissing(t *testing.T) {
+	tests := []struct {
+		name          string
+		workingMemory *domain.WorkingMemory
+	}{
+		{name: "missing working memory", workingMemory: nil},
+		{name: "missing difficulty state", workingMemory: &domain.WorkingMemory{}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			embedder := &stubEmbedder{dim: 1024}
+			r := newFakeRetriever([]string{"go-001"}, nil)
+			node := NewRetrieveRAGNode(embedder, r, RetrieveRAGOptions{TopK: 10})
+
+			sess := buildRAGSession([]string{"go"}, []string{"go"})
+			sess.WorkingMemory = tt.workingMemory
+			if err := node(context.Background(), sess); err != nil {
+				t.Fatalf("node failed: %v", err)
+			}
+			if r.lastQ.Difficulty != 3 {
+				t.Fatalf("target difficulty = %d, want default medium target 3", r.lastQ.Difficulty)
+			}
+		})
+	}
+}
+
+func TestRetrieveRAG_FallsBackWhenDynamicDifficultyInvalid(t *testing.T) {
+	embedder := &stubEmbedder{dim: 1024}
+	r := newFakeRetriever([]string{"go-001"}, nil)
+	node := NewRetrieveRAGNode(embedder, r, RetrieveRAGOptions{TopK: 10, TargetDifficulty: 4})
+
+	sess := buildRAGSession([]string{"go"}, []string{"go"})
+	sess.WorkingMemory = domain.NewWorkingMemory()
+	sess.WorkingMemory.Difficulty.Current = domain.Difficulty(99)
+
+	if err := node(context.Background(), sess); err != nil {
+		t.Fatalf("node failed: %v", err)
+	}
+	if r.lastQ.Difficulty != 4 {
+		t.Fatalf("target difficulty = %d, want fallback target 4", r.lastQ.Difficulty)
+	}
+}
+
+func TestRetrieveRAG_AppliesGapStrategyAfterDynamicDifficulty(t *testing.T) {
+	tests := []struct {
+		name       string
+		difficulty domain.Difficulty
+		strategy   domain.GapStrategy
+		wantTarget int
+	}{
+		{name: "hard validate clamps up to 5", difficulty: domain.DifficultyHard, strategy: domain.GapStrategyValidate, wantTarget: 5},
+		{name: "easy cover gap clamps down to 1", difficulty: domain.DifficultyEasy, strategy: domain.GapStrategyCoverGap, wantTarget: 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			embedder := &stubEmbedder{dim: 1024}
+			r := newFakeRetriever([]string{"go-001"}, nil)
+			node := NewRetrieveRAGNode(embedder, r, RetrieveRAGOptions{TopK: 10})
+
+			sess := buildRAGSession([]string{"go"}, []string{"go"})
+			sess.GapReport.Strategy = tt.strategy
+			sess.WorkingMemory = domain.NewWorkingMemory()
+			sess.WorkingMemory.Difficulty.Current = tt.difficulty
+
+			if err := node(context.Background(), sess); err != nil {
+				t.Fatalf("node failed: %v", err)
+			}
+			if r.lastQ.Difficulty != tt.wantTarget {
+				t.Fatalf("target difficulty = %d, want %d", r.lastQ.Difficulty, tt.wantTarget)
+			}
+		})
+	}
+}
+
+func TestRetrieveRAG_DynamicDifficultyDoesNotOverwriteManualFilter(t *testing.T) {
+	embedder := &stubEmbedder{dim: 1024}
+	r := newFakeRetriever([]string{"go-001"}, nil)
+	node := NewRetrieveRAGNode(embedder, r, RetrieveRAGOptions{TopK: 10})
+
+	sess := buildRAGSession([]string{"go"}, []string{"go"})
+	sess.WorkingMemory = domain.NewWorkingMemory()
+	sess.WorkingMemory.Difficulty.Current = domain.DifficultyHard
+	sess.QuestionBankFilter = &domain.QuestionBankFilter{DifficultyMin: 2, DifficultyMax: 3}
+
+	if err := node(context.Background(), sess); err != nil {
+		t.Fatalf("node failed: %v", err)
+	}
+	if r.lastQ.Difficulty != 4 {
+		t.Fatalf("target difficulty = %d, want hard target 4", r.lastQ.Difficulty)
+	}
+	if r.lastQ.DifficultyMin != 2 || r.lastQ.DifficultyMax != 3 {
+		t.Fatalf("manual range = %d..%d, want 2..3", r.lastQ.DifficultyMin, r.lastQ.DifficultyMax)
+	}
+}
+
 func TestRetrieveRAG_EmbedderFails_Fallback(t *testing.T) {
 	embedder := &stubEmbedder{dim: 1024, err: errors.New("embed boom")}
 	r := newFakeRetriever(nil, nil)
