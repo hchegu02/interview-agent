@@ -11,7 +11,7 @@ type BusinessTrialFeedback struct {
 	ReportUsefulnessScore int    `json:"report_usefulness_score"`
 	ProjectPolishScore    int    `json:"project_polish_score"`
 	ExpandRecommendation  string `json:"expand_recommendation"`
-	HasBlocker            bool   `json:"has_blocker"`
+	HasBlocker            *bool  `json:"has_blocker"`
 	MostValuable          string `json:"most_valuable,omitempty"`
 	TopIssue              string `json:"top_issue,omitempty"`
 	NextPriority          string `json:"next_priority,omitempty"`
@@ -20,6 +20,10 @@ type BusinessTrialFeedback struct {
 type BusinessTrialFeedbackVerifier struct{}
 
 func (BusinessTrialFeedbackVerifier) VerifyFeedback(feedback BusinessTrialFeedback) []Failure {
+	return BusinessTrialFeedbackVerifier{}.Verify(feedback)
+}
+
+func (BusinessTrialFeedbackVerifier) Verify(feedback BusinessTrialFeedback) []Failure {
 	failures := []Failure{}
 
 	if strings.TrimSpace(feedback.TrialRole) == "" {
@@ -45,7 +49,9 @@ func (BusinessTrialFeedbackVerifier) VerifyFeedback(feedback BusinessTrialFeedba
 	if recommendation != "yes" && recommendation != "no" && recommendation != "unsure" {
 		failures = append(failures, Failure{Code: "business_trial_expand_recommendation_invalid", Message: "expand_recommendation must be yes, no, or unsure", Target: "expand_recommendation"})
 	}
-	if feedback.HasBlocker && recommendation == "yes" {
+	if feedback.HasBlocker == nil {
+		failures = append(failures, Failure{Code: "business_trial_has_blocker_missing", Message: "business trial feedback has_blocker is missing", Target: "has_blocker"})
+	} else if *feedback.HasBlocker && recommendation == "yes" {
 		failures = append(failures, Failure{Code: "business_trial_blocker_expansion_conflict", Message: "feedback with blocker cannot recommend expansion", Target: "expand_recommendation"})
 	}
 

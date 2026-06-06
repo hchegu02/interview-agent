@@ -17,7 +17,7 @@ func TestBusinessTrialFeedbackVerifierValidPass(t *testing.T) {
 		t.Fatalf("unmarshal fixture: %v", err)
 	}
 
-	failures := BusinessTrialFeedbackVerifier{}.VerifyFeedback(feedback)
+	failures := BusinessTrialFeedbackVerifier{}.Verify(feedback)
 	if len(failures) != 0 {
 		t.Fatalf("valid feedback failures = %+v", failures)
 	}
@@ -27,7 +27,7 @@ func TestBusinessTrialFeedbackVerifierRejectsIncompleteScript(t *testing.T) {
 	feedback := validBusinessTrialFeedback()
 	feedback.CompletedFixedScript = false
 
-	failures := BusinessTrialFeedbackVerifier{}.VerifyFeedback(feedback)
+	failures := BusinessTrialFeedbackVerifier{}.Verify(feedback)
 	requireFailureCode(t, failures, "business_trial_script_incomplete")
 }
 
@@ -35,16 +35,17 @@ func TestBusinessTrialFeedbackVerifierRejectsScoreOutOfRange(t *testing.T) {
 	feedback := validBusinessTrialFeedback()
 	feedback.InterviewFlowScore = 6
 
-	failures := BusinessTrialFeedbackVerifier{}.VerifyFeedback(feedback)
+	failures := BusinessTrialFeedbackVerifier{}.Verify(feedback)
 	requireFailureCode(t, failures, "business_trial_score_invalid")
 }
 
 func TestBusinessTrialFeedbackVerifierRejectsBlockerExpansionConflict(t *testing.T) {
 	feedback := validBusinessTrialFeedback()
-	feedback.HasBlocker = true
+	hasBlocker := true
+	feedback.HasBlocker = &hasBlocker
 	feedback.ExpandRecommendation = " YES "
 
-	failures := BusinessTrialFeedbackVerifier{}.VerifyFeedback(feedback)
+	failures := BusinessTrialFeedbackVerifier{}.Verify(feedback)
 	requireFailureCode(t, failures, "business_trial_blocker_expansion_conflict")
 }
 
@@ -52,11 +53,20 @@ func TestBusinessTrialFeedbackVerifierRejectsMissingRecommendation(t *testing.T)
 	feedback := validBusinessTrialFeedback()
 	feedback.ExpandRecommendation = " "
 
-	failures := BusinessTrialFeedbackVerifier{}.VerifyFeedback(feedback)
+	failures := BusinessTrialFeedbackVerifier{}.Verify(feedback)
 	requireFailureCode(t, failures, "business_trial_expand_recommendation_invalid")
 }
 
+func TestBusinessTrialFeedbackVerifierRejectsMissingHasBlocker(t *testing.T) {
+	feedback := validBusinessTrialFeedback()
+	feedback.HasBlocker = nil
+
+	failures := BusinessTrialFeedbackVerifier{}.Verify(feedback)
+	requireFailureCode(t, failures, "business_trial_has_blocker_missing")
+}
+
 func validBusinessTrialFeedback() BusinessTrialFeedback {
+	hasBlocker := false
 	return BusinessTrialFeedback{
 		TrialRole:             "interviewer",
 		TrialDate:             "2026-06-07",
@@ -66,7 +76,7 @@ func validBusinessTrialFeedback() BusinessTrialFeedback {
 		ReportUsefulnessScore: 4,
 		ProjectPolishScore:    4,
 		ExpandRecommendation:  "yes",
-		HasBlocker:            false,
+		HasBlocker:            &hasBlocker,
 		MostValuable:          "报告和追问可以辅助内部面试复盘。",
 		TopIssue:              "题库覆盖仍需继续增加 Go 后端真实场景。",
 		NextPriority:          "继续收集 Go 后端题库和报告质量反馈。",
