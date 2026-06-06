@@ -23,7 +23,7 @@
 
 - [x] 5.1 Add a repeatable internal trial smoke command or script covering interview completion, report, memory observation, Agent project polish and tool trace.
 - [x] 5.2 Update `cmd/agent-verify` fixtures or related tests if the smoke needs new stable inputs.
-- [ ] 5.3 Run Go, frontend, agent-verify, smoke and OpenSpec validation gates.
+- [x] 5.3 Run Go, frontend, agent-verify, smoke and OpenSpec validation gates.
 
 ## 6. Documentation
 

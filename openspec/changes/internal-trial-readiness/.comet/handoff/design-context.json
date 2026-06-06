@@ -1,0 +1,19 @@
+{
+  "change": "internal-trial-readiness",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "e1487718af0d3c57d6a3a3b8e50f0f48eb9b04fbc94f7bd01b799b0b34766d0b",
+  "files": [
+    { "path": "openspec/changes/internal-trial-readiness/proposal.md", "sha256": "10bcfc8635049eed317001ebcd96e8e5dcbcdb231b7ba0b7aee7ae0d767012ae" },
+    { "path": "openspec/changes/internal-trial-readiness/design.md", "sha256": "78a3691691e59790c90b8375f0ed9954697ca0b759596a6e042f9e693dd8669d" },
+    { "path": "openspec/changes/internal-trial-readiness/tasks.md", "sha256": "06270397dd86e583f5f619173f1eea13e8d41af044306c03948b9cb7d842a28e" },
+    { "path": "openspec/changes/internal-trial-readiness/specs/agentkit-mcp-tools/spec.md", "sha256": "b3fe11c30ccfe16672ced5f8b07067de955d029626b48158c5ad2592d9f4af34" },
+    { "path": "openspec/changes/internal-trial-readiness/specs/identity-access-boundary/spec.md", "sha256": "31a36a677e8444f3a5ee3009f71b1c66f4689f8bd0bb85756016c6dc5c0e21de" },
+    { "path": "openspec/changes/internal-trial-readiness/specs/long-term-memory/spec.md", "sha256": "4b065ade378fff12434aabc5f0fccc0f586bf6472db13507bbacb7ecd64a989c" },
+    { "path": "openspec/changes/internal-trial-readiness/specs/project-polish-tools/spec.md", "sha256": "f5cd27b200ea13067e6dd2fd08f97ae69421c98b62e9b330a608afc6402ee332" },
+    { "path": "openspec/changes/internal-trial-readiness/specs/quality-gates/spec.md", "sha256": "f5647e6f169072091999d8641866c45eec4504b7cab0bbd98ad60dcab2daf6b8" },
+    { "path": "openspec/changes/internal-trial-readiness/specs/system-design-documentation/spec.md", "sha256": "3fd6c3a3c274e412625e5250a0b3dc2ab753493e59fa5f56a251cb7fcf72291a" }
+  ]
+}
