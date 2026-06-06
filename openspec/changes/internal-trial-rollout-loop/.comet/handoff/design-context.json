@@ -1,0 +1,14 @@
+{
+  "change": "internal-trial-rollout-loop",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "92914082e2e1b3c6b55a5961f45402cc3f61257a7895d629366bee4f8b5a3174",
+  "files": [
+    { "path": "openspec/changes/internal-trial-rollout-loop/proposal.md", "sha256": "6b2c7f9f772e329c67806eed4bb106cb072fffb8b3d0e79480744e79fcce60d9" },
+    { "path": "openspec/changes/internal-trial-rollout-loop/design.md", "sha256": "67ef11f6bbbf8afbcd6c36a866db96a6d6f5f15c3c60ab7b06fad743e171b31b" },
+    { "path": "openspec/changes/internal-trial-rollout-loop/tasks.md", "sha256": "b6ded460454988c4f4dd73b147da0c28f836b53ca0386be448a400b7e85b7f49" },
+    { "path": "openspec/changes/internal-trial-rollout-loop/specs/internal-trial-rollout/spec.md", "sha256": "15952bd7aedc6571a88e1e31893f3f71dc9e1a385ae759e56aa106b33835f901" }
+  ]
+}
