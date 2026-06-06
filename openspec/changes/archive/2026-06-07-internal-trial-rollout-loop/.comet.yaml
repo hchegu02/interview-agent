@@ -11,7 +11,7 @@ verification_report: docs/superpowers/reports/2026-06-07-internal-trial-rollout-
 branch_status: handled
 created_at: 2026-06-07
 verified_at: 2026-06-07
-archived: false
+archived: true
 handoff_context: openspec/changes/internal-trial-rollout-loop/.comet/handoff/design-context.json
 handoff_hash: 92914082e2e1b3c6b55a5961f45402cc3f61257a7895d629366bee4f8b5a3174
 build_command: openspec validate internal-trial-rollout-loop --strict

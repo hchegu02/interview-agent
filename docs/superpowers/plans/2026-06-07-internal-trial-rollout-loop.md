@@ -1,3 +1,7 @@
+---
+archived-with: 2026-06-07-internal-trial-rollout-loop
+status: final
+---
 # Internal Trial Rollout Loop Implementation Plan
 
 ---

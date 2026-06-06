@@ -2,6 +2,8 @@
 comet_change: internal-trial-rollout-loop
 role: technical-design
 canonical_spec: openspec
+archived-with: 2026-06-07-internal-trial-rollout-loop
+status: final
 ---
 
 # Internal Trial Rollout Loop Design
