@@ -1,0 +1,12 @@
+- [x] 1.1 为 `skills.Registry` 增加可选 `agentkit.ToolRegistry` 注入方式。
+- [x] 1.2 实现 GitHub URL 提取逻辑，优先读 `context.github_url`，再读消息文本。
+- [x] 1.3 让 `project_polish` 在有 GitHub URL 时调用 `github.project_analyze`。
+- [x] 1.4 工具不可用或失败时保持旧模板降级。
+- [x] 1.5 在 `cmd/server` 默认装配 mock MCP tool registry。
+- [x] 2.1 补 `internal/skills` 单测覆盖工具增强、无工具兼容和工具失败降级。
+- [x] 2.2 补 `internal/agent` 或 `cmd/server` 测试覆盖默认服务装配。
+- [x] 3.1 更新 `docs/SDD-Backend.md`。
+- [x] 3.2 创建 `docs/code-changes/06-06-project-polish-mock-tool.md`。
+- [x] 4.1 运行 `go test ./internal/skills ./internal/agent ./cmd/server -count=1`。
+- [x] 4.2 运行 `go test ./... -count=1`。
+- [x] 4.3 运行 `openspec validate connect-project-polish-to-mock-tool --strict`。

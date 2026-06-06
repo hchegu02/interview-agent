@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"interview-agent/internal/agent"
 	"interview-agent/internal/config"
 	"interview-agent/internal/domain"
 	"interview-agent/internal/httpapi"
@@ -468,6 +469,20 @@ func TestBuildChatModel_MockModeNoBreaker(t *testing.T) {
 	}
 	if breakerState != nil {
 		t.Fatal("breakerState should be nil for mock mode")
+	}
+}
+
+func TestBuildAgentService_ProjectPolishUsesMockTool(t *testing.T) {
+	service := buildAgentService()
+	resp, err := service.HandleMessage(context.Background(), agent.AgentMessage{
+		UserID:  "u1",
+		Message: "帮我润色项目 https://github.com/acme/interview-agent",
+	})
+	if err != nil {
+		t.Fatalf("handle message: %v", err)
+	}
+	if !strings.Contains(resp.Result.Content, "interview-agent mock GitHub project analysis") {
+		t.Fatalf("content should include mock tool output: %s", resp.Result.Content)
 	}
 }
 

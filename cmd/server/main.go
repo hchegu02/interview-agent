@@ -73,7 +73,7 @@ func main() {
 
 	server := httpapi.NewServer(cfg)
 	server.SetEventHubMetrics(eventHubMetricsProvider(events))
-	server.SetAgentService(agent.NewDefaultService())
+	server.SetAgentService(buildAgentService())
 
 	// ProfileAnalyzer 是“开始面试前的 JD/简历解释”能力。
 	// 它和真正的面试 Graph 分开装配，避免用户只点分析时也创建 session。
@@ -179,4 +179,8 @@ func shutdownServer(ctx context.Context, srv *http.Server, questionImports inter
 		shutdownErr = errors.Join(shutdownErr, questionImports.Shutdown(ctx))
 	}
 	return shutdownErr
+}
+
+func buildAgentService() *agent.Service {
+	return agent.NewDefaultService()
 }

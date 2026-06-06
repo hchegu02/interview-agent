@@ -675,7 +675,16 @@ evaluate
 - 不实现 Gateway、daemon、Sandbox 或 runtime sub-agent。
 - 不改变 `/api/agent/message` 响应结构。
 
-后续用途：
+已接入 Skill 链路：
+
+- `agent.NewDefaultService` 默认创建 mock MCP tool registry，并注入 `skills.NewDefaultRegistryWithTools`。
+- `cmd/server` 通过 `buildAgentService` 装配默认 Agent 服务。
+- `ProjectPolishSkill` 优先从 `context.github_url`、`context.github`、`context.repo_url` 读取 GitHub URL，其次从用户消息中识别 `github.com/owner/repo`。
+- 有 GitHub URL 且工具可用时，`ProjectPolishSkill` 通过 `ToolRegistry.Call` 调用 `github.project_analyze`。
+- 工具成功时，输出融合 mock 项目摘要、亮点和风险点。
+- 没有 URL、没有工具或工具失败时，降级到原通用项目亮点提炼建议，不中断 `/api/agent/message`。
+
+后续真实工具接入后的用途：
 
 ```text
 用户输入 GitHub 项目地址

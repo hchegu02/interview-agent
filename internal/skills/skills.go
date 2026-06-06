@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
+
+	"interview-agent/internal/agentkit"
 )
 
 var ErrSkillNotFound = errors.New("skill not found")
@@ -41,10 +44,14 @@ func NewRegistry() *Registry {
 }
 
 func NewDefaultRegistry() *Registry {
+	return NewDefaultRegistryWithTools(nil)
+}
+
+func NewDefaultRegistryWithTools(tools *agentkit.ToolRegistry) *Registry {
 	reg := NewRegistry()
 	reg.Register(quizSkill{})
 	reg.Register(explainSkill{})
-	reg.Register(projectPolishSkill{})
+	reg.Register(projectPolishSkill{tools: tools})
 	return reg
 }
 
@@ -92,17 +99,65 @@ func (explainSkill) Run(ctx context.Context, input SkillInput) (SkillResult, err
 	}, nil
 }
 
-type projectPolishSkill struct{}
+type projectPolishSkill struct {
+	tools *agentkit.ToolRegistry
+}
 
 func (projectPolishSkill) Name() string { return "project_polish" }
 
-func (projectPolishSkill) Run(ctx context.Context, input SkillInput) (SkillResult, error) {
+func (s projectPolishSkill) Run(ctx context.Context, input SkillInput) (SkillResult, error) {
 	topic := topicFrom(input)
+	if url := githubURLFrom(input); url != "" && s.tools != nil {
+		if result, ok := s.tryAnalyzeProject(ctx, url); ok {
+			return result, nil
+		}
+	}
 	return SkillResult{
 		Title:   "项目亮点提炼",
 		Content: fmt.Sprintf("围绕 %s 描述时，按“背景问题、你的动作、技术取舍、量化结果、复盘改进”组织，避免只罗列技术名词。", topic),
 		Actions: []Action{{Type: "rewrite_resume", Label: "整理成简历表述", Value: topic}},
 	}, nil
+}
+
+func (s projectPolishSkill) tryAnalyzeProject(ctx context.Context, githubURL string) (SkillResult, bool) {
+	result, err := s.tools.Call(ctx, agentkit.ToolCall{
+		Name:         "github.project_analyze",
+		Input:        map[string]any{"url": githubURL},
+		InputSummary: "github repository url",
+		Permission:   agentkit.PermissionReadOnly,
+	})
+	if err != nil {
+		return SkillResult{}, false
+	}
+	out, ok := result.Output.(map[string]any)
+	if !ok {
+		return SkillResult{}, false
+	}
+	summary := strings.TrimSpace(fmt.Sprint(out["summary"]))
+	if summary == "" {
+		return SkillResult{}, false
+	}
+	highlights := stringSliceFromAny(out["highlights"])
+	risks := stringSliceFromAny(out["risk_points"])
+	var b strings.Builder
+	b.WriteString("基于 mock GitHub 项目分析：")
+	b.WriteString(summary)
+	b.WriteString("。简历表述建议仍按“背景问题、你的动作、技术取舍、量化结果、复盘改进”组织。")
+	if len(highlights) > 0 {
+		b.WriteString(" 可突出：")
+		b.WriteString(strings.Join(highlights, "；"))
+		b.WriteString("。")
+	}
+	if len(risks) > 0 {
+		b.WriteString(" 面试风险点：")
+		b.WriteString(strings.Join(risks, "；"))
+		b.WriteString("。")
+	}
+	return SkillResult{
+		Title:   "项目亮点提炼",
+		Content: b.String(),
+		Actions: []Action{{Type: "rewrite_resume", Label: "整理成简历表述", Value: githubURL}},
+	}, true
 }
 
 func topicFrom(input SkillInput) string {
@@ -119,4 +174,36 @@ func topicFrom(input SkillInput) string {
 		return "当前主题"
 	}
 	return msg
+}
+
+var githubURLPattern = regexp.MustCompile(`https?://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+`)
+
+func githubURLFrom(input SkillInput) string {
+	if input.Context != nil {
+		for _, key := range []string{"github_url", "github", "repo_url"} {
+			if value := strings.TrimSpace(input.Context[key]); value != "" {
+				if url := githubURLPattern.FindString(value); url != "" {
+					return url
+				}
+			}
+		}
+	}
+	return githubURLPattern.FindString(input.Message)
+}
+
+func stringSliceFromAny(value any) []string {
+	switch v := value.(type) {
+	case []string:
+		return append([]string(nil), v...)
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s := strings.TrimSpace(fmt.Sprint(item)); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
 }

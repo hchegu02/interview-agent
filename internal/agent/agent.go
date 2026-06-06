@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	"interview-agent/internal/agentkit"
 	"interview-agent/internal/skills"
 )
 
@@ -99,7 +100,11 @@ func NewService(router Router, registry *skills.Registry) *Service {
 }
 
 func NewDefaultService() *Service {
-	return NewService(NewRuleRouter(), skills.NewDefaultRegistry())
+	tools := agentkit.NewToolRegistry(agentkit.NoopHook{})
+	if err := agentkit.RegisterDefaultMCPTools(tools, agentkit.NewMockMCPClient()); err != nil {
+		return NewService(NewRuleRouter(), skills.NewDefaultRegistry())
+	}
+	return NewService(NewRuleRouter(), skills.NewDefaultRegistryWithTools(tools))
 }
 
 func (s *Service) HandleMessage(ctx context.Context, msg AgentMessage) (AgentResponse, error) {

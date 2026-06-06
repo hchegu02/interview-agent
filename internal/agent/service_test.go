@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"interview-agent/internal/skills"
@@ -23,6 +24,24 @@ func TestService_RunsRoutedSkill(t *testing.T) {
 	}
 	if resp.Result.Title == "" || resp.Result.Content == "" {
 		t.Fatalf("result should be populated: %+v", resp.Result)
+	}
+}
+
+func TestDefaultService_ProjectPolishUsesMockGithubTool(t *testing.T) {
+	service := NewDefaultService()
+
+	resp, err := service.HandleMessage(context.Background(), AgentMessage{
+		UserID:  "u1",
+		Message: "帮我润色这个项目 https://github.com/acme/interview-agent",
+	})
+	if err != nil {
+		t.Fatalf("handle message: %v", err)
+	}
+	if resp.Intent != IntentSkillProjectPolish || resp.Skill != "project_polish" {
+		t.Fatalf("response route = %+v", resp)
+	}
+	if !strings.Contains(resp.Result.Content, "interview-agent mock GitHub project analysis") {
+		t.Fatalf("content should include mock tool output: %s", resp.Result.Content)
 	}
 }
 
