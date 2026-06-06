@@ -1,5 +1,5 @@
 workflow: full
-phase: build
+phase: verify
 build_mode: subagent-driven-development
 isolation: branch
 verify_mode: null
@@ -14,3 +14,4 @@ verified_at: null
 archived: false
 handoff_context: openspec/changes/internal-trial-readiness/.comet/handoff/design-context.json
 handoff_hash: e1487718af0d3c57d6a3a3b8e50f0f48eb9b04fbc94f7bd01b799b0b34766d0b
+build_command: go test ./... -count=1
