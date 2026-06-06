@@ -19,6 +19,7 @@
 - technical trial 中发现的阻断问题已经关闭，且没有未解释的 core verification failure / 核心验证失败。
 - 工具调用结果、`tool_trace` 和用户可见回答一致，没有把真实工具失败描述为成功。
 - 身份边界行为符合预期；不得出现 Identity boundary accepts dev fallback unexpectedly / 身份边界意外接受开发 fallback。
+- 业务反馈证据校验必须通过；如果存在阻断项但仍标记适合扩大试用，必须暂停 rollout。
 - 业务试用仍是内部试用，不是生产发布，不引入新的生产依赖、生产数据范围或外部用户承诺。
 - 真实工具链路失败时，默认先暂停推进并回滚 mock，而不是扩大真实工具覆盖面。
 
@@ -31,6 +32,7 @@
 - Real tool failure is described as success / 真实工具失败被描述为成功。
 - Identity boundary accepts dev fallback unexpectedly / 身份边界意外接受开发 fallback。
 - Critical failures cannot be reproduced / 关键失败不可复现。
+- Business feedback evidence has blockers but still recommends expansion / 业务反馈存在阻断项但仍建议扩大试用。
 
 暂停后只允许做问题定位、复现、修复和验证，不允许继续扩大试用范围。
 
@@ -54,6 +56,7 @@
 - 当前阶段仍依赖未验证的真实工具能力。
 - mock 回滚路径不可用或未验证。
 - 新增范围会引入生产发布语义、生产用户、生产数据、生产 SLA 或不可逆外部副作用。
+- 业务反馈证据缺失、字段不完整，或无法通过 `go run ./cmd/internal-trial-smoke` 复跑验证。
 - 现有问题只能靠人工解释，不能靠代码、配置、测试、trace 或 runbook 复现和验证。
 
 Scope expansion 必须服务于内部试用目标。不能用扩大范围掩盖核心验证失败、真实工具不稳定或身份边界错误。

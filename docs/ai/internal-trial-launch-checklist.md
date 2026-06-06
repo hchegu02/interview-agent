@@ -10,6 +10,7 @@
 - Agent 消息入口：`/api/agent/message` 支持 `quiz`、`explain`、`project_polish` 等 skill。
 - 工具 trace：`project_polish` 可返回顶层 `tool_trace`，前端只读展示工具名、状态、错误类别和摘要。
 - 内部试用 smoke：`go run ./cmd/internal-trial-smoke` 默认离线验证核心链路。
+- 业务试用稳定版门禁：`go run ./cmd/internal-trial-smoke` 默认校验业务反馈 fixture，并输出 `business_trial` marker。
 
 ### 试用闭环文档
 
@@ -73,6 +74,7 @@ openspec validate --all --strict
 ```
 
 任一命令失败都不应标记为可试用。
+`go run ./cmd/internal-trial-smoke` 必须输出 `business_trial: feedback evidence verified`，否则不得标记为业务试用稳定版。
 
 ## 5. 试用步骤
 
@@ -99,4 +101,5 @@ openspec validate --all --strict
 - 真实 GitHub 模式只能由内部试用配置显式启用。
 - 工具失败时有稳定 `tool_trace.status` 或 `tool_trace.error_class`。
 - 长期记忆写入失败不阻断面试完成。
+- 业务反馈证据校验通过，且不存在阻断项被标记为适合扩大试用的情况。
 - 文档和演示口径不把内部试用描述成生产发布。
