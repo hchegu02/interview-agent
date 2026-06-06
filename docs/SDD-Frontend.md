@@ -101,6 +101,7 @@
 - 对 `start_drill` 动作把训练主题写入 JD 草稿。
 
 前端不实现意图判断、Skill 执行、工具调用、MCP 访问或权限判断；`tool_trace` 只是后端响应的展示字段。
+内部试用时，前端仍只展示后端返回的工具状态，不直接调用 GitHub API、MCP 服务或工具后端。
 
 ### 4.6 UserMemoryPage
 
@@ -112,6 +113,7 @@
 - 找不到画像时展示空状态。
 
 前端不编辑长期画像，也不把长期画像塞回当前 Session。当前后端只提供最小 owner resolver / authorizer，不是完整 JWT 登录体系；生产接入前仍应替换为真实身份来源。
+前端不调用长期记忆写接口；长期记忆沉淀由后端在面试完成后处理，失败或跳过状态只能通过后端提供的状态、日志或验证工具观察。
 
 ## 5. 状态设计
 
@@ -161,6 +163,7 @@
 | `GET` | `/api/question-bank/facets` | 题库筛选项 |
 
 `GET /api/users/:user_id/memory` 不只依赖 path `user_id`；前端请求会携带 `X-User-ID`，后端在 owner 与 path 用户不一致时拒绝读取。前端不得把当前开发模式 owner header 包装成生产级用户中心能力。
+内部试用如果改用可信 owner header，也必须由后端配置和上游可信边界注入；前端不得自行模拟用户中心、JWT/OIDC 或租户身份。
 
 接口对齐要求：
 
@@ -255,7 +258,7 @@ npm --prefix web run build
 
 前端已在 Agent 页只读展示 `tool_trace`，字段包括工具名、权限、状态、错误类别、耗时和摘要。缺少 `tool_trace` 时保持原有页面行为，不从文案里反推工具状态。
 
-前端不直接调用外部 MCP 服务。
+前端不直接调用外部 GitHub、MCP 服务、用户中心或长期记忆写接口。内部试用标签只能表达“内部试用 / mock / config_missing / failed”等后端事实，不能暗示外部生产就绪。
 
 ## 11. 非目标
 

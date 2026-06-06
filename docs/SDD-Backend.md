@@ -48,6 +48,7 @@ REST 请求
 | `internal/agentkit` | Skill、Hook、Tool/MCP adapter、Verification 原语 |
 | `cmd/rag-eval` | RAG 离线评估 |
 | `cmd/agent-verify` | Agent 输出验证门禁 |
+| `cmd/internal-trial-smoke` | 内部试用离线 smoke gate |
 
 ## 4. HTTP API 设计
 
@@ -643,6 +644,7 @@ type Store interface {
 - `cmd/server` 无 PostgreSQL 时注入内存长期记忆 Store；配置 PostgreSQL 时注入 `memory.PGStore`，让长期画像跨进程和重启保留。
 - `GET /api/users/:user_id/memory` 返回只读用户画像，用于前端展示长期强项、弱项、技能分数和复习建议。
 - 画像读取 API 已有最小 ownership 边界：默认开发 resolver 从 `X-User-ID` 或 `owner_user_id` 解析当前 owner，并要求 owner 与 path `user_id` 一致；缺少 owner 信息返回 401，owner 不匹配返回 403。`Server` 支持注入 `UserMemoryOwnerResolver` / `UserMemoryAuthorizer`，后续可替换为真实身份体系。
+- 内部试用模式通过 `InternalTrial` 配置把 owner resolver 切到可信 header 来源，默认 header 为 `X-Internal-User`；`X-User-ID` / `owner_user_id` 只保留为开发 fallback，且只有显式 `allow_dev_fallback` 时才在内部试用中启用。
 - 缺少 `user_id`、Session 或 Report 时返回结构化错误，不生成残缺画像。
 
 当前边界：
@@ -743,7 +745,8 @@ evaluate
 当前工具边界：
 
 - 默认服务仍注册 deterministic mock 工具，不默认访问真实 GitHub。
-- 真实 GitHub client 需要装配层显式注入 HTTP client 和 API BaseURL。
+- 真实 GitHub client 只在内部试用启用且 `github_tool_mode=real` 时由装配层显式注入 HTTP client 和 API BaseURL；默认和非内部试用仍走 mock/offline。
+- 真实 GitHub client 缺 `HTTPClient` 或 `BaseURL` 时返回 `MCPToolError{Code: "config_missing"}`，该类别会进入 `tool_trace.error_class`，用于诊断配置缺失。
 - 不接真实网页抓取。
 - 不实现完整 MCP Server / Client 协议生命周期。
 - 不实现 Gateway、daemon、Sandbox 或 runtime sub-agent。
@@ -755,7 +758,7 @@ evaluate
 - `cmd/server` 通过 `buildAgentService` 装配默认 Agent 服务。
 - `ProjectPolishSkill` 优先从 `context.github_url`、`context.github`、`context.repo_url` 读取 GitHub URL，其次从用户消息中识别 `github.com/owner/repo`。
 - 有 GitHub URL 且工具可用时，`ProjectPolishSkill` 通过 `ToolRegistry.Call` 调用 `github.project_analyze`。
-- 工具成功时，输出融合 mock 项目摘要、亮点和风险点。
+- 工具成功时，输出融合 GitHub 项目摘要、亮点和风险点；mock/real/config_missing 等工具状态以 `tool_trace` 为准，不靠正文暗示。
 - 工具成功或失败都会生成内部 trace，并由 `AgentService` 提升到 `AgentResponse.tool_trace` 顶层字段。
 - 没有 URL、没有工具或工具失败时，降级到原通用项目亮点提炼建议，不中断 `/api/agent/message`。
 
@@ -791,6 +794,24 @@ evaluate
 后续开发中可以使用 Codex sub-agent 拆分任务，例如让不同开发代理分别处理 Router、Memory、Difficulty、MCP Adapter、前端展示和验证。但这是开发协作方式，不是 Interview Agent 当前运行时能力。
 
 当前系统不能写成已经支持 sub-agent runtime、sub-agent 调度或分布式多代理执行。
+
+### 13.8 内部试用能力边界
+
+内部试用是 3-10 人可控试用边界，不是外部生产发布。当前实现通过 `InternalTrialConfig` 把身份、真实 GitHub 工具和 smoke gate 收到显式配置层：
+
+- `internal_trial.enabled` 开启后，长期记忆 owner resolver 优先使用 `internal_trial.owner_header` 指定的可信 owner header；`X-User-ID` / `owner_user_id` 只是本地开发 fallback，默认不会在内部试用中启用。
+- `internal_trial.github_tool_mode` 只接受 `mock|real`。默认 `mock` 保持离线 deterministic 工具；只有 `internal_trial.enabled=true` 且 `github_tool_mode=real` 时，`cmd/server` 才显式注册真实只读 `GitHubProjectClient`。
+- 缺少真实 GitHub 配置不会伪装成功；零值 HTTP client 或 API base URL 会形成 `config_missing`，并通过 `/api/agent/message` 的顶层 `tool_trace.error_class` 暴露诊断摘要。
+- 长期记忆写入失败仍不阻断面试完成；观测事件覆盖 `success`、`skipped`、`failed` 和 `conflict_retry_exhausted`，用于日志、fixture 和 smoke 验证。
+- `go run ./cmd/internal-trial-smoke` 是当前内部试用 smoke gate。默认离线、in-process、读取 session fixture、使用 Agent 默认 mock 工具和 memory verifier，不调用公网。`-real-github` 目前只是保留说明，不执行 live GitHub smoke。
+
+明确未实现：
+
+- 完整 JWT/OIDC 登录。
+- 租户、用户中心、计费或生产级权限体系。
+- 完整 MCP gateway/server/client runtime。
+- 运行时 sub-agent 调度。
+- 外部生产发布能力。
 
 ## 14. 非目标
 

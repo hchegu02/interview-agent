@@ -27,6 +27,6 @@
 
 ## 6. Documentation
 
-- [ ] 6.1 Update backend/frontend SDD with internal trial boundaries and non-production limits.
-- [ ] 6.2 Add code-change documentation after implementation based on the real diff.
+- [x] 6.1 Update backend/frontend SDD with internal trial boundaries and non-production limits.
+- [x] 6.2 Add code-change documentation after implementation based on the real diff.
 - [ ] 6.3 Archive the OpenSpec change after verification passes.
