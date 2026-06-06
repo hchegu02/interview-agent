@@ -1,5 +1,5 @@
 workflow: full
-phase: build
+phase: verify
 build_mode: subagent-driven-development
 isolation: branch
 verify_mode: null
@@ -14,3 +14,5 @@ verified_at: null
 archived: false
 handoff_context: openspec/changes/rag-questionbank-business-trial/.comet/handoff/design-context.json
 handoff_hash: 7b0509444c22e099d4a92d1f2f567a4820d0efd0b5247c2bbd9bfe92d5584d66
+build_command: go test ./internal/questionbank ./internal/nodes ./internal/retriever -count=1
+verify_command: openspec validate rag-questionbank-business-trial --strict
