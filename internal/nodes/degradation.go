@@ -42,6 +42,12 @@ func cloneWorkingMemory(mem *domain.WorkingMemory) *domain.WorkingMemory {
 			clone.DegradedReasons[component] = degradedReason
 		}
 	}
+	if mem.AppliedNodes != nil {
+		clone.AppliedNodes = make(map[string]bool, len(mem.AppliedNodes))
+		for key, applied := range mem.AppliedNodes {
+			clone.AppliedNodes[key] = applied
+		}
+	}
 	if mem.Notes != nil {
 		clone.Notes = make(map[string]string, len(mem.Notes))
 		for key, value := range mem.Notes {

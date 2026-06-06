@@ -138,7 +138,7 @@ $env:INTERVIEW_RERANK_ENDPOINT="http://127.0.0.1:9000/rerank"
 - `Hooks`：在关键节点执行前后记录 skill 名称、输入摘要、输出摘要、耗时、错误和权限。
 - `Tool Registry`：统一工具调用边界，处理权限、超时、结构化错误和审计事件。
 - `MCP Client Adapter`：提供 MCP 工具调用抽象和 mock/local adapter，不强依赖真实外部 MCP 服务。
-- `Verification`：提供 report、retrieval trace、tool event 的 verifier 原语，后续可接入质量门禁。
+- `Verification`：提供 report、retrieval trace、Graph 结构、累计节点幂等和 tool event 的 verifier 原语，可作为本地质量门禁。
 
 这不是通用 Coding Agent 平台，也没有实现完整 OpenClaw Gateway、本地 daemon 或容器 Sandbox；当前 Agent Tooling 是围绕模拟面试业务收口的工程能力层。
 
@@ -341,7 +341,7 @@ Agent 输出验证：
 go run ./cmd/agent-verify -session testdata/agent_verify/pass_session.json
 ```
 
-`agent-verify` 会检查 session 中的 report 完整性、retrieval trace 和可选 tool hook 事件。存在验证失败时返回非 0，适合作为后续 CI gate 的基础。
+`agent-verify` 会检查 session 中的 report 完整性、retrieval trace、Interview Graph 核心 PatchNode 注册 / 写集 / 顺序、累计节点幂等风险，以及可选 tool hook 事件。存在验证失败时返回非 0，适合作为后续 CI gate 的基础。
 
 本地质量门禁：
 

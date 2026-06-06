@@ -79,7 +79,11 @@ func TestSession_JSONRoundTrip(t *testing.T) {
 			},
 			Final: []RetrievalResultTrace{{ID: "q1", Rank: 1, Score: 0.9, Stage: "rerank"}},
 		},
-		WorkingMemory: NewWorkingMemory(),
+		WorkingMemory: func() *WorkingMemory {
+			mem := NewWorkingMemory()
+			mem.AppliedNodes = map[string]bool{"update_memory:r1": true}
+			return mem
+		}(),
 		Rounds: []AnswerRound{
 			{
 				RoundID:    "r1",
@@ -165,6 +169,9 @@ func TestSession_JSONRoundTrip(t *testing.T) {
 	}
 	if got.WorkingMemory == nil || got.WorkingMemory.MaxRounds != 8 {
 		t.Errorf("working memory lost: %+v", got.WorkingMemory)
+	}
+	if !got.WorkingMemory.AppliedNodes["update_memory:r1"] {
+		t.Errorf("working memory applied node marker lost: %+v", got.WorkingMemory.AppliedNodes)
 	}
 	if !got.CreatedAt.Equal(original.CreatedAt) {
 		t.Errorf("time mismatch: %v vs %v", got.CreatedAt, original.CreatedAt)

@@ -13,6 +13,12 @@ TBD - created by archiving change close-agent-rag-verification-gates. Update Pur
 - **THEN** 系统 MUST 执行 `go run ./cmd/agent-verify -session testdata/agent_verify/pass_session.json`
 - **AND** 验证失败时命令 MUST 返回非 0
 
+#### Scenario: Agent 验证门禁检查 Graph 状态收口
+
+- **WHEN** 开发者运行 `cmd/agent-verify`
+- **THEN** 系统 MUST 检查核心 Interview Graph 节点的 PatchNode 注册、写集和关键顺序
+- **AND** 系统 MUST 检查累计型节点的重复执行风险
+
 #### Scenario: verify-local 包含 Agent 验证
 
 - **WHEN** 开发者运行 `verify-local`
@@ -37,4 +43,3 @@ TBD - created by archiving change close-agent-rag-verification-gates. Update Pur
 - **WHEN** 文档描述 RAG eval
 - **THEN** 命令 MUST 使用 `testdata/rag/golden_queries.jsonl`
 - **AND** 命令 MUST 使用当前 `cmd/rag-eval` 支持的参数名
-

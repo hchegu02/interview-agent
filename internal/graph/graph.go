@@ -159,9 +159,43 @@ type Runnable struct {
 	g *Graph
 }
 
+// NodeSpecs 返回编译后图的节点规格快照，供验证和调试使用。
+func (r *Runnable) NodeSpecs() []NodeSpec {
+	if r == nil || r.g == nil {
+		return nil
+	}
+	out := make([]NodeSpec, 0, len(r.g.specs))
+	for _, spec := range r.g.specs {
+		spec.Writes = append([]string(nil), spec.Writes...)
+		spec.Fn = nil
+		spec.patch = nil
+		out = append(out, spec)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// Successors 返回指定节点的静态后继；router 节点返回空切片。
+func (r *Runnable) Successors(node string) []string {
+	if r == nil || r.g == nil {
+		return nil
+	}
+	return append([]string(nil), r.g.edges[node]...)
+}
+
+// HasRouter 返回指定节点是否配置了条件路由。
+func (r *Runnable) HasRouter(node string) bool {
+	if r == nil || r.g == nil {
+		return false
+	}
+	_, ok := r.g.routers[node]
+	return ok
+}
+
 type nodeExecutionError struct {
-	node string
-	err  error
+	node         string
+	err          error
+	patchSummary *PatchSummary
 }
 
 func (e nodeExecutionError) Error() string {
@@ -178,6 +212,14 @@ func executionErrorNode(err error) string {
 		return nodeErr.node
 	}
 	return ""
+}
+
+func executionErrorPatchSummary(err error) *PatchSummary {
+	var nodeErr nodeExecutionError
+	if errors.As(err, &nodeErr) {
+		return nodeErr.patchSummary
+	}
+	return nil
 }
 
 // Invoke 执行图，传入的 Session 会被节点函数读写。
@@ -272,7 +314,7 @@ func (r *Runnable) run(ctx context.Context, sess *domain.Session, frontier []str
 				if len(frontier) > 1 {
 					checkpointNode = ""
 				}
-				r.recordCheckpoint(ctx, steps, CheckpointSuspended, frontier, checkpointNode, err.Error(), sess)
+				r.recordCheckpointWithPatchSummary(ctx, steps, CheckpointSuspended, frontier, checkpointNode, err.Error(), sess, executionErrorPatchSummary(err))
 				return nil
 			}
 			r.recordCheckpoint(ctx, steps, CheckpointFrontierError, frontier, "", err.Error(), sess)
@@ -322,7 +364,7 @@ func (r *Runnable) executeBatch(ctx context.Context, sess *domain.Session, nodes
 		name := name // 闭包捕获
 		eg.Go(func() error {
 			if err := r.executeNode(ectx, sess, name, step, false, false); err != nil {
-				return nodeExecutionError{node: name, err: err}
+				return err
 			}
 			return nil
 		})
@@ -367,7 +409,7 @@ func (r *Runnable) executeNode(ctx context.Context, sess *domain.Session, name s
 	for _, cb := range g.callbacks {
 		cb.OnNodeStart(ctx, name, sess)
 	}
-	err := r.callNode(ctx, sess, spec)
+	patchSummary, err := r.callNode(ctx, sess, spec)
 	for _, cb := range g.callbacks {
 		if err != nil {
 			cb.OnNodeError(ctx, name, sess, err)
@@ -378,41 +420,126 @@ func (r *Runnable) executeNode(ctx context.Context, sess *domain.Session, name s
 	if checkpointNode {
 		if err != nil {
 			if !errors.Is(err, ErrSuspended) {
-				r.recordCheckpoint(ctx, step, CheckpointNodeError, []string{name}, name, err.Error(), sess)
+				r.recordCheckpointWithPatchSummary(ctx, step, CheckpointNodeError, []string{name}, name, err.Error(), sess, patchSummary)
 			}
 		} else {
-			r.recordCheckpoint(ctx, step, CheckpointNodeAfter, []string{name}, name, "", sess)
+			r.recordCheckpointWithPatchSummary(ctx, step, CheckpointNodeAfter, []string{name}, name, "", sess, patchSummary)
 		}
 	}
-	return err
+	if err != nil {
+		return nodeExecutionError{node: name, err: err, patchSummary: patchSummary}
+	}
+	return nil
 }
 
-func (r *Runnable) callNode(ctx context.Context, sess *domain.Session, spec NodeSpec) error {
+func (r *Runnable) callNode(ctx context.Context, sess *domain.Session, spec NodeSpec) (*PatchSummary, error) {
 	if spec.kind == nodeKindPatch {
 		if spec.patch == nil {
-			return fmt.Errorf("%w: node %q has nil patch function", ErrInvalidConfig, spec.Name)
+			return nil, fmt.Errorf("%w: node %q has nil patch function", ErrInvalidConfig, spec.Name)
 		}
 		patch, err := spec.patch(ctx, sess)
 		if err != nil {
 			if IsPatchSuspend(err) {
 				if applyErr := domain.ApplyStatePatch(sess, patch); applyErr != nil {
-					return fmt.Errorf("%s: apply suspend state patch: %w: %v", spec.Name, ErrPermanent, applyErr)
+					return nil, fmt.Errorf("%s: apply suspend state patch: %w: %v", spec.Name, ErrPermanent, applyErr)
 				}
+				return summarizeStatePatch(spec, patch, sess, true), err
 			}
-			return err
+			return nil, err
 		}
 		if err := domain.ApplyStatePatch(sess, patch); err != nil {
-			return fmt.Errorf("%s: apply state patch: %w: %v", spec.Name, ErrPermanent, err)
+			return nil, fmt.Errorf("%s: apply state patch: %w: %v", spec.Name, ErrPermanent, err)
 		}
-		return nil
+		return summarizeStatePatch(spec, patch, sess, false), nil
 	}
 	if spec.Fn == nil {
-		return fmt.Errorf("%w: node %q has nil function", ErrInvalidConfig, spec.Name)
+		return nil, fmt.Errorf("%w: node %q has nil function", ErrInvalidConfig, spec.Name)
 	}
-	return spec.Fn(ctx, sess)
+	return nil, spec.Fn(ctx, sess)
+}
+
+func summarizeStatePatch(spec NodeSpec, patch domain.StatePatch, sess *domain.Session, suspended bool) *PatchSummary {
+	summary := &PatchSummary{
+		Node:           spec.Name,
+		Writes:         append([]string(nil), spec.Writes...),
+		WrittenFields:  statePatchWrittenFields(patch),
+		Suspended:      suspended,
+		IdempotencyKey: patch.IdempotencyKey,
+	}
+	if patch.AppendRound != nil {
+		summary.CurrentRoundID = patch.AppendRound.RoundID
+	} else if sess != nil {
+		if round := sess.CurrentRound(); round != nil {
+			summary.CurrentRoundID = round.RoundID
+		}
+	}
+	if patch.WorkingMemory != nil && len(patch.WorkingMemory.DegradedReasons) > 0 {
+		summary.DegradedComponents = make([]string, 0, len(patch.WorkingMemory.DegradedReasons))
+		for component := range patch.WorkingMemory.DegradedReasons {
+			summary.DegradedComponents = append(summary.DegradedComponents, component)
+		}
+		sort.Strings(summary.DegradedComponents)
+	}
+	sort.Strings(summary.Writes)
+	return summary
+}
+
+func statePatchWrittenFields(patch domain.StatePatch) []string {
+	fields := make([]string, 0, 16)
+	if patch.CandidatePool != nil {
+		fields = append(fields, "candidate_pool")
+	}
+	if patch.RetrievalTrace != nil {
+		fields = append(fields, "retrieval_trace")
+	}
+	if patch.PendingDecision != nil {
+		fields = append(fields, "pending_decision")
+	}
+	if patch.ClearPendingDecision {
+		fields = append(fields, "clear_pending_decision")
+	}
+	if patch.AppendRound != nil {
+		fields = append(fields, "append_round")
+	}
+	if patch.AppendCurrentFollowUp != nil {
+		fields = append(fields, "append_current_follow_up")
+	}
+	if patch.CurrentFollowUpEvaluation != nil {
+		fields = append(fields, "current_follow_up_evaluation")
+	}
+	if patch.CurrentCriticResult != nil {
+		fields = append(fields, "current_critic_result")
+	}
+	if patch.CurrentCriticProbeSignal != nil {
+		fields = append(fields, "current_critic_probe_signal")
+	}
+	if patch.CurrentEvaluation != nil {
+		fields = append(fields, "current_evaluation")
+	}
+	if patch.CurrentRefinedEvaluation != nil {
+		fields = append(fields, "current_refined_evaluation")
+	}
+	if patch.CompleteCurrentRound != nil {
+		fields = append(fields, "complete_current_round")
+	}
+	if patch.Report != nil {
+		fields = append(fields, "report")
+	}
+	if patch.Status != nil {
+		fields = append(fields, "status")
+	}
+	if patch.WorkingMemory != nil {
+		fields = append(fields, "working_memory")
+	}
+	sort.Strings(fields)
+	return fields
 }
 
 func (r *Runnable) recordCheckpoint(ctx context.Context, step int, phase CheckpointPhase, frontier []string, node, errMsg string, sess *domain.Session) {
+	r.recordCheckpointWithPatchSummary(ctx, step, phase, frontier, node, errMsg, sess, nil)
+}
+
+func (r *Runnable) recordCheckpointWithPatchSummary(ctx context.Context, step int, phase CheckpointPhase, frontier []string, node, errMsg string, sess *domain.Session, patchSummary *PatchSummary) {
 	if r == nil || r.g == nil || r.g.recorder == nil {
 		return
 	}
@@ -425,15 +552,16 @@ func (r *Runnable) recordCheckpoint(ctx context.Context, step int, phase Checkpo
 		}
 	}
 	r.callCheckpointRecorder(ctx, GraphCheckpoint{
-		Step:      step,
-		SessionID: sess.ID,
-		Graph:     r.g.name,
-		Phase:     phase,
-		Frontier:  append([]string(nil), frontier...),
-		Node:      node,
-		Error:     errMsg,
-		Snapshot:  snapshot,
-		CreatedAt: time.Now().UTC(),
+		Step:         step,
+		SessionID:    sess.ID,
+		Graph:        r.g.name,
+		Phase:        phase,
+		Frontier:     append([]string(nil), frontier...),
+		Node:         node,
+		Error:        errMsg,
+		PatchSummary: clonePatchSummary(patchSummary),
+		Snapshot:     snapshot,
+		CreatedAt:    time.Now().UTC(),
 	})
 }
 

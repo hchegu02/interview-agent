@@ -125,6 +125,7 @@ type WorkingMemory struct {
 	ScoredRounds    int                `json:"scored_rounds"`
 	DegradedRounds  int                `json:"degraded_rounds"`
 	DegradedReasons map[string]string  `json:"degraded_reasons,omitempty"`
+	AppliedNodes    map[string]bool    `json:"applied_nodes,omitempty"`
 
 	// 追问预算（防止 LLM 无限追问）
 	ProbesUsed int `json:"probes_used"`

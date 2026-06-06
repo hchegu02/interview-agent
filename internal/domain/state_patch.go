@@ -8,6 +8,7 @@ import (
 // StatePatch 表达节点对 Session 的结构化写入意图。
 // 第一阶段只覆盖高风险字段，避免节点随意改大对象。
 type StatePatch struct {
+	IdempotencyKey            string
 	CandidatePool             *[]Question
 	RetrievalTrace            *RetrievalTrace
 	PendingDecision           *Decision

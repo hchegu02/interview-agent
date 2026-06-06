@@ -39,12 +39,21 @@ func TestMemoryCheckpointRecorder_SnapshotReturnsCopy(t *testing.T) {
 	rec.RecordCheckpoint(context.Background(), GraphCheckpoint{
 		SessionID: "s1",
 		Frontier:  []string{"a"},
-		Snapshot:  []byte(`{"id":"s1"}`),
+		PatchSummary: &PatchSummary{
+			Node:               "a",
+			Writes:             []string{"working_memory"},
+			WrittenFields:      []string{"working_memory"},
+			DegradedComponents: []string{"rag"},
+		},
+		Snapshot: []byte(`{"id":"s1"}`),
 	})
 
 	first := rec.Snapshot()
 	first[0].Frontier[0] = "mutated"
 	first[0].Snapshot[0] = 'X'
+	first[0].PatchSummary.Writes[0] = "mutated"
+	first[0].PatchSummary.WrittenFields[0] = "mutated"
+	first[0].PatchSummary.DegradedComponents[0] = "mutated"
 
 	second := rec.Snapshot()
 	if second[0].Frontier[0] != "a" {
@@ -52,6 +61,15 @@ func TestMemoryCheckpointRecorder_SnapshotReturnsCopy(t *testing.T) {
 	}
 	if string(second[0].Snapshot) != `{"id":"s1"}` {
 		t.Fatalf("snapshot should be copied: %s", string(second[0].Snapshot))
+	}
+	if second[0].PatchSummary.Writes[0] != "working_memory" {
+		t.Fatalf("patch summary writes should be copied: %+v", second[0].PatchSummary)
+	}
+	if second[0].PatchSummary.WrittenFields[0] != "working_memory" {
+		t.Fatalf("patch summary written fields should be copied: %+v", second[0].PatchSummary)
+	}
+	if second[0].PatchSummary.DegradedComponents[0] != "rag" {
+		t.Fatalf("patch summary degraded components should be copied: %+v", second[0].PatchSummary)
 	}
 }
 

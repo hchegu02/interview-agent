@@ -1,0 +1,15 @@
+{
+  "change": "complete-graph-state-closure",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "fba08db59eaa10ebc434b07b24b0b157f337be7b57afaf0276e491080450d03b",
+  "files": [
+    { "path": "openspec/changes/complete-graph-state-closure/proposal.md", "sha256": "762506eeff9cf9b505416f6bf4d3ba6eeafd4e5f38e00ffa704ffc466c6e75e0" },
+    { "path": "openspec/changes/complete-graph-state-closure/design.md", "sha256": "6baa5c20a133d4ca1a5bbb7b470b8d6329151537742326c05390a146f64243ce" },
+    { "path": "openspec/changes/complete-graph-state-closure/tasks.md", "sha256": "7c207d29c6953e87c9fdc9b6ff91953badd837079e70c55a0252565de5e220ab" },
+    { "path": "openspec/changes/complete-graph-state-closure/specs/graph-state-patch-runner/spec.md", "sha256": "3031b0a4e0450d2af9a0831d35c131822d25465b711b537e7b395305322ff60c" },
+    { "path": "openspec/changes/complete-graph-state-closure/specs/state-patch-updates/spec.md", "sha256": "7bb56079642f0382aea1eb95e8deca7a3eaead6127f1ce530b7328d0a7ab4937" }
+  ]
+}

@@ -233,6 +233,30 @@ func TestUpdateMemory_AvgScore_IncrementalAcrossRounds(t *testing.T) {
 	}
 }
 
+func TestUpdateMemory_ReplaySameRoundIsIdempotent(t *testing.T) {
+	sess := buildUpdateMemSession(80, "go", nil)
+	node := NewUpdateMemoryNode(UpdateMemoryOptions{})
+	if err := node(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	firstCompletedAt := sess.Rounds[0].CompletedAt
+	if err := node(context.Background(), sess); err != nil {
+		t.Fatal(err)
+	}
+	if !approxEq(sess.WorkingMemory.SkillCoverage["go"], 0.80) {
+		t.Fatalf("coverage[go] = %v, want 0.80 after replay", sess.WorkingMemory.SkillCoverage["go"])
+	}
+	if sess.WorkingMemory.ScoredRounds != 1 {
+		t.Fatalf("ScoredRounds = %d, want 1 after replay", sess.WorkingMemory.ScoredRounds)
+	}
+	if !sess.Rounds[0].CompletedAt.Equal(firstCompletedAt) {
+		t.Fatalf("CompletedAt changed on replay: %v -> %v", firstCompletedAt, sess.Rounds[0].CompletedAt)
+	}
+	if !sess.WorkingMemory.AppliedNodes[nodeIdempotencyKey(NodeUpdateMemory, "r1")] {
+		t.Fatalf("applied node marker missing: %+v", sess.WorkingMemory.AppliedNodes)
+	}
+}
+
 func TestUpdateMemory_TagsFallback_WhenNoCategory(t *testing.T) {
 	sess := buildUpdateMemSession(85, "", []string{"go", "concurrency"})
 	node := NewUpdateMemoryNode(UpdateMemoryOptions{})

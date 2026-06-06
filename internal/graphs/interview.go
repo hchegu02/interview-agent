@@ -93,8 +93,16 @@ func BuildInterviewGraph(deps Deps) (*graph.Runnable, error) {
 			[]string{graph.WriteWorkingMemory, graph.WriteCurrentRoundCompletion},
 			nodes.NewUpdateMemoryPatchNode(nodes.UpdateMemoryOptions{}),
 		)).
-		AddNode(nodes.NodeUpdateDifficulty, nodes.NewUpdateDifficultyNode(nodes.UpdateDifficultyOptions{})).
-		AddNode(nodeReflectionCheck, nodes.NewReflectionCheckNode(deps.Model, nodes.ReflectionCheckOptions{})).
+		AddNodeSpec(graph.PatchNode(
+			nodes.NodeUpdateDifficulty,
+			[]string{graph.WriteWorkingMemory},
+			nodes.NewUpdateDifficultyPatchNode(nodes.UpdateDifficultyOptions{}),
+		)).
+		AddNodeSpec(graph.PatchNode(
+			nodeReflectionCheck,
+			[]string{graph.WritePendingDecision, graph.WriteWorkingMemory},
+			nodes.NewReflectionCheckPatchNode(deps.Model, nodes.ReflectionCheckOptions{}),
+		)).
 		AddNodeSpec(graph.PatchNode(
 			nodes.NodeReport,
 			[]string{graph.WritePendingDecision, graph.WriteReport, graph.WriteStatus, graph.WriteWorkingMemory},

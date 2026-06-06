@@ -79,3 +79,10 @@ func TestToolCallVerifier(t *testing.T) {
 		t.Fatalf("failures = %+v", failures)
 	}
 }
+
+func TestGraphStructureVerifier(t *testing.T) {
+	v := GraphStructureVerifier{}
+	if failures := v.VerifyInterviewGraph(); len(failures) != 0 {
+		t.Fatalf("graph structure failures = %+v", failures)
+	}
+}

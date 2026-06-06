@@ -74,3 +74,21 @@ TBD - created by archiving change add-state-patch-updates. Update Purpose after 
 - **WHEN** 系统引入 StatePatch
 - **THEN** Graph `NodeFunc` 签名不应改变
 - **AND** HTTP API 响应结构不应因为 StatePatch 改变
+
+#### Scenario: 写入当前面试内策略状态
+
+- **WHEN** `update_difficulty` or `reflection_check` changes current-session strategy state
+- **THEN** StatePatch SHOULD express the change through `WorkingMemory`
+- **AND** the node SHOULD NOT directly mutate `Session.WorkingMemory`
+
+#### Scenario: 写入反思后的下一步决策
+
+- **WHEN** `reflection_check` decides to ask a new question, reflect, or end
+- **THEN** StatePatch SHOULD express the decision through `PendingDecision`
+- **AND** the node SHOULD NOT directly mutate `Session.PendingDecision`
+
+#### Scenario: 携带幂等观测元数据
+
+- **WHEN** a patch-aware cumulative node returns a StatePatch
+- **THEN** StatePatch MAY include an idempotency key for checkpoint summary
+- **AND** ApplyStatePatch MUST NOT treat that key as a business state write

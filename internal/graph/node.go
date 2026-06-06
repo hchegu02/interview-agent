@@ -76,6 +76,11 @@ func PatchNode(name string, writes []string, fn PatchNodeFunc) NodeSpec {
 	return NodeSpec{Name: name, Writes: append([]string(nil), writes...), kind: nodeKindPatch, patch: fn}
 }
 
+// IsPatchNode 返回节点是否由 runner 统一应用 StatePatch。
+func (s NodeSpec) IsPatchNode() bool {
+	return s.kind == nodeKindPatch
+}
+
 // Router 是条件分支节点的下游决策函数。
 //
 // 在节点 fn 执行完后被调用，根据 Session 当前状态返回下一节点名。

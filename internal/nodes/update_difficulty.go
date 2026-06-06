@@ -15,6 +15,18 @@ type UpdateDifficultyOptions struct {
 }
 
 func NewUpdateDifficultyNode(opts UpdateDifficultyOptions) graph.NodeFunc {
+	patchNode := NewUpdateDifficultyPatchNode(opts)
+	return func(ctx context.Context, sess *domain.Session) error {
+		patch, err := patchNode(ctx, sess)
+		if err != nil {
+			return err
+		}
+		return applyNodePatch(sess, "update_difficulty", patch)
+	}
+}
+
+// NewUpdateDifficultyPatchNode 构造由 Graph runner 统一应用 StatePatch 的 update_difficulty 节点。
+func NewUpdateDifficultyPatchNode(opts UpdateDifficultyOptions) graph.PatchNodeFunc {
 	if opts.HighScoreThreshold == 0 {
 		opts.HighScoreThreshold = 80
 	}
@@ -25,25 +37,30 @@ func NewUpdateDifficultyNode(opts UpdateDifficultyOptions) graph.NodeFunc {
 		opts.StreakThreshold = 2
 	}
 
-	return func(ctx context.Context, sess *domain.Session) error {
+	return func(ctx context.Context, sess *domain.Session) (domain.StatePatch, error) {
+		_ = ctx
 		round := latestScoredRound(sess)
 		if round == nil {
-			return fmt.Errorf("update_difficulty: no scored round: %w", graph.ErrPermanent)
+			return domain.StatePatch{}, fmt.Errorf("update_difficulty: no scored round: %w", graph.ErrPermanent)
 		}
 		final := round.FinalEvaluation()
 		if final == nil {
-			return fmt.Errorf("update_difficulty: no final evaluation: %w", graph.ErrPermanent)
+			return domain.StatePatch{}, fmt.Errorf("update_difficulty: no final evaluation: %w", graph.ErrPermanent)
 		}
-		if sess.WorkingMemory == nil {
-			sess.WorkingMemory = domain.NewWorkingMemory()
+		mem := cloneWorkingMemory(sess.WorkingMemory)
+		idempotencyKey := nodeIdempotencyKey(NodeUpdateDifficulty, round.RoundID)
+		if isNodeApplied(mem, idempotencyKey) {
+			return domain.StatePatch{IdempotencyKey: idempotencyKey}, nil
 		}
-		state := ensureDifficultyState(sess.WorkingMemory)
+		state := ensureDifficultyState(mem)
 		if round.RoundID != "" && state.LastRoundID == round.RoundID {
-			return nil
+			markNodeApplied(mem, idempotencyKey)
+			return domain.StatePatch{IdempotencyKey: idempotencyKey, WorkingMemory: mem}, nil
 		}
 		if final.Score < 0 {
 			state.LastRoundID = round.RoundID
-			return nil
+			markNodeApplied(mem, idempotencyKey)
+			return domain.StatePatch{IdempotencyKey: idempotencyKey, WorkingMemory: mem}, nil
 		}
 
 		switch {
@@ -68,7 +85,8 @@ func NewUpdateDifficultyNode(opts UpdateDifficultyOptions) graph.NodeFunc {
 			state.WrongStreak = 0
 		}
 		state.LastRoundID = round.RoundID
-		return nil
+		markNodeApplied(mem, idempotencyKey)
+		return domain.StatePatch{IdempotencyKey: idempotencyKey, WorkingMemory: mem}, nil
 	}
 }
 

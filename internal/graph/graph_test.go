@@ -113,6 +113,81 @@ func TestGraph_PatchNodeAppliesStatePatch(t *testing.T) {
 	}
 }
 
+func TestGraph_PatchNodeCheckpointIncludesPatchSummary(t *testing.T) {
+	rec := NewMemoryCheckpointRecorder(20)
+	mem := domain.NewWorkingMemory()
+	mem.DegradedReasons = map[string]string{"rag": "embedder failed"}
+	g := New("patch-node-summary").
+		AddNodeSpec(PatchNode("retrieve", []string{WriteCandidatePool, WriteWorkingMemory}, func(ctx context.Context, sess *domain.Session) (domain.StatePatch, error) {
+			pool := []domain.Question{{ID: "q1", Content: "Redis AOF?"}}
+			return domain.StatePatch{CandidatePool: &pool, WorkingMemory: mem}, nil
+		})).
+		Entry("retrieve").
+		AddEdge("retrieve", EndNode).
+		WithCheckpointRecorder(rec)
+
+	r, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if err := r.Invoke(context.Background(), &domain.Session{ID: "patch-summary"}); err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+
+	after := findCheckpoint(rec.Snapshot(), CheckpointNodeAfter, "retrieve")
+	if after == nil {
+		t.Fatalf("missing node_after checkpoint: %+v", rec.Snapshot())
+	}
+	summary := after.PatchSummary
+	if summary == nil {
+		t.Fatal("node_after checkpoint should include patch summary")
+	}
+	if summary.Node != "retrieve" {
+		t.Fatalf("summary node = %q, want retrieve", summary.Node)
+	}
+	if !stringSliceContains(summary.WrittenFields, "candidate_pool") || !stringSliceContains(summary.WrittenFields, "working_memory") {
+		t.Fatalf("summary written fields = %+v, want candidate_pool and working_memory", summary.WrittenFields)
+	}
+	if !stringSliceContains(summary.Writes, WriteCandidatePool) || !stringSliceContains(summary.Writes, WriteWorkingMemory) {
+		t.Fatalf("summary writes = %+v, want declared writes", summary.Writes)
+	}
+	if len(summary.DegradedComponents) != 1 || summary.DegradedComponents[0] != "rag" {
+		t.Fatalf("summary degraded components = %+v, want [rag]", summary.DegradedComponents)
+	}
+}
+
+func TestGraph_PatchNodeSuspendCheckpointIncludesPatchSummary(t *testing.T) {
+	rec := NewMemoryCheckpointRecorder(20)
+	pool := []domain.Question{{ID: "q1", Content: "Go GMP?"}}
+	g := New("patch-node-suspend-summary").AddNodeSpec(
+		PatchNode("pick_next", []string{WriteCandidatePool}, func(ctx context.Context, sess *domain.Session) (domain.StatePatch, error) {
+			return domain.StatePatch{CandidatePool: &pool}, SuspendWithPatch(fmt.Errorf("waiting for answer: %w", ErrSuspended))
+		}),
+	).Entry("pick_next").AddEdge("pick_next", EndNode).WithCheckpointRecorder(rec)
+
+	r, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	if err := r.Invoke(context.Background(), &domain.Session{ID: "patch-suspend-summary"}); err != nil {
+		t.Fatalf("invoke should swallow suspend, got %v", err)
+	}
+
+	suspended := findCheckpoint(rec.Snapshot(), CheckpointSuspended, "pick_next")
+	if suspended == nil {
+		t.Fatalf("missing suspended checkpoint: %+v", rec.Snapshot())
+	}
+	if suspended.PatchSummary == nil {
+		t.Fatal("suspended checkpoint should include patch summary")
+	}
+	if !suspended.PatchSummary.Suspended {
+		t.Fatalf("patch summary should mark suspended: %+v", suspended.PatchSummary)
+	}
+	if !stringSliceContains(suspended.PatchSummary.WrittenFields, "candidate_pool") {
+		t.Fatalf("summary written fields = %+v, want candidate_pool", suspended.PatchSummary.WrittenFields)
+	}
+}
+
 func TestGraph_PatchNodeNilFuncReturnsInvalidConfig(t *testing.T) {
 	g := New("patch-node-nil").
 		AddNodeSpec(PatchNode("bad", []string{WriteReport}, nil)).
@@ -1118,6 +1193,15 @@ func findCheckpoint(checkpoints []GraphCheckpoint, phase CheckpointPhase, node s
 		}
 	}
 	return nil
+}
+
+func stringSliceContains(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func assertCheckpointPhase(t *testing.T, checkpoints []GraphCheckpoint, phase CheckpointPhase, node string) {

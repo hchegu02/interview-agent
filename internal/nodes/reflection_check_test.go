@@ -22,6 +22,126 @@ func buildReflectSession(roundsAsked, maxRounds, reflectionsUsed int, weak []str
 	return &domain.Session{WorkingMemory: mem}
 }
 
+func TestReflectionPatchNode_ReturnsPatchWithoutMutatingSession(t *testing.T) {
+	stub := &stubChatModel{responses: []string{
+		`{"action":"reflect","reasoning":"redis 答得弱,值得补一题","reflect_topic":"redis"}`,
+	}}
+	sess := buildReflectSession(3, 8, 0, []string{"redis"})
+	originalMemory := sess.WorkingMemory
+
+	node := NewReflectionCheckPatchNode(stub, ReflectionCheckOptions{})
+	patch, err := node(context.Background(), sess)
+	if err != nil {
+		t.Fatalf("reflection patch: %v", err)
+	}
+	if patch.PendingDecision == nil || patch.PendingDecision.Action != domain.ActionReflect {
+		t.Fatalf("patch decision = %+v, want reflect", patch.PendingDecision)
+	}
+	if patch.WorkingMemory == nil {
+		t.Fatal("patch.WorkingMemory is nil")
+	}
+	if patch.WorkingMemory == originalMemory {
+		t.Fatal("patch.WorkingMemory aliases session WorkingMemory")
+	}
+	if patch.WorkingMemory.ReflectTopic != "redis" || patch.WorkingMemory.ReflectionsUsed != 1 {
+		t.Fatalf("patch memory = %+v, want reflect topic redis and reflections used 1", patch.WorkingMemory)
+	}
+	if sess.PendingDecision != nil {
+		t.Fatalf("session pending decision mutated before patch apply: %+v", sess.PendingDecision)
+	}
+	if sess.WorkingMemory.ReflectTopic != "" || sess.WorkingMemory.ReflectionsUsed != 0 {
+		t.Fatalf("session memory mutated before patch apply: %+v", sess.WorkingMemory)
+	}
+}
+
+func TestReflectionPatchNode_LLMFailureReturnsDegradedMemoryPatch(t *testing.T) {
+	stub := &stubChatModel{
+		errs:      []error{errors.New("boom"), errors.New("boom2")},
+		responses: []string{"", ""},
+	}
+	sess := buildReflectSession(3, 8, 0, []string{"redis"})
+
+	node := NewReflectionCheckPatchNode(stub, ReflectionCheckOptions{})
+	patch, err := node(context.Background(), sess)
+	if err != nil {
+		t.Fatalf("reflection patch: %v", err)
+	}
+	if patch.PendingDecision == nil || patch.PendingDecision.Action != domain.ActionReflect {
+		t.Fatalf("patch decision = %+v, want reflect fallback", patch.PendingDecision)
+	}
+	if patch.WorkingMemory == nil || patch.WorkingMemory.DegradedReasons["reflection"] == "" {
+		t.Fatalf("patch should carry reflection degraded reason: %+v", patch.WorkingMemory)
+	}
+	if sess.WorkingMemory.DegradedReasons["reflection"] != "" {
+		t.Fatalf("session degraded reason mutated before patch apply: %+v", sess.WorkingMemory.DegradedReasons)
+	}
+}
+
+func TestReflectionPatchNode_PatchCanBeAppliedByRunner(t *testing.T) {
+	stub := &stubChatModel{responses: []string{
+		`{"action":"ask_new","reasoning":"还有题要问","reflect_topic":""}`,
+	}}
+	sess := buildReflectSession(2, 8, 0, nil)
+
+	node := NewReflectionCheckPatchNode(stub, ReflectionCheckOptions{})
+	patch, err := node(context.Background(), sess)
+	if err != nil {
+		t.Fatalf("reflection patch: %v", err)
+	}
+	if err := domain.ApplyStatePatch(sess, patch); err != nil {
+		t.Fatalf("apply patch: %v", err)
+	}
+	if sess.PendingDecision == nil || sess.PendingDecision.Action != domain.ActionAskNew {
+		t.Fatalf("session decision after apply = %+v, want ask_new", sess.PendingDecision)
+	}
+	if sess.WorkingMemory == nil || sess.WorkingMemory.RoundsAsked != 2 {
+		t.Fatalf("session working memory after apply = %+v", sess.WorkingMemory)
+	}
+}
+
+func TestReflection_WrapperAppliesPatchToSession(t *testing.T) {
+	stub := &stubChatModel{responses: []string{
+		`{"action":"reflect","reasoning":"redis 答得弱,值得补一题","reflect_topic":"redis"}`,
+	}}
+	sess := buildReflectSession(3, 8, 0, []string{"redis"})
+
+	node := NewReflectionCheckNode(stub, ReflectionCheckOptions{})
+	if err := node(context.Background(), sess); err != nil {
+		t.Fatalf("reflection wrapper: %v", err)
+	}
+	if sess.PendingDecision == nil || sess.PendingDecision.Action != domain.ActionReflect {
+		t.Fatalf("session decision = %+v, want reflect", sess.PendingDecision)
+	}
+	if sess.WorkingMemory.ReflectTopic != "redis" || sess.WorkingMemory.ReflectionsUsed != 1 {
+		t.Fatalf("session memory = %+v, want reflect topic redis and reflections used 1", sess.WorkingMemory)
+	}
+}
+
+func TestReflection_ReplaySameRoundIsIdempotent(t *testing.T) {
+	stub := &stubChatModel{responses: []string{
+		`{"action":"reflect","reasoning":"redis 答得弱,值得补一题","reflect_topic":"redis"}`,
+	}}
+	sess := buildReflectSession(3, 8, 0, []string{"redis"})
+	sess.Rounds = []domain.AnswerRound{{RoundID: "r1"}}
+
+	node := NewReflectionCheckNode(stub, ReflectionCheckOptions{})
+	if err := node(context.Background(), sess); err != nil {
+		t.Fatalf("reflection first run: %v", err)
+	}
+	if err := node(context.Background(), sess); err != nil {
+		t.Fatalf("reflection replay: %v", err)
+	}
+	if stub.idx != 1 {
+		t.Fatalf("LLM should be called once, got %d", stub.idx)
+	}
+	if sess.WorkingMemory.ReflectionsUsed != 1 {
+		t.Fatalf("ReflectionsUsed = %d, want 1 after replay", sess.WorkingMemory.ReflectionsUsed)
+	}
+	if !sess.WorkingMemory.AppliedNodes[nodeIdempotencyKey("reflection_check", "r1")] {
+		t.Fatalf("applied node marker missing: %+v", sess.WorkingMemory.AppliedNodes)
+	}
+}
+
 func TestReflection_LLMReflect_Success(t *testing.T) {
 	stub := &stubChatModel{responses: []string{
 		`{"action":"reflect","reasoning":"redis 答得弱,值得补一题","reflect_topic":"redis"}`,

@@ -22,16 +22,28 @@ const (
 
 // GraphCheckpoint 是 Graph 执行过程中的轻量状态快照。
 type GraphCheckpoint struct {
-	Seq       int64           `json:"seq"`
-	SessionID string          `json:"session_id,omitempty"`
-	Step      int             `json:"step"`
-	Graph     string          `json:"graph"`
-	Phase     CheckpointPhase `json:"phase"`
-	Frontier  []string        `json:"frontier,omitempty"`
-	Node      string          `json:"node,omitempty"`
-	Error     string          `json:"error,omitempty"`
-	Snapshot  []byte          `json:"snapshot,omitempty"`
-	CreatedAt time.Time       `json:"created_at"`
+	Seq          int64           `json:"seq"`
+	SessionID    string          `json:"session_id,omitempty"`
+	Step         int             `json:"step"`
+	Graph        string          `json:"graph"`
+	Phase        CheckpointPhase `json:"phase"`
+	Frontier     []string        `json:"frontier,omitempty"`
+	Node         string          `json:"node,omitempty"`
+	Error        string          `json:"error,omitempty"`
+	PatchSummary *PatchSummary   `json:"patch_summary,omitempty"`
+	Snapshot     []byte          `json:"snapshot,omitempty"`
+	CreatedAt    time.Time       `json:"created_at"`
+}
+
+// PatchSummary 只记录 patch 的字段级摘要，不记录完整业务载荷。
+type PatchSummary struct {
+	Node               string   `json:"node"`
+	Writes             []string `json:"writes,omitempty"`
+	WrittenFields      []string `json:"written_fields,omitempty"`
+	CurrentRoundID     string   `json:"current_round_id,omitempty"`
+	DegradedComponents []string `json:"degraded_components,omitempty"`
+	Suspended          bool     `json:"suspended,omitempty"`
+	IdempotencyKey     string   `json:"idempotency_key,omitempty"`
 }
 
 // CheckpointRecorder 接收 Graph runner 产生的 checkpoint。
@@ -71,6 +83,9 @@ func (r *MemoryCheckpointRecorder) RecordCheckpoint(ctx context.Context, checkpo
 	}
 	checkpoint.Frontier = append([]string(nil), checkpoint.Frontier...)
 	checkpoint.Snapshot = append([]byte(nil), checkpoint.Snapshot...)
+	if checkpoint.PatchSummary != nil {
+		checkpoint.PatchSummary = clonePatchSummary(checkpoint.PatchSummary)
+	}
 
 	if len(r.items) == r.capacity {
 		copy(r.items, r.items[1:])
@@ -93,6 +108,20 @@ func (r *MemoryCheckpointRecorder) Snapshot() []GraphCheckpoint {
 		out[i] = item
 		out[i].Frontier = append([]string(nil), item.Frontier...)
 		out[i].Snapshot = append([]byte(nil), item.Snapshot...)
+		if item.PatchSummary != nil {
+			out[i].PatchSummary = clonePatchSummary(item.PatchSummary)
+		}
 	}
 	return out
+}
+
+func clonePatchSummary(summary *PatchSummary) *PatchSummary {
+	if summary == nil {
+		return nil
+	}
+	clone := *summary
+	clone.Writes = append([]string(nil), summary.Writes...)
+	clone.WrittenFields = append([]string(nil), summary.WrittenFields...)
+	clone.DegradedComponents = append([]string(nil), summary.DegradedComponents...)
+	return &clone
 }

@@ -52,3 +52,15 @@
 - **THEN** Graph 业务执行不应因此失败
 - **AND** 慢 recorder 不应长时间阻塞 Graph runner
 - **AND** 自定义 recorder 应尊重调用方传入的 `context.Context`
+
+#### Scenario: patch-aware 节点记录 patch summary
+
+- **WHEN** patch-aware 节点成功应用 `StatePatch`
+- **THEN** checkpoint 应记录字段级 patch summary
+- **AND** patch summary 不应保存完整 patch、prompt、回答正文或报告正文
+
+#### Scenario: suspend-with-patch 记录 patch summary
+
+- **WHEN** patch-aware 节点在暂停前成功应用 `StatePatch`
+- **THEN** suspended checkpoint 应记录 patch summary
+- **AND** patch summary 应标记该 patch 来自暂停路径

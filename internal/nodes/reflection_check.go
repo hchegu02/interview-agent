@@ -51,9 +51,9 @@ type ReflectionCheckOptions struct {
 }
 
 type reflectionShape struct {
-	Action        string `json:"action"`
-	Reasoning     string `json:"reasoning"`
-	ReflectTopic  string `json:"reflect_topic"`
+	Action       string `json:"action"`
+	Reasoning    string `json:"reasoning"`
+	ReflectTopic string `json:"reflect_topic"`
 }
 
 func validateReflection(raw []byte) error {
@@ -83,6 +83,18 @@ func validateReflection(raw []byte) error {
 //         如果 Action=reflect: WorkingMemory.ReflectTopic=topic, ReflectionsUsed++
 //   返回: nil(始终)
 func NewReflectionCheckNode(model llm.ChatModel, opts ReflectionCheckOptions) graph.NodeFunc {
+	patchNode := NewReflectionCheckPatchNode(model, opts)
+	return func(ctx context.Context, sess *domain.Session) error {
+		patch, err := patchNode(ctx, sess)
+		if err != nil {
+			return err
+		}
+		return applyNodePatch(sess, "reflection_check", patch)
+	}
+}
+
+// NewReflectionCheckPatchNode 构造由 Graph runner 统一应用 StatePatch 的 reflection_check 节点。
+func NewReflectionCheckPatchNode(model llm.ChatModel, opts ReflectionCheckOptions) graph.PatchNodeFunc {
 	if opts.Temperature == 0 {
 		opts.Temperature = 0.2
 	}
@@ -93,24 +105,28 @@ func NewReflectionCheckNode(model llm.ChatModel, opts ReflectionCheckOptions) gr
 		opts.MinRounds = 3
 	}
 
-	return func(ctx context.Context, sess *domain.Session) error {
-		if sess.WorkingMemory == nil {
-			sess.WorkingMemory = domain.NewWorkingMemory()
+	return func(ctx context.Context, sess *domain.Session) (domain.StatePatch, error) {
+		mem := cloneWorkingMemory(sess.WorkingMemory)
+		idempotencyKey := nodeIdempotencyKey("reflection_check", currentRoundID(sess))
+		if isNodeApplied(mem, idempotencyKey) {
+			return domain.StatePatch{IdempotencyKey: idempotencyKey}, nil
 		}
-		mem := sess.WorkingMemory
 
 		// 0. 硬截断: 没主题题预算 → 直接 end, 不走 LLM
 		if mem.RemainingRounds() <= 0 {
-			sess.PendingDecision = &domain.Decision{
+			decision := &domain.Decision{
 				Action:    domain.ActionEnd,
 				Reasoning: "主题题预算耗尽,结束面试",
 				DecidedAt: time.Now(),
 			}
-			return nil
+			markNodeApplied(mem, idempotencyKey)
+			return domain.StatePatch{IdempotencyKey: idempotencyKey, PendingDecision: decision, WorkingMemory: mem}, nil
 		}
 
 		// 1. LLM 推荐(失败走规则降级)
-		shape, err := reflectionByLLM(ctx, model, sess, opts)
+		sessionView := *sess
+		sessionView.WorkingMemory = mem
+		shape, err := reflectionByLLM(ctx, model, &sessionView, opts)
 		if err != nil {
 			markReflectionFallback(mem, err.Error())
 			shape = ruleBasedReflection(mem)
@@ -157,8 +173,8 @@ func NewReflectionCheckNode(model llm.ChatModel, opts ReflectionCheckOptions) gr
 			mem.ReflectionsUsed++
 		}
 
-		sess.PendingDecision = decision
-		return nil
+		markNodeApplied(mem, idempotencyKey)
+		return domain.StatePatch{IdempotencyKey: idempotencyKey, PendingDecision: decision, WorkingMemory: mem}, nil
 	}
 }
 

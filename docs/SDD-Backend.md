@@ -362,6 +362,7 @@ type Suspension struct {
 
 ```go
 type StatePatch struct {
+    IdempotencyKey            string
     CandidatePool             *[]Question
     RetrievalTrace            *RetrievalTrace
     PendingDecision           *Decision
@@ -391,14 +392,20 @@ type StatePatch struct {
 - `probe_ask` 已迁移到 runner-level `PatchNode`，通过 patch 追加当前轮 `FollowUp`、替换 `WorkingMemory`，并在 LLM 降级时只更新 `CriticResult` 的追问信号字段。
 - `probe_eval` 已迁移到 runner-level `PatchNode`，通过 patch 写当前最后一个 `FollowUp.Evaluation`，并通过窄 patch 更新 `CriticResult` 的追问信号字段。
 - `update_memory` 已迁移到 runner-level `PatchNode`，复用 `WorkingMemory + CompleteCurrentRound` patch 同时写入运行时记忆和本轮完成时间，避免后续 `update_difficulty/reflection_check` 看到半更新状态。
+- `update_memory` 会通过 `WorkingMemory.AppliedNodes["update_memory:<round_id>"]` 防止同一轮重复累计覆盖度、均分和完成时间。
+- `update_difficulty` 已迁移到 runner-level `PatchNode`，在节点内 clone `WorkingMemory` 后更新 `DifficultyState`，只返回 `WorkingMemory` patch；兼容 wrapper 保留旧 `NodeFunc` 调用方式并应用 patch。
+- `update_difficulty` 会通过 `WorkingMemory.AppliedNodes["update_difficulty:<round_id>"]` 防止同一轮重复累计 streak；旧 `DifficultyState.LastRoundID` 保护仍保留。
+- `reflection_check` 已迁移到 runner-level `PatchNode`，通过 patch 写 `PendingDecision` 和 `WorkingMemory`，LLM 降级时通过 `WorkingMemory` patch 写 `DegradedReasons["reflection"]`；兼容 wrapper 保留旧 `NodeFunc` 调用方式并应用 patch。
+- `reflection_check` 会通过 `WorkingMemory.AppliedNodes["reflection_check:<round_id>"]` 防止同一轮重复调用 LLM 或重复递增 `ReflectionsUsed`。
 - `report` 已迁移到 runner-level `PatchNode`，通过 patch 写 `Report`、`StatusCompleted` 并清理 `PendingDecision`。
 - `Status` 和 `WorkingMemory` 已纳入 `StatePatch` 类型，非挂起节点优先迁移到 runner-level patch。
 
 当前边界：
 
-- `NodeFunc` 仍返回 `error`，旧节点构造函数保留兼容 wrapper；`retrieve_rag`、`pick_next`、`evaluate`、`critic`、`refine`、`probe_ask`、`probe_eval`、`update_memory`、`report` 在 `BuildInterviewGraph` 中已由 runner 统一 apply patch。
+- `NodeFunc` 仍返回 `error`，旧节点构造函数保留兼容 wrapper；`retrieve_rag`、`pick_next`、`evaluate`、`critic`、`refine`、`probe_ask`、`probe_eval`、`update_memory`、`update_difficulty`、`reflection_check`、`report` 在 `BuildInterviewGraph` 中已由 runner 统一 apply patch。
 - `CriticResult` 已支持完整写入和追问信号窄 patch；后者只服务 `probe_ask/probe_eval` 循环，不替代完整 critic 输出。`FollowUps` 目前支持追加当前轮追问和写当前最后追问评估。`RefinedEval` 已支持当前轮写入。其他内嵌字段后续按风险逐步迁移。
 - `RetrievalTrace` 和 `Report` 指针保持当前状态写入语义，HTTP 响应层负责 clone。
+- `StatePatch.IdempotencyKey` 是 runner 观测元数据，只用于 checkpoint `PatchSummary`，不由 `ApplyStatePatch` 写入业务字段。
 
 收益：
 
@@ -414,16 +421,27 @@ type StatePatch struct {
 
 ```go
 type GraphCheckpoint struct {
-    Seq       int64
-    SessionID string
-    Step      int
-    Graph     string
-    Phase     CheckpointPhase
-    Frontier  []string
-    Node      string
-    Error     string
-    Snapshot  []byte
-    CreatedAt time.Time
+    Seq          int64
+    SessionID    string
+    Step         int
+    Graph        string
+    Phase        CheckpointPhase
+    Frontier     []string
+    Node         string
+    Error        string
+    PatchSummary *PatchSummary
+    Snapshot     []byte
+    CreatedAt    time.Time
+}
+
+type PatchSummary struct {
+    Node               string
+    Writes             []string
+    WrittenFields      []string
+    CurrentRoundID     string
+    DegradedComponents []string
+    Suspended          bool
+    IdempotencyKey     string
 }
 ```
 
@@ -437,11 +455,14 @@ type GraphCheckpoint struct {
 - 线性 frontier 记录 `node_before`、`node_after`、`node_error`。
 - 并发 frontier 只记录 batch 级 checkpoint，不伪造节点级快照。
 - 并发 frontier 中，runner 不在节点 goroutine 内写 `CurrentNode`；节点返回 suspend 时由主协程统一写入暂停节点。
+- patch-aware 节点在 patch 成功 apply 后会生成 `PatchSummary`，记录节点名、声明写集、写入字段、当前 round、降级组件和 suspend 标记；`SuspendWithPatch` 场景会把摘要挂到 `suspended` checkpoint。
+- `PatchSummary` 不保存完整 patch、prompt、回答正文或报告正文，只作为观测和后续 agent-verify 输入。
 
 当前边界：
 
 - 不写 PostgreSQL checkpoint 表。
 - 不实现 time travel、回滚或 UI。
+- 不把 `PatchSummary` 当作业务 replay 或回滚日志。
 - 不改变 HTTP API、SSE、Session JSON 和 `NodeFunc`。
 - snapshot 使用 `json.Marshal(Session)`，只适合 debug / test / degraded 场景，不建议默认生产开启。
 - recorder 调用有短超时保护；runner 会吞掉 recorder panic，并避免慢 recorder 长时间阻塞业务 Graph。
@@ -452,7 +473,7 @@ type GraphCheckpoint struct {
 
 - 更接近 LangGraph checkpointer 的排障能力。
 - 可以定位“哪个节点把 Session 改坏”。
-- 后续 agent-verify 可基于 checkpoint 做更细粒度检查。
+- `agent-verify` 已检查核心 PatchNode 注册、写集、`update_memory -> update_difficulty -> reflection_check` 顺序和累计节点幂等风险；后续可继续基于 checkpoint 做更细粒度检查。
 
 #### 13.1.4 并发写保护
 
@@ -480,20 +501,20 @@ type PatchNodeFunc func(context.Context, *domain.Session) (domain.StatePatch, er
   - legacy 节点没有 `Writes` 时，不允许参与并发 frontier。
   - 两个节点 `Writes` 有交集时，不允许并发执行。
   - 写集 disjoint 时，允许并发执行。
-- `internal/graphs.BuildInterviewGraph` 已给 `retrieve_rag`、`pick_next`、`evaluate`、`critic`、`refine`、`probe_ask`、`probe_eval`、`update_memory`、`report` 等关键节点声明写集；其中 `retrieve_rag`、`pick_next`、`evaluate`、`critic`、`refine`、`probe_ask`、`probe_eval`、`update_memory`、`report` 已注册为 `PatchNode`，`critic` 声明了 `current_critic_result/working_memory`，`refine` 声明了 `current_refined_evaluation/working_memory`，`update_memory` 声明了 `working_memory/current_round_completion`，`report` 声明了 `pending_decision/report/status/working_memory`。
+- `internal/graphs.BuildInterviewGraph` 已给 `retrieve_rag`、`pick_next`、`evaluate`、`critic`、`refine`、`probe_ask`、`probe_eval`、`update_memory`、`update_difficulty`、`reflection_check`、`report` 等关键节点声明写集；其中 `retrieve_rag`、`pick_next`、`evaluate`、`critic`、`refine`、`probe_ask`、`probe_eval`、`update_memory`、`update_difficulty`、`reflection_check`、`report` 已注册为 `PatchNode`，`critic` 声明了 `current_critic_result/working_memory`，`refine` 声明了 `current_refined_evaluation/working_memory`，`update_memory` 声明了 `working_memory/current_round_completion`，`update_difficulty` 声明了 `working_memory`，`reflection_check` 声明了 `pending_decision/working_memory`，`report` 声明了 `pending_decision/report/status/working_memory`。
 
 当前边界：
 
 - 未删除 `NodeFunc`，未强制所有节点一次性迁移。
 - 未改变 HTTP API、SSE、Session JSON 或数据库 schema。
-- patch-aware 能力已在 Graph 层可用，并已覆盖第一批非挂起业务节点、`pick_next`、`critic/refine`、`update_memory` 和完整追问 ask/eval 链路；`update_difficulty/reflection_check` 仍是 legacy 节点，不是完整 LangGraph runtime。
+- patch-aware 能力已在 Graph 层可用，并已覆盖第一批非挂起业务节点、`pick_next`、`critic/refine`、`update_memory`、`update_difficulty`、`reflection_check` 和完整追问 ask/eval 链路；这仍是 Go 自研 Graph runtime，不是完整 LangGraph runtime。
 - 写集是粗粒度 key，宁可保守拒绝一部分并发组合，也不放过明显冲突。
 
 收益：
 
 - 把并发写约定从注释变成检查。
 - 比单纯依赖 `go test -race` 更早发现设计冲突。
-- 为 checkpoint 记录 patch、agent-verify 检查节点写入边界打基础。
+- checkpoint patch summary 和 agent-verify Graph 结构门禁已能检查节点写入边界、核心顺序和累计节点幂等风险。
 - 后续新增 Router、Memory、Difficulty 节点时风险更低。
 
 #### 13.1.5 状态分层原则
@@ -507,13 +528,15 @@ Session
   单次面试事实：题目、轮次、报告、retrieval_trace、当前暂停点
 
 WorkingMemory
-  当前面试内策略状态：已问数量、追问预算、临时弱点、降级原因
+  当前面试内策略状态：已问数量、追问预算、临时弱点、降级原因、节点幂等 marker
 
 UserMemory
   跨 session 长期画像：历史薄弱点、技能分数、复习建议、常错知识点
 ```
 
 这个分层和 LangGraph 的 thread state / long-term memory 思路一致，但实现保持 Go 项目自己的存储和领域模型。
+
+`WorkingMemory.AppliedNodes` 使用 `node:round_id` 作为 key，仅保护当前面试中累计型节点的重复执行；它不是长期用户画像，也不会替代 `UserMemory`。
 
 ### 13.2 第一阶段：Intent Router + Skill
 
@@ -661,8 +684,8 @@ evaluate
 - `update_difficulty` 读取最近一轮最终评分，`score >= 80` 计入高分 streak，`score < 50` 计入低分 streak。
 - 连续两轮高分升一档，连续两轮低分降一档，难度限制在 easy/medium/hard。
 - 中间分数清空 streak，降级评分 `score < 0` 不影响难度。
-- 重放同一个 round 时不会重复累计 streak，避免恢复或重试导致难度误升/误降。
-- Graph 已接入 `update_memory -> update_difficulty -> reflection_check`。
+- 重放同一个 round 时不会重复累计 streak，避免恢复或重试导致难度误升/误降；当前通过 `DifficultyState.LastRoundID` 和 `WorkingMemory.AppliedNodes` 双重保护。
+- Graph 已接入 `update_memory -> update_difficulty -> reflection_check`；`update_difficulty` 在 Graph 中注册为写集 `working_memory` 的 runner-level `PatchNode`，`reflection_check` 注册为写集 `pending_decision/working_memory` 的 runner-level `PatchNode`。
 - `retrieve_rag` 读取 `WorkingMemory.Difficulty.Current` 推导 RAG 基础目标难度：easy -> 2，medium -> 3，hard -> 4。
 - RAG 仍会在动态目标难度上叠加 `GapStrategy` 微调；用户设置的 `QuestionBankFilter.DifficultyMin/DifficultyMax` 继续作为硬过滤条件传给 retriever。
 

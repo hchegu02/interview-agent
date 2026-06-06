@@ -92,6 +92,13 @@ func NewUpdateMemoryPatchNode(opts UpdateMemoryOptions) graph.PatchNodeFunc {
 		_ = ctx
 		round := sess.CurrentRound()
 		if round == nil {
+			mem := cloneWorkingMemory(sess.WorkingMemory)
+			if latest := latestRound(sess); latest != nil {
+				idempotencyKey := nodeIdempotencyKey(NodeUpdateMemory, latest.RoundID)
+				if isNodeApplied(mem, idempotencyKey) {
+					return domain.StatePatch{IdempotencyKey: idempotencyKey}, nil
+				}
+			}
 			return domain.StatePatch{}, fmt.Errorf("update_memory: no current round: %w", graph.ErrPermanent)
 		}
 		final := round.FinalEvaluation()
@@ -99,12 +106,18 @@ func NewUpdateMemoryPatchNode(opts UpdateMemoryOptions) graph.PatchNodeFunc {
 			return domain.StatePatch{}, fmt.Errorf("update_memory: no final evaluation: %w", graph.ErrPermanent)
 		}
 		mem := cloneWorkingMemory(sess.WorkingMemory)
+		idempotencyKey := nodeIdempotencyKey(NodeUpdateMemory, round.RoundID)
+		if isNodeApplied(mem, idempotencyKey) {
+			return domain.StatePatch{IdempotencyKey: idempotencyKey}, nil
+		}
 		completedAt := time.Now()
 
 		// 1. 降级数据: 不入任何统计, 只记账
 		if final.Score < 0 {
 			markDegradedRound(mem)
+			markNodeApplied(mem, idempotencyKey)
 			return domain.StatePatch{
+				IdempotencyKey:       idempotencyKey,
 				WorkingMemory:        mem,
 				CompleteCurrentRound: &completedAt,
 			}, nil
@@ -139,8 +152,10 @@ func NewUpdateMemoryPatchNode(opts UpdateMemoryOptions) graph.PatchNodeFunc {
 		// 公式: new = old + (sample - old)/n, n = 已结算非降级的 round 数
 		mem.ScoredRounds++
 		mem.AvgScore = mem.AvgScore + (float64(combined)-mem.AvgScore)/float64(mem.ScoredRounds)
+		markNodeApplied(mem, idempotencyKey)
 
 		return domain.StatePatch{
+			IdempotencyKey:       idempotencyKey,
 			WorkingMemory:        mem,
 			CompleteCurrentRound: &completedAt,
 		}, nil
