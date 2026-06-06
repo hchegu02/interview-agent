@@ -113,46 +113,48 @@ func writeInterviewSSE(w http.ResponseWriter, event InterviewEvent) error {
 }
 
 type interviewStreamEvent struct {
-	ID         string                  `json:"id,omitempty"`
-	Type       string                  `json:"type"`
-	SessionID  string                  `json:"session_id"`
-	UserID     string                  `json:"user_id,omitempty"`
-	Mode       string                  `json:"mode,omitempty"`
-	Status     string                  `json:"status,omitempty"`
-	Phase      string                  `json:"phase,omitempty"`
-	Progress   []interviewProgressStep `json:"progress,omitempty"`
-	Question   *interviewQuestion      `json:"question,omitempty"`
-	Suspension *domain.Suspension      `json:"suspension,omitempty"`
-	Rounds     []interviewRound        `json:"rounds,omitempty"`
-	Report     *domain.Report          `json:"report,omitempty"`
-	Error      string                  `json:"error,omitempty"`
-	TraceID    string                  `json:"trace_id,omitempty"`
-	ReplayGap  bool                    `json:"replay_gap,omitempty"`
-	CreatedAt  time.Time               `json:"created_at,omitempty"`
-	UpdatedAt  time.Time               `json:"updated_at,omitempty"`
-	At         time.Time               `json:"at"`
+	ID            string                  `json:"id,omitempty"`
+	Type          string                  `json:"type"`
+	SessionID     string                  `json:"session_id"`
+	UserID        string                  `json:"user_id,omitempty"`
+	Mode          string                  `json:"mode,omitempty"`
+	Status        string                  `json:"status,omitempty"`
+	Phase         string                  `json:"phase,omitempty"`
+	Progress      []interviewProgressStep `json:"progress,omitempty"`
+	Question      *interviewQuestion      `json:"question,omitempty"`
+	Suspension    *domain.Suspension      `json:"suspension,omitempty"`
+	WorkingMemory *interviewWorkingMemory `json:"working_memory,omitempty"`
+	Rounds        []interviewRound        `json:"rounds,omitempty"`
+	Report        *domain.Report          `json:"report,omitempty"`
+	Error         string                  `json:"error,omitempty"`
+	TraceID       string                  `json:"trace_id,omitempty"`
+	ReplayGap     bool                    `json:"replay_gap,omitempty"`
+	CreatedAt     time.Time               `json:"created_at,omitempty"`
+	UpdatedAt     time.Time               `json:"updated_at,omitempty"`
+	At            time.Time               `json:"at"`
 }
 
 func buildInterviewStreamEvent(event InterviewEvent) interviewStreamEvent {
 	eventType := publicInterviewEventType(event.Type)
 	out := interviewStreamEvent{
-		ID:         event.ID,
-		Type:       eventType,
-		SessionID:  event.SessionID,
-		UserID:     event.UserID,
-		Mode:       normalizeInterviewMode(event.Mode),
-		Status:     event.Status,
-		Phase:      event.Phase,
-		Progress:   event.Progress,
-		Question:   buildInterviewQuestion(event.Question, false),
-		Suspension: cloneSuspension(event.Suspension),
-		Rounds:     event.Rounds,
-		Report:     cloneReport(event.Report),
-		CreatedAt:  event.CreatedAt,
-		UpdatedAt:  event.UpdatedAt,
-		At:         event.At,
-		TraceID:    event.TraceID,
-		ReplayGap:  event.ReplayGap,
+		ID:            event.ID,
+		Type:          eventType,
+		SessionID:     event.SessionID,
+		UserID:        event.UserID,
+		Mode:          normalizeInterviewMode(event.Mode),
+		Status:        event.Status,
+		Phase:         event.Phase,
+		Progress:      event.Progress,
+		Question:      buildInterviewQuestion(event.Question, false),
+		Suspension:    cloneSuspension(event.Suspension),
+		WorkingMemory: event.WorkingMemory,
+		Rounds:        event.Rounds,
+		Report:        cloneReport(event.Report),
+		CreatedAt:     event.CreatedAt,
+		UpdatedAt:     event.UpdatedAt,
+		At:            event.At,
+		TraceID:       event.TraceID,
+		ReplayGap:     event.ReplayGap,
 	}
 	if out.Phase == "" {
 		out.Phase = "preparing"

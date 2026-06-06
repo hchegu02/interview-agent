@@ -18,6 +18,7 @@ import type {
   TranscriptAnalysis,
   QuestionFacets,
   SkillAction,
+  WorkingMemory,
 } from "./types";
 import type { StreamEvent } from "./useInterviewStream";
 
@@ -173,6 +174,7 @@ export function InterviewPage({ session, events, busy, pendingAnswer, submitAnsw
         <span className="status-pill">{session.phase || session.status}</span>
       </div>
       <ProfileAnalysisPanel analysis={session.profile_analysis} compact />
+      <AgentStatePanel memory={session.working_memory} />
       <EventTimeline events={events} />
       <div className="conversation">
         {rounds.map((round) => <RoundView key={round.round_id} round={round} />)}
@@ -215,6 +217,7 @@ export function ReportPage({ session, startDrill, jumpQuestion }: {
         </div>
       </div>
       <ProfileAnalysisPanel analysis={session.profile_analysis} />
+      <AgentStatePanel memory={session.working_memory} />
       <TranscriptPanel analysis={report.transcript_analysis} />
       <RetrievalTracePanel trace={session.retrieval_trace} />
       <DrillPlanPanel plan={report.drill_plan || []} startDrill={startDrill} jumpQuestion={jumpQuestion} />
@@ -367,6 +370,89 @@ function AnalysisBlock({ title, items, tone }: { title: string; items?: string[]
 
 function EventTimeline({ events }: { events: StreamEvent[] }) {
   return <div className="event-timeline">{events.length ? events.map((event, i) => <span key={`${event.type}-${i}`} className="event-chip" title={event.type}><strong>{event.label}</strong><em>{event.detail || event.at}</em></span>) : <span className="event-chip muted">等待实时事件</span>}</div>;
+}
+
+function AgentStatePanel({ memory }: { memory?: WorkingMemory }) {
+  if (!memory) return null;
+  const difficulty = difficultyLabel(memory.difficulty?.current);
+  const remainingRounds = Math.max((memory.max_rounds || 0) - (memory.rounds_asked || 0), 0);
+  const weakSkills = memory.weak_skills || [];
+  const coverage = Object.entries(memory.skill_coverage || {}).sort((a, b) => b[1] - a[1]);
+  const degradedReasons = Object.entries(memory.degraded_reasons || {});
+  return (
+    <section className="agent-state">
+      <div className="analysis-head">
+        <div>
+          <p className="eyebrow">Agent 状态</p>
+          <h2>当前训练策略由后端 WorkingMemory 驱动。</h2>
+        </div>
+        <span className={`difficulty-pill ${difficulty.className}`}>{difficulty.label}</span>
+      </div>
+      <div className="agent-state-grid">
+        <StateMetric label="已问 / 剩余" value={`${memory.rounds_asked || 0} / ${remainingRounds}`} />
+        <StateMetric label="均分 / 有效轮" value={`${formatMemoryScore(memory.avg_score)} / ${memory.scored_rounds || 0}`} />
+        <StateMetric label="追问预算" value={`${memory.probes_used || 0} / ${memory.max_probes || 0}`} />
+        <StateMetric label="反思预算" value={`${memory.reflections_used || 0} / ${memory.max_reflections || 0}`} />
+        <StateMetric label="高分 streak" value={String(memory.difficulty?.correct_streak || 0)} />
+        <StateMetric label="低分 streak" value={String(memory.difficulty?.wrong_streak || 0)} />
+      </div>
+      <div className="agent-state-details">
+        <StatePills title="当前弱项" items={weakSkills} empty="暂无低分弱项" tone="warn" />
+        <StatePills title="已确认技能" items={memory.confirmed_skills} empty="暂无确认技能" tone="good" />
+        <StateCoverage items={coverage} />
+        <StateReasons reasons={degradedReasons} />
+      </div>
+    </section>
+  );
+}
+
+function StateMetric({ label, value }: { label: string; value: string }) {
+  return <div className="state-metric"><span>{label}</span><strong>{value}</strong></div>;
+}
+
+function StatePills({ title, items, empty, tone }: { title: string; items?: string[]; empty: string; tone: string }) {
+  const values = items?.filter(Boolean) || [];
+  return <section className="state-block"><h3>{title}</h3><div className="state-pills">{values.length ? values.map((item) => <span className={tone} key={item}>{item}</span>) : <em>{empty}</em>}</div></section>;
+}
+
+function StateCoverage({ items }: { items: [string, number][] }) {
+  return (
+    <section className="state-block">
+      <h3>技能覆盖度</h3>
+      <div className="state-coverage">
+        {items.length ? items.slice(0, 6).map(([skill, score]) => (
+          <span key={skill}>{skill}<strong>{formatMemoryScore(score)}</strong></span>
+        )) : <em>暂无覆盖度数据</em>}
+      </div>
+    </section>
+  );
+}
+
+function StateReasons({ reasons }: { reasons: [string, string][] }) {
+  return (
+    <section className="state-block">
+      <h3>降级原因</h3>
+      <div className="state-reasons">
+        {reasons.length ? reasons.map(([component, reason]) => <span key={component}><strong>{component}</strong>{reason}</span>) : <em>暂无降级记录</em>}
+      </div>
+    </section>
+  );
+}
+
+function difficultyLabel(value?: number): { label: string; className: string } {
+  switch (value) {
+  case 1:
+    return { label: "基础难度", className: "easy" };
+  case 3:
+    return { label: "深入难度", className: "hard" };
+  default:
+    return { label: "进阶难度", className: "medium" };
+  }
+}
+
+function formatMemoryScore(value?: number): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "-";
+  return Number(value).toFixed(1).replace(/\.0$/, "");
 }
 
 function RoundView({ round }: { round: InterviewRound }) {

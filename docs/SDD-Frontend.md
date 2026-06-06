@@ -196,6 +196,7 @@ npm --prefix web run build
 - 共享展示组件。
 - 报告 helper。
 - 报告页 `retrieval_trace` 展示。
+- 面试页 / 报告页 `working_memory` 只读展示。
 
 ## 10. 后续演进计划
 
@@ -216,13 +217,13 @@ npm --prefix web run build
 
 ### 10.2 Long-term Memory 展示
 
-后端已有长期记忆基础层，并会在新 Session 启动时把历史弱点注入当前 `WorkingMemory`。当前尚无用户可读的长期记忆 HTTP API；前端如果只做最小展示，应先展示 Session 中的 `working_memory`，例如弱项、已确认技能、平均分、剩余轮次和降级原因。
+后端已有长期记忆基础层，并会在新 Session 启动时把历史弱点注入当前 `WorkingMemory`。当前尚无用户可读的长期记忆 HTTP API；前端已先展示 Session 响应中的 `working_memory` 白名单字段，例如弱项、已确认技能、平均分、剩余轮次和降级原因。
 
-前端只展示用户可见的画像摘要，不直接编辑底层 memory 结构。
+前端只展示用户可见的画像摘要，不直接编辑底层 memory 结构，也不展示 `applied_nodes`、原始 `notes` 等后端内部运行标记。
 
 ### 10.3 动态难度展示
 
-后端已有 `WorkingMemory.Difficulty`，并已影响 RAG 目标难度、`pick_next` prompt 和规则兜底。前端可以展示当前难度、连续高分 / 低分 streak 和最近消费的 round。
+后端已有 `WorkingMemory.Difficulty`，并已影响 RAG 目标难度、`pick_next` prompt 和规则兜底。前端已在面试页和报告页展示当前难度、连续高分 / 低分 streak、追问预算、反思预算和技能覆盖摘要。
 
 难度更新策略由后端负责，前端不自行根据分数调整题目难度。
 

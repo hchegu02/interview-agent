@@ -309,6 +309,68 @@ func TestInterviewStart_ReturnsFirstQuestion(t *testing.T) {
 	if got.Report != nil {
 		t.Fatalf("report should be empty before answer, got %+v", got.Report)
 	}
+	if got.WorkingMemory == nil {
+		t.Fatal("working memory should be returned for frontend state display")
+	}
+	if got.WorkingMemory.MaxRounds != 8 || got.WorkingMemory.MaxProbes != 4 {
+		t.Fatalf("working memory budgets = %+v, want default budgets", got.WorkingMemory)
+	}
+}
+
+func TestBuildInterviewResponse_ExposesWorkingMemoryWithoutInternalMarkers(t *testing.T) {
+	sess := &domain.Session{
+		ID:        "wm-response",
+		Mode:      "practice",
+		Status:    domain.StatusRunning,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		WorkingMemory: &domain.WorkingMemory{
+			ConfirmedSkills: []string{"go"},
+			WeakSkills:      []string{"redis"},
+			SuspectedSkills: []string{"mysql"},
+			SkillCoverage:   map[string]float64{"go": 1.4},
+			Difficulty: &domain.DifficultyState{
+				Current:       domain.DifficultyHard,
+				CorrectStreak: 2,
+				LastRoundID:   "r2",
+			},
+			AvgScore:        82.5,
+			RoundsAsked:     3,
+			MaxRounds:       8,
+			ScoredRounds:    2,
+			DegradedReasons: map[string]string{"rag": "fallback used"},
+			AppliedNodes:    map[string]bool{"update_memory:r2": true},
+			Notes:           map[string]string{"debug": "hidden"},
+			ProbesUsed:      1,
+			MaxProbes:       4,
+			ReflectionsUsed: 1,
+			MaxReflections:  1,
+		},
+	}
+
+	body, err := json.Marshal(buildInterviewResponse(sess))
+	if err != nil {
+		t.Fatalf("marshal response: %v", err)
+	}
+	if bytes.Contains(body, []byte("applied_nodes")) {
+		t.Fatalf("response should not expose internal applied_nodes: %s", body)
+	}
+	if bytes.Contains(body, []byte("notes")) {
+		t.Fatalf("response should not expose raw working memory notes: %s", body)
+	}
+	var got interviewResponse
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if got.WorkingMemory == nil || got.WorkingMemory.Difficulty == nil {
+		t.Fatalf("working memory missing: %+v", got.WorkingMemory)
+	}
+	if got.WorkingMemory.Difficulty.Current != domain.DifficultyHard || got.WorkingMemory.Difficulty.CorrectStreak != 2 {
+		t.Fatalf("difficulty = %+v, want hard streak 2", got.WorkingMemory.Difficulty)
+	}
+	if got.WorkingMemory.DegradedReasons["rag"] != "fallback used" {
+		t.Fatalf("degraded reasons = %+v", got.WorkingMemory.DegradedReasons)
+	}
 }
 
 func TestInterviewService_StartStoresQuestionBankFilter(t *testing.T) {
@@ -1810,6 +1872,12 @@ func TestBuildInterviewEvent_ClonesMutableSessionData(t *testing.T) {
 				},
 			},
 		},
+		WorkingMemory: &domain.WorkingMemory{
+			WeakSkills:      []string{"redis"},
+			SkillCoverage:   map[string]float64{"redis": 0.4},
+			DegradedReasons: map[string]string{"rag": "fallback"},
+			Difficulty:      &domain.DifficultyState{Current: domain.DifficultyHard},
+		},
 	}
 
 	ctx := traceid.Inject(context.Background(), "trace-clone")
@@ -1819,6 +1887,9 @@ func TestBuildInterviewEvent_ClonesMutableSessionData(t *testing.T) {
 	sess.Rounds[0].Question.Tags[0] = "mutated"
 	sess.Rounds[0].Question.ExpectedPoints[0] = "mutated"
 	sess.Suspension.Payload["question_id"] = "mutated"
+	sess.WorkingMemory.WeakSkills[0] = "mutated"
+	sess.WorkingMemory.SkillCoverage["redis"] = 9
+	sess.WorkingMemory.DegradedReasons["rag"] = "mutated"
 
 	if event.TraceID != "trace-clone" {
 		t.Fatalf("trace id = %q", event.TraceID)
@@ -1837,6 +1908,15 @@ func TestBuildInterviewEvent_ClonesMutableSessionData(t *testing.T) {
 	}
 	if event.Suspension == nil || event.Suspension.Payload["question_id"] != "q1" {
 		t.Fatalf("suspension was mutated: %+v", event.Suspension)
+	}
+	if event.WorkingMemory == nil || event.WorkingMemory.WeakSkills[0] != "redis" {
+		t.Fatalf("working memory skills were mutated: %+v", event.WorkingMemory)
+	}
+	if event.WorkingMemory.SkillCoverage["redis"] != 0.4 {
+		t.Fatalf("working memory coverage was mutated: %+v", event.WorkingMemory.SkillCoverage)
+	}
+	if event.WorkingMemory.DegradedReasons["rag"] != "fallback" {
+		t.Fatalf("working memory degraded reasons were mutated: %+v", event.WorkingMemory.DegradedReasons)
 	}
 }
 
@@ -1911,6 +1991,41 @@ func TestWriteInterviewSSE_UsesBusinessEventShape(t *testing.T) {
 		t.Fatalf("sse should use business event name: %s", raw)
 	}
 	for _, forbidden := range []string{"current_node", "pick_next", "graph.node"} {
+		if strings.Contains(raw, forbidden) {
+			t.Fatalf("sse leaked %q: %s", forbidden, raw)
+		}
+	}
+}
+
+func TestWriteInterviewSSE_IncludesWorkingMemoryPublicState(t *testing.T) {
+	rec := httptest.NewRecorder()
+	event := InterviewEvent{
+		ID:        "evt-memory",
+		Type:      interviewEventSessionUpdated,
+		SessionID: "s-memory",
+		Status:    string(domain.StatusRunning),
+		Phase:     "answering",
+		WorkingMemory: buildInterviewWorkingMemory(&domain.WorkingMemory{
+			WeakSkills:      []string{"redis"},
+			SkillCoverage:   map[string]float64{"redis": 0.4},
+			DegradedReasons: map[string]string{"rag": "fallback used"},
+			AppliedNodes:    map[string]bool{"update_memory:r1": true},
+			Notes:           map[string]string{"debug": "hidden"},
+			Difficulty:      &domain.DifficultyState{Current: domain.DifficultyEasy},
+		}),
+		At: time.Now(),
+	}
+
+	if err := writeInterviewSSE(rec, event); err != nil {
+		t.Fatalf("write sse: %v", err)
+	}
+	raw := rec.Body.String()
+	for _, expected := range []string{`"working_memory"`, `"weak_skills":["redis"]`, `"current":1`, `"rag":"fallback used"`} {
+		if !strings.Contains(raw, expected) {
+			t.Fatalf("sse missing %q: %s", expected, raw)
+		}
+	}
+	for _, forbidden := range []string{"applied_nodes", "notes"} {
 		if strings.Contains(raw, forbidden) {
 			t.Fatalf("sse leaked %q: %s", forbidden, raw)
 		}

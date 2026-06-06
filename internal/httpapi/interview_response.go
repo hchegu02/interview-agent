@@ -18,6 +18,7 @@ type interviewResponse struct {
 	ProfileAnalysis  *domain.ProfileAnalysis  `json:"profile_analysis,omitempty"`
 	RetrievalTrace   *domain.RetrievalTrace   `json:"retrieval_trace,omitempty"`
 	Suspension       *domain.Suspension       `json:"suspension,omitempty"`
+	WorkingMemory    *interviewWorkingMemory  `json:"working_memory,omitempty"`
 	Question         *interviewQuestion       `json:"question,omitempty"`
 	Rounds           []interviewRound         `json:"rounds,omitempty"`
 	Report           *domain.Report           `json:"report,omitempty"`
@@ -64,6 +65,32 @@ type interviewFeedback struct {
 	ExpectedPoints []string `json:"expected_points,omitempty"`
 }
 
+type interviewWorkingMemory struct {
+	ConfirmedSkills []string                  `json:"confirmed_skills,omitempty"`
+	WeakSkills      []string                  `json:"weak_skills,omitempty"`
+	SuspectedSkills []string                  `json:"suspected_skills,omitempty"`
+	SkillCoverage   map[string]float64        `json:"skill_coverage,omitempty"`
+	Difficulty      *interviewDifficultyState `json:"difficulty,omitempty"`
+	AvgScore        float64                   `json:"avg_score,omitempty"`
+	RoundsAsked     int                       `json:"rounds_asked,omitempty"`
+	MaxRounds       int                       `json:"max_rounds,omitempty"`
+	ScoredRounds    int                       `json:"scored_rounds,omitempty"`
+	DegradedRounds  int                       `json:"degraded_rounds,omitempty"`
+	DegradedReasons map[string]string         `json:"degraded_reasons,omitempty"`
+	ProbesUsed      int                       `json:"probes_used,omitempty"`
+	MaxProbes       int                       `json:"max_probes,omitempty"`
+	ReflectionsUsed int                       `json:"reflections_used,omitempty"`
+	MaxReflections  int                       `json:"max_reflections,omitempty"`
+	ReflectTopic    string                    `json:"reflect_topic,omitempty"`
+}
+
+type interviewDifficultyState struct {
+	Current       domain.Difficulty `json:"current"`
+	CorrectStreak int               `json:"correct_streak,omitempty"`
+	WrongStreak   int               `json:"wrong_streak,omitempty"`
+	LastRoundID   string            `json:"last_round_id,omitempty"`
+}
+
 func buildInterviewResponse(sess *domain.Session) interviewResponse {
 	mode := sessionMode(sess)
 	return interviewResponse{
@@ -78,12 +105,55 @@ func buildInterviewResponse(sess *domain.Session) interviewResponse {
 		ProfileAnalysis:  cloneProfileAnalysis(sess.ProfileAnalysis),
 		RetrievalTrace:   cloneRetrievalTrace(sess.RetrievalTrace),
 		Suspension:       cloneSuspension(sess.Suspension),
+		WorkingMemory:    buildInterviewWorkingMemory(sess.WorkingMemory),
 		Question:         buildInterviewQuestion(currentQuestion(sess), false),
 		Rounds:           buildInterviewRounds(sess, mode),
 		Report:           cloneReport(sess.Report),
 		CreatedAt:        sess.CreatedAt,
 		UpdatedAt:        sess.UpdatedAt,
 	}
+}
+
+func buildInterviewWorkingMemory(mem *domain.WorkingMemory) *interviewWorkingMemory {
+	if mem == nil {
+		return nil
+	}
+	out := &interviewWorkingMemory{
+		ConfirmedSkills: append([]string(nil), mem.ConfirmedSkills...),
+		WeakSkills:      append([]string(nil), mem.WeakSkills...),
+		SuspectedSkills: append([]string(nil), mem.SuspectedSkills...),
+		AvgScore:        mem.AvgScore,
+		RoundsAsked:     mem.RoundsAsked,
+		MaxRounds:       mem.MaxRounds,
+		ScoredRounds:    mem.ScoredRounds,
+		DegradedRounds:  mem.DegradedRounds,
+		ProbesUsed:      mem.ProbesUsed,
+		MaxProbes:       mem.MaxProbes,
+		ReflectionsUsed: mem.ReflectionsUsed,
+		MaxReflections:  mem.MaxReflections,
+		ReflectTopic:    mem.ReflectTopic,
+	}
+	if mem.SkillCoverage != nil {
+		out.SkillCoverage = make(map[string]float64, len(mem.SkillCoverage))
+		for skill, coverage := range mem.SkillCoverage {
+			out.SkillCoverage[skill] = coverage
+		}
+	}
+	if mem.DegradedReasons != nil {
+		out.DegradedReasons = make(map[string]string, len(mem.DegradedReasons))
+		for component, reason := range mem.DegradedReasons {
+			out.DegradedReasons[component] = reason
+		}
+	}
+	if mem.Difficulty != nil {
+		out.Difficulty = &interviewDifficultyState{
+			Current:       mem.Difficulty.Current,
+			CorrectStreak: mem.Difficulty.CorrectStreak,
+			WrongStreak:   mem.Difficulty.WrongStreak,
+			LastRoundID:   mem.Difficulty.LastRoundID,
+		}
+	}
+	return out
 }
 
 func cloneSuspension(suspension *domain.Suspension) *domain.Suspension {

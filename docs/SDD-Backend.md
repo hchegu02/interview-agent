@@ -105,7 +105,7 @@ REST 请求
 - `WorkingMemory` 保存当前会话内的策略状态。
 - `RetrievalTrace` 保存 RAG 检索证据，用于报告、排障和验证。
 
-Session 是后端事实源，前端只是读取和展示。
+Session 是后端事实源，前端只是读取和展示。HTTP / SSE 响应只透出 `WorkingMemory` 的用户可读白名单字段，例如弱项、技能覆盖度、动态难度和降级原因；`AppliedNodes`、原始 `Notes` 等内部恢复和幂等标记不进入公开响应。
 
 ## 6. Agent Graph 设计
 
@@ -693,12 +693,13 @@ evaluate
 - `pick_next` prompt 显式包含当前动态难度和目标题目难度，LLM 选题时优先选择接近目标难度的候选题。
 - `pick_next` 规则降级路径也会优先选择接近当前动态难度的题，同等难度距离下再按技能 coverage 选择。
 - RAG 仍会在动态目标难度上叠加 `GapStrategy` 微调；用户设置的 `QuestionBankFilter.DifficultyMin/DifficultyMax` 继续作为硬过滤条件传给 retriever。
+- `/api/interview/start`、`/api/interview/answer`、Session 详情和 SSE snapshot/progress 事件会返回 `working_memory` 白名单快照，用于前端只读展示动态难度、预算、弱项和降级状态。
 
 当前边界：
 
 - 不让 LLM 单独决定难度。
 - 后续轮次暂不自动重跑 `retrieve_rag`，当前优先复用已有候选池并通过 `pick_next` 消费动态难度。
-- 不改变 HTTP 响应结构。
+- 不暴露 `WorkingMemory.AppliedNodes`、原始 `Notes`、Graph 节点内部状态或 prompt。
 
 ### 13.5 第四阶段：MCP Adapter
 

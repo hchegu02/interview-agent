@@ -101,6 +101,7 @@ export type Session = {
   question_bank_filter?: QuestionBankFilter;
   question?: InterviewQuestion;
   rounds?: InterviewRound[];
+  working_memory?: WorkingMemory;
   report?: Report;
   created_at: string;
   updated_at: string;
@@ -216,6 +217,33 @@ export type SessionSummary = {
   mode: Mode;
   status: string;
   updated_at: string;
+};
+
+export type WorkingMemory = {
+  confirmed_skills?: string[];
+  weak_skills?: string[];
+  suspected_skills?: string[];
+  skill_coverage?: Record<string, number>;
+  difficulty?: DifficultyState;
+  avg_score?: number;
+  rounds_asked?: number;
+  max_rounds?: number;
+  scored_rounds?: number;
+  degraded_rounds?: number;
+  degraded_reasons?: Record<string, string>;
+  probes_used?: number;
+  max_probes?: number;
+  reflections_used?: number;
+  max_reflections?: number;
+  reflect_topic?: string;
+  notes?: Record<string, string>;
+};
+
+export type DifficultyState = {
+  current: 1 | 2 | 3 | number;
+  correct_streak?: number;
+  wrong_streak?: number;
+  last_round_id?: string;
 };
 
 export type AgentMessageRequest = {

@@ -507,6 +507,7 @@ h3 {
 
 .control-panel,
 .profile-analysis,
+.agent-state,
 .transcript-analysis,
 .retrieval-trace,
 .drill-plan,
@@ -796,6 +797,141 @@ h3 {
   border-radius: 999px;
   font-weight: 900;
   border: 1px solid #99f6df;
+}
+
+.agent-state {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 14px;
+  padding: 16px;
+}
+
+.difficulty-pill {
+  padding: 8px 11px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 900;
+  border: 1px solid transparent;
+}
+
+.difficulty-pill.easy {
+  color: #075985;
+  background: #e0f2fe;
+  border-color: #bae6fd;
+}
+
+.difficulty-pill.medium {
+  color: #075a45;
+  background: #d1fae5;
+  border-color: #a7f3d0;
+}
+
+.difficulty-pill.hard {
+  color: #7c2d12;
+  background: #ffedd5;
+  border-color: #fed7aa;
+}
+
+.agent-state-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+  gap: 8px;
+}
+
+.state-metric {
+  min-height: 72px;
+  padding: 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: var(--radius);
+}
+
+.state-metric span,
+.state-block h3 {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.state-metric strong {
+  display: block;
+  margin-top: 7px;
+  color: var(--ink);
+  font-size: 22px;
+}
+
+.agent-state-details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.state-block {
+  min-width: 0;
+  padding: 10px;
+  background: #fbfdff;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.state-pills,
+.state-coverage,
+.state-reasons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.state-pills span,
+.state-pills em,
+.state-coverage span,
+.state-coverage em,
+.state-reasons span,
+.state-reasons em {
+  padding: 5px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.state-pills .good {
+  color: #047857;
+  background: #d1fae5;
+}
+
+.state-pills .warn {
+  color: #92400e;
+  background: #fef3c7;
+}
+
+.state-pills em,
+.state-coverage em,
+.state-reasons em {
+  color: #475569;
+  background: #e2e8f0;
+}
+
+.state-coverage span {
+  color: #0f3c67;
+  background: #e1f4ff;
+}
+
+.state-coverage strong {
+  margin-left: 5px;
+  color: var(--blue);
+}
+
+.state-reasons span {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  color: #7c2d12;
+  background: #ffedd5;
+}
+
+.state-reasons strong {
+  color: #9a3412;
 }
 
 .event-timeline {
@@ -1584,7 +1720,8 @@ h3 {
   .import-actions,
   .import-grid,
   .profile-analysis,
-  .profile-columns {
+  .profile-columns,
+  .agent-state-details {
     grid-template-columns: 1fr;
   }
 
