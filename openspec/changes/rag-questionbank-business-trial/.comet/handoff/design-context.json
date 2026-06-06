@@ -1,0 +1,15 @@
+{
+  "change": "rag-questionbank-business-trial",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "7b0509444c22e099d4a92d1f2f567a4820d0efd0b5247c2bbd9bfe92d5584d66",
+  "files": [
+    { "path": "openspec/changes/rag-questionbank-business-trial/proposal.md", "sha256": "31f2f83d582bcefa6419b444980bb572673b3de6ea6022efff091b6894d19902" },
+    { "path": "openspec/changes/rag-questionbank-business-trial/design.md", "sha256": "74ea3a2560d7320c81d7f5d034080d6859b981f11778dc9546986b9a123444e4" },
+    { "path": "openspec/changes/rag-questionbank-business-trial/tasks.md", "sha256": "64a05ce1ca60bff9b749fcdc75c080ddfed5e659d3de9c1711ef5911b13b40b8" },
+    { "path": "openspec/changes/rag-questionbank-business-trial/specs/question-bank-import-enrichment/spec.md", "sha256": "19779669e1f9def207cbd155f60148bceb1a2044a485ae0dc031d3ee9d74c09d" },
+    { "path": "openspec/changes/rag-questionbank-business-trial/specs/rag-retrieval-enhancement/spec.md", "sha256": "d1523702a48cd67b4e0e8fe563cf8a67970790839ecb1444cbbfc6b8e823befd" }
+  ]
+}
