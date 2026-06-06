@@ -108,6 +108,13 @@ func NewDefaultService() *Service {
 	return NewService(NewRuleRouter(), skills.NewDefaultRegistryWithTools(tools))
 }
 
+func NewDefaultServiceWithTools(tools *agentkit.ToolRegistry) *Service {
+	if tools == nil {
+		return NewDefaultService()
+	}
+	return NewService(NewRuleRouter(), skills.NewDefaultRegistryWithTools(tools))
+}
+
 func (s *Service) HandleMessage(ctx context.Context, msg AgentMessage) (AgentResponse, error) {
 	if strings.TrimSpace(msg.Message) == "" {
 		return AgentResponse{}, ErrEmptyMessage

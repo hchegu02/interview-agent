@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"interview-agent/internal/agent"
+	"interview-agent/internal/agentkit"
 	"interview-agent/internal/config"
 	"interview-agent/internal/httpapi"
 	"interview-agent/internal/observability"
@@ -73,7 +74,7 @@ func main() {
 
 	server := httpapi.NewServer(cfg)
 	server.SetEventHubMetrics(eventHubMetricsProvider(events))
-	server.SetAgentService(buildAgentService())
+	server.SetAgentService(buildAgentService(cfg))
 	server.SetUserMemoryOwnerResolver(buildUserMemoryOwnerResolver(cfg))
 
 	// ProfileAnalyzer 是“开始面试前的 JD/简历解释”能力。
@@ -182,8 +183,21 @@ func shutdownServer(ctx context.Context, srv *http.Server, questionImports inter
 	return shutdownErr
 }
 
-func buildAgentService() *agent.Service {
-	return agent.NewDefaultService()
+func buildAgentService(cfg *config.Config) *agent.Service {
+	if cfg == nil || !cfg.InternalTrial.Enabled || cfg.InternalTrial.GitHubToolMode != "real" {
+		return agent.NewDefaultService()
+	}
+	tools := agentkit.NewToolRegistry(agentkit.NoopHook{})
+	if err := agentkit.RegisterMockWebFetchTool(tools, agentkit.NewMockMCPClient()); err != nil {
+		return agent.NewDefaultService()
+	}
+	if err := agentkit.RegisterGitHubProjectTool(tools, agentkit.GitHubProjectClient{
+		HTTPClient: http.DefaultClient,
+		BaseURL:    cfg.InternalTrial.GitHubAPIBaseURL,
+	}); err != nil {
+		return agent.NewDefaultService()
+	}
+	return agent.NewDefaultServiceWithTools(tools)
 }
 
 func buildUserMemoryOwnerResolver(cfg *config.Config) httpapi.UserMemoryOwnerResolver {

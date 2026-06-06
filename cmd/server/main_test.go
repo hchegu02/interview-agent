@@ -506,7 +506,9 @@ func TestBuildChatModel_MockModeNoBreaker(t *testing.T) {
 }
 
 func TestBuildAgentService_ProjectPolishUsesMockTool(t *testing.T) {
-	service := buildAgentService()
+	cfg := &config.Config{}
+	cfg.InternalTrial.GitHubToolMode = "mock"
+	service := buildAgentService(cfg)
 	resp, err := service.HandleMessage(context.Background(), agent.AgentMessage{
 		UserID:  "u1",
 		Message: "帮我润色项目 https://github.com/acme/interview-agent",
@@ -516,6 +518,45 @@ func TestBuildAgentService_ProjectPolishUsesMockTool(t *testing.T) {
 	}
 	if !strings.Contains(resp.Result.Content, "interview-agent mock GitHub project analysis") {
 		t.Fatalf("content should include mock tool output: %s", resp.Result.Content)
+	}
+	if len(resp.ToolTrace) != 1 || !strings.Contains(resp.ToolTrace[0].Summary, "mock") {
+		t.Fatalf("tool trace = %+v, want mock trace", resp.ToolTrace)
+	}
+}
+
+func TestBuildAgentServiceDefaultsToMockTool(t *testing.T) {
+	service := buildAgentService(nil)
+	resp, err := service.HandleMessage(context.Background(), agent.AgentMessage{
+		UserID:  "u1",
+		Message: "帮我润色这个项目 https://github.com/acme/demo",
+	})
+	if err != nil {
+		t.Fatalf("handle message: %v", err)
+	}
+	if len(resp.ToolTrace) != 1 || !strings.Contains(resp.ToolTrace[0].Summary, "mock") {
+		t.Fatalf("tool trace = %+v, want mock trace", resp.ToolTrace)
+	}
+}
+
+func TestBuildAgentServiceRealGitHubMissingConfigIsDiagnosable(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.InternalTrial.Enabled = true
+	cfg.InternalTrial.GitHubToolMode = "real"
+	cfg.InternalTrial.GitHubAPIBaseURL = ""
+	service := buildAgentService(cfg)
+
+	resp, err := service.HandleMessage(context.Background(), agent.AgentMessage{
+		UserID:  "u1",
+		Message: "帮我润色这个项目 https://github.com/acme/demo",
+	})
+	if err != nil {
+		t.Fatalf("handle message: %v", err)
+	}
+	if resp.Intent != agent.IntentSkillProjectPolish || resp.Skill != "project_polish" {
+		t.Fatalf("response route = %+v", resp)
+	}
+	if len(resp.ToolTrace) != 1 || resp.ToolTrace[0].ErrorClass != "config_missing" {
+		t.Fatalf("tool trace = %+v, want config_missing", resp.ToolTrace)
 	}
 }
 

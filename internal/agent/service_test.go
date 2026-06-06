@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"interview-agent/internal/agentkit"
 	"interview-agent/internal/skills"
 )
 
@@ -51,6 +52,40 @@ func TestDefaultService_ProjectPolishUsesMockGithubTool(t *testing.T) {
 	}
 	if resp.ToolTrace[0].Name != "github.project_analyze" || resp.ToolTrace[0].Status != "success" {
 		t.Fatalf("top-level tool trace = %+v, want github success trace", resp.ToolTrace[0])
+	}
+}
+
+func TestNewDefaultServiceWithToolsUsesExplicitRegistry(t *testing.T) {
+	tools := agentkit.NewToolRegistry(agentkit.NoopHook{})
+	if err := agentkit.RegisterGitHubProjectTool(tools, agentkit.GitHubProjectClient{}); err != nil {
+		t.Fatalf("register github project tool: %v", err)
+	}
+	service := NewDefaultServiceWithTools(tools)
+
+	resp, err := service.HandleMessage(context.Background(), AgentMessage{
+		UserID:  "u1",
+		Message: "帮我润色这个项目 https://github.com/acme/demo",
+	})
+	if err != nil {
+		t.Fatalf("handle message: %v", err)
+	}
+	if len(resp.ToolTrace) != 1 || resp.ToolTrace[0].ErrorClass != "config_missing" {
+		t.Fatalf("tool trace = %+v, want config_missing", resp.ToolTrace)
+	}
+}
+
+func TestNewDefaultServiceWithToolsNilPreservesDefaultMock(t *testing.T) {
+	service := NewDefaultServiceWithTools(nil)
+
+	resp, err := service.HandleMessage(context.Background(), AgentMessage{
+		UserID:  "u1",
+		Message: "帮我润色这个项目 https://github.com/acme/demo",
+	})
+	if err != nil {
+		t.Fatalf("handle message: %v", err)
+	}
+	if len(resp.ToolTrace) != 1 || !strings.Contains(resp.ToolTrace[0].Summary, "mock") {
+		t.Fatalf("tool trace = %+v, want mock trace", resp.ToolTrace)
 	}
 }
 

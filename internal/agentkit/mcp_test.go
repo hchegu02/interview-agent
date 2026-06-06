@@ -72,6 +72,30 @@ func TestRegisterDefaultMCPToolsUsesMockClientWhenNil(t *testing.T) {
 	}
 }
 
+func TestRegisterGitHubProjectToolRequiresExplicitClientConfig(t *testing.T) {
+	reg := NewToolRegistry(NoopHook{})
+	if err := RegisterGitHubProjectTool(reg, GitHubProjectClient{}); err != nil {
+		t.Fatalf("register github project tool: %v", err)
+	}
+
+	_, err := reg.Call(context.Background(), ToolCall{
+		Name:       "github.project_analyze",
+		Input:      map[string]any{"url": "https://github.com/acme/demo"},
+		Permission: PermissionReadOnly,
+	})
+	var toolErr MCPToolError
+	if !errors.As(err, &toolErr) || toolErr.Code != "config_missing" {
+		t.Fatalf("err = %v, want config_missing MCPToolError", err)
+	}
+}
+
+func TestRegisterGitHubProjectToolRejectsNilRegistry(t *testing.T) {
+	err := RegisterGitHubProjectTool(nil, GitHubProjectClient{})
+	if !errors.Is(err, ErrInvalidSpec) {
+		t.Fatalf("err = %v, want ErrInvalidSpec", err)
+	}
+}
+
 func TestMockMCPClientGithubProjectAnalyze(t *testing.T) {
 	reg := NewToolRegistry(NoopHook{})
 	if err := RegisterDefaultMCPTools(reg, NewMockMCPClient()); err != nil {

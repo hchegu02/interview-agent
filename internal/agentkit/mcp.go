@@ -119,6 +119,37 @@ func RegisterDefaultMCPTools(reg *ToolRegistry, client MCPClient) error {
 	return nil
 }
 
+func RegisterGitHubProjectTool(reg *ToolRegistry, client GitHubProjectClient) error {
+	if reg == nil {
+		return fmt.Errorf("%w: nil tool registry", ErrInvalidSpec)
+	}
+	return reg.Register(NewMCPToolAdapter(ToolSpec{
+		Name:          "github.project_analyze",
+		Description:   "read-only GitHub project metadata analysis",
+		InputSummary:  "github repository url",
+		OutputSummary: "project summary, language, highlights and risks",
+		Permission:    PermissionReadOnly,
+		Timeout:       2 * time.Second,
+	}, client))
+}
+
+func RegisterMockWebFetchTool(reg *ToolRegistry, client MCPClient) error {
+	if reg == nil {
+		return fmt.Errorf("%w: nil tool registry", ErrInvalidSpec)
+	}
+	if client == nil {
+		client = NewMockMCPClient()
+	}
+	return reg.Register(NewMCPToolAdapter(ToolSpec{
+		Name:          "web.fetch",
+		Description:   "mock fetch for a web URL",
+		InputSummary:  "web url",
+		OutputSummary: "url, title and content summary",
+		Permission:    PermissionReadOnly,
+		Timeout:       2 * time.Second,
+	}, client))
+}
+
 func (m MockMCPClient) CallTool(_ context.Context, call MCPCall) (MCPResult, error) {
 	switch strings.TrimSpace(call.Name) {
 	case "github.project_analyze":
