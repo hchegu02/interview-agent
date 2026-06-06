@@ -92,6 +92,22 @@ func NewRetrieveRAGNode(
 	r retriever.Retriever,
 	opts RetrieveRAGOptions,
 ) graph.NodeFunc {
+	patchNode := NewRetrieveRAGPatchNode(embedder, r, opts)
+	return func(ctx context.Context, sess *domain.Session) error {
+		patch, err := patchNode(ctx, sess)
+		if err != nil {
+			return err
+		}
+		return applyNodePatch(sess, "retrieve_rag", patch)
+	}
+}
+
+// NewRetrieveRAGPatchNode 构造由 Graph runner 统一应用 StatePatch 的 retrieve_rag 节点。
+func NewRetrieveRAGPatchNode(
+	embedder embedding.Embedder,
+	r retriever.Retriever,
+	opts RetrieveRAGOptions,
+) graph.PatchNodeFunc {
 	if opts.TopK <= 0 {
 		opts.TopK = 20
 	}
@@ -102,8 +118,9 @@ func NewRetrieveRAGNode(
 		opts.Hook = agentkit.NoopHook{}
 	}
 
-	return func(ctx context.Context, sess *domain.Session) (err error) {
+	return func(ctx context.Context, sess *domain.Session) (patch domain.StatePatch, err error) {
 		start := time.Now()
+		var outputSummary string
 		_ = opts.Hook.HandleHook(ctx, agentkit.HookEvent{
 			Type:         agentkit.HookBeforeSkill,
 			SessionID:    sess.ID,
@@ -112,9 +129,11 @@ func NewRetrieveRAGNode(
 			Permission:   agentkit.PermissionReadOnly,
 		})
 		defer func() {
-			outputSummary := fmt.Sprintf("candidate_pool=%d", len(sess.CandidatePool))
-			if sess.WorkingMemory != nil {
-				if reason := strings.TrimSpace(sess.WorkingMemory.DegradedReasons["rag"]); reason != "" {
+			if outputSummary == "" {
+				outputSummary = "candidate_pool=0"
+			}
+			if patch.WorkingMemory != nil {
+				if reason := strings.TrimSpace(patch.WorkingMemory.DegradedReasons["rag"]); reason != "" {
 					outputSummary += " degraded=rag:" + reason
 				}
 			}
@@ -134,10 +153,10 @@ func NewRetrieveRAGNode(
 		}()
 
 		if sess.JobProfile == nil {
-			return fmt.Errorf("retrieve_rag: job_profile required: %w", graph.ErrPermanent)
+			return domain.StatePatch{}, fmt.Errorf("retrieve_rag: job_profile required: %w", graph.ErrPermanent)
 		}
 		if sess.GapReport == nil {
-			return fmt.Errorf("retrieve_rag: gap_report required: %w", graph.ErrPermanent)
+			return domain.StatePatch{}, fmt.Errorf("retrieve_rag: gap_report required: %w", graph.ErrPermanent)
 		}
 
 		queryTags := buildQueryTags(sess.GapReport, sess.JobProfile)
@@ -147,9 +166,10 @@ func NewRetrieveRAGNode(
 		// 1. Embed query
 		vectors, err := embedder.Embed(ctx, []string{queryText})
 		if err != nil || len(vectors) != 1 || len(vectors[0]) == 0 {
-			markDegraded(sess, fmt.Sprintf("embed failed: %v", err))
+			mem := workingMemoryWithDegradedReason(sess.WorkingMemory, "rag", fmt.Sprintf("embed failed: %v", err))
 			pool := cloneFallback(targetDiff, sess.QuestionBankFilter)
-			return applyNodePatch(sess, "retrieve_rag", domain.StatePatch{CandidatePool: &pool})
+			outputSummary = fmt.Sprintf("candidate_pool=%d", len(pool))
+			return domain.StatePatch{CandidatePool: &pool, WorkingMemory: mem}, nil
 		}
 
 		// 2. Retrieve
@@ -169,14 +189,16 @@ func NewRetrieveRAGNode(
 		}
 		results, trace, err := retrieveWithTrace(ctx, r, query)
 		if err != nil {
-			markDegraded(sess, fmt.Sprintf("retrieve failed: %v", err))
+			mem := workingMemoryWithDegradedReason(sess.WorkingMemory, "rag", fmt.Sprintf("retrieve failed: %v", err))
 			pool := cloneFallback(targetDiff, sess.QuestionBankFilter)
-			return applyNodePatch(sess, "retrieve_rag", domain.StatePatch{CandidatePool: &pool, RetrievalTrace: trace})
+			outputSummary = fmt.Sprintf("candidate_pool=%d", len(pool))
+			return domain.StatePatch{CandidatePool: &pool, RetrievalTrace: trace, WorkingMemory: mem}, nil
 		}
 		if len(results) == 0 {
-			markDegraded(sess, "retrieve returned 0 results")
+			mem := workingMemoryWithDegradedReason(sess.WorkingMemory, "rag", "retrieve returned 0 results")
 			pool := cloneFallback(targetDiff, sess.QuestionBankFilter)
-			return applyNodePatch(sess, "retrieve_rag", domain.StatePatch{CandidatePool: &pool, RetrievalTrace: trace})
+			outputSummary = fmt.Sprintf("candidate_pool=%d", len(pool))
+			return domain.StatePatch{CandidatePool: &pool, RetrievalTrace: trace, WorkingMemory: mem}, nil
 		}
 
 		// 3. 写候选池
@@ -192,7 +214,8 @@ func NewRetrieveRAGNode(
 				ExpectedPoints: append([]string(nil), res.ExpectedPoints...),
 			})
 		}
-		return applyNodePatch(sess, "retrieve_rag", domain.StatePatch{CandidatePool: &pool, RetrievalTrace: trace})
+		outputSummary = fmt.Sprintf("candidate_pool=%d", len(pool))
+		return domain.StatePatch{CandidatePool: &pool, RetrievalTrace: trace}, nil
 	}
 }
 
@@ -361,14 +384,6 @@ func resolveRAGTargetDifficulty(sess *domain.Session, defaultTarget int) int {
 	default:
 		return defaultTarget
 	}
-}
-
-// markDegraded 在 WorkingMemory 上打降级标记,供 SSE / 报告页透出。
-func markDegraded(sess *domain.Session, reason string) {
-	if sess.WorkingMemory == nil {
-		sess.WorkingMemory = &domain.WorkingMemory{}
-	}
-	markDegradedReason(sess.WorkingMemory, "rag", reason)
 }
 
 // cloneFallback 按目标难度筛选 fallback 题，避免难度爆炸式偏离。

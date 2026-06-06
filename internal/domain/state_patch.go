@@ -8,16 +8,23 @@ import (
 // StatePatch 表达节点对 Session 的结构化写入意图。
 // 第一阶段只覆盖高风险字段，避免节点随意改大对象。
 type StatePatch struct {
-	CandidatePool        *[]Question
-	RetrievalTrace       *RetrievalTrace
-	PendingDecision      *Decision
-	ClearPendingDecision bool
-	AppendRound          *AnswerRound
-	CurrentEvaluation    *Evaluation
-	CompleteCurrentRound *time.Time
-	Report               *Report
-	Status               *SessionStatus
-	WorkingMemory        *WorkingMemory
+	CandidatePool            *[]Question
+	RetrievalTrace           *RetrievalTrace
+	PendingDecision          *Decision
+	ClearPendingDecision     bool
+	AppendRound              *AnswerRound
+	AppendCurrentFollowUp    *FollowUp
+	CurrentCriticProbeSignal *CriticProbeSignalPatch
+	CurrentEvaluation        *Evaluation
+	CompleteCurrentRound     *time.Time
+	Report                   *Report
+	Status                   *SessionStatus
+	WorkingMemory            *WorkingMemory
+}
+
+type CriticProbeSignalPatch struct {
+	HasProbeSignal bool
+	ProbeTopic     string
 }
 
 // ApplyStatePatch 把结构化 patch 应用到 Session。
@@ -40,6 +47,24 @@ func ApplyStatePatch(sess *Session, patch StatePatch) error {
 	}
 	if patch.AppendRound != nil {
 		sess.Rounds = append(sess.Rounds, *patch.AppendRound)
+	}
+	if patch.AppendCurrentFollowUp != nil {
+		round := sess.CurrentRound()
+		if round == nil {
+			return fmt.Errorf("apply state patch: current round missing for follow-up")
+		}
+		round.FollowUps = append(round.FollowUps, *patch.AppendCurrentFollowUp)
+	}
+	if patch.CurrentCriticProbeSignal != nil {
+		round := sess.CurrentRound()
+		if round == nil {
+			return fmt.Errorf("apply state patch: current round missing for critic probe signal")
+		}
+		if round.CriticResult == nil {
+			return fmt.Errorf("apply state patch: current round critic missing for probe signal")
+		}
+		round.CriticResult.HasProbeSignal = patch.CurrentCriticProbeSignal.HasProbeSignal
+		round.CriticResult.ProbeTopic = patch.CurrentCriticProbeSignal.ProbeTopic
 	}
 	if patch.CurrentEvaluation != nil {
 		round := sess.CurrentRound()

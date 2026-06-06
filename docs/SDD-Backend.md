@@ -378,16 +378,18 @@ type StatePatch struct {
 当前实现：
 
 - `internal/domain.ApplyStatePatch` 统一处理 replace、append、current round 写入和错误返回。
-- `retrieve_rag` 通过 patch 写 `CandidatePool` / `RetrievalTrace`。
-- `pick_next` 通过 patch 写 `PendingDecision` / append `AnswerRound`，`WorkingMemory.RoundsAsked` 暂时仍直接写。
-- `evaluate` 通过 patch 写当前轮 `Evaluation` 并清理 `PendingDecision`。
-- `report` 通过 patch 写 `Report` 并清理 `PendingDecision`。
-- `Status` 和 `WorkingMemory` 已纳入 `StatePatch` 类型，业务节点仍按风险逐步迁移到 runner-level patch。
+- `retrieve_rag` 已迁移到 runner-level `PatchNode`，通过 patch 写 `CandidatePool` / `RetrievalTrace`，降级时通过 `WorkingMemory` patch 写 `DegradedReasons["rag"]`。
+- `pick_next` 已迁移到 runner-level `PatchNode`，通过 patch 写 `PendingDecision`、append `AnswerRound`、替换 `WorkingMemory`，并通过显式 patch-on-suspend 语义在暂停前应用 patch。
+- `evaluate` 已迁移到 runner-level `PatchNode`，通过 patch 写当前轮 `Evaluation` 并清理 `PendingDecision`，LLM 评估降级时通过 `WorkingMemory` patch 写 `DegradedReasons["eval"]`。
+- `probe_ask` 已迁移到 runner-level `PatchNode`，通过 patch 追加当前轮 `FollowUp`、替换 `WorkingMemory`，并在 LLM 降级时只更新 `CriticResult` 的追问信号字段。
+- `report` 已迁移到 runner-level `PatchNode`，通过 patch 写 `Report`、`StatusCompleted` 并清理 `PendingDecision`。
+- `Status` 和 `WorkingMemory` 已纳入 `StatePatch` 类型，非挂起节点优先迁移到 runner-level patch。
 
 当前边界：
 
-- `NodeFunc` 仍返回 `error`，节点在内部调用 patch helper；Graph runner 还不记录 patch。
-- `CriticResult`、`FollowUps` 等字段还未纳入 patch，后续按风险逐步迁移。
+- `NodeFunc` 仍返回 `error`，旧节点构造函数保留兼容 wrapper；`retrieve_rag`、`pick_next`、`evaluate`、`probe_ask`、`report` 在 `BuildInterviewGraph` 中已由 runner 统一 apply patch。
+- `probe_eval` 暂不迁移到 runner-level `PatchNode`。它需要 `StatePatch` 支持追答 `Evaluation` 和 Critic 后续追问信号更新，后续单独扩展。
+- `CriticResult` 目前只支持追问信号窄 patch；`FollowUps` 目前只支持追加当前轮追问。其他内嵌字段后续按风险逐步迁移。
 - `RetrievalTrace` 和 `Report` 指针保持当前状态写入语义，HTTP 响应层负责 clone。
 
 收益：
@@ -465,17 +467,18 @@ type PatchNodeFunc func(context.Context, *domain.Session) (domain.StatePatch, er
 - `AddNode(name, fn)` 继续保留，作为 legacy 线性兼容入口。
 - `AddNodeSpec(spec)` 支持声明节点写集。
 - `PatchNode(name, writes, fn)` 支持 patch-aware 节点，由 runner 统一调用 `domain.ApplyStatePatch`。
+- `SuspendWithPatch(err)` 支持 patch-aware 节点在返回 `ErrSuspended` 前显式声明“先应用 patch 再暂停”；普通 error 即使返回 patch 也不会应用。
 - 并发 frontier 执行前检查写集：
   - legacy 节点没有 `Writes` 时，不允许参与并发 frontier。
   - 两个节点 `Writes` 有交集时，不允许并发执行。
   - 写集 disjoint 时，允许并发执行。
-- `internal/graphs.BuildInterviewGraph` 已给 `retrieve_rag`、`pick_next`、`evaluate`、`report` 等关键节点声明写集；其中 `report` 声明了 `pending_decision/report/status/working_memory`。
+- `internal/graphs.BuildInterviewGraph` 已给 `retrieve_rag`、`pick_next`、`evaluate`、`probe_ask`、`report` 等关键节点声明写集；其中 `retrieve_rag`、`pick_next`、`evaluate`、`probe_ask`、`report` 已注册为 `PatchNode`，`report` 声明了 `pending_decision/report/status/working_memory`。
 
 当前边界：
 
 - 未删除 `NodeFunc`，未强制所有节点一次性迁移。
 - 未改变 HTTP API、SSE、Session JSON 或数据库 schema。
-- patch-aware 能力已在 Graph 层可用，但业务节点仍以兼容迁移为主；不是完整 LangGraph runtime。
+- patch-aware 能力已在 Graph 层可用，并已覆盖第一批非挂起业务节点、`pick_next` 和 `probe_ask` 挂起节点；`probe_eval` 等更深层 round 内嵌写入仍等待后续 patch 字段扩展，不是完整 LangGraph runtime。
 - 写集是粗粒度 key，宁可保守拒绝一部分并发组合，也不放过明显冲突。
 
 收益：

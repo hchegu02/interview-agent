@@ -126,3 +126,70 @@ func TestBuildInterviewGraph_InvokeRunsSetupAndSuspendsAtPickNext(t *testing.T) 
 		t.Fatal("checkpoint recorder was not wired into interview graph")
 	}
 }
+
+func TestBuildInterviewGraph_ResumeRunsEvaluateAndReport(t *testing.T) {
+	model := &stubChatModel{responses: []string{
+		`{"title":"Go 后端","level":"junior","key_skills":["go"],"must_have":["go"],"nice_to_have":[],"years_required":1}`,
+		`{"years":2,"skills":["go"],"projects":[],"highlights":["做过 Go 服务"]}`,
+		`{"next_question_id":"q1","reasoning":"先验证 Go 基础"}`,
+		`{"question_id":"q1","score":82,"strengths":["讲到 G/M/P"],"weaknesses":["work stealing 展开不足"],"suggestion":"补充调度细节"}`,
+		`{"grounded_score":85,"need_refine":false,"issues":[],"summary":"评估可信","has_probe_signal":false,"probe_topic":""}`,
+	}}
+	ret := &stubRetriever{}
+
+	r, err := BuildInterviewGraph(Deps{
+		Model:     model,
+		Embedder:  stubEmbedder{},
+		Retriever: ret,
+	})
+	if err != nil {
+		t.Fatalf("build graph: %v", err)
+	}
+
+	sess := &domain.Session{
+		ID:     "sess-graph-resume",
+		Status: domain.StatusRunning,
+		JobProfile: &domain.JobProfile{
+			JDRawText: "需要 Go 后端",
+		},
+		CandProfile: &domain.CandidateProfile{
+			ResumeRawText: "两年 Go 开发经验",
+		},
+		WorkingMemory: domain.NewWorkingMemory(),
+	}
+	sess.WorkingMemory.MaxRounds = 1
+
+	if err := r.Invoke(context.Background(), sess); err != nil {
+		t.Fatalf("invoke: %v", err)
+	}
+	if sess.CurrentNode != "pick_next" {
+		t.Fatalf("current node = %q, want pick_next", sess.CurrentNode)
+	}
+	if len(sess.Rounds) != 1 {
+		t.Fatalf("rounds = %+v, want one round", sess.Rounds)
+	}
+
+	sess.Rounds[0].Answer = "G 是 goroutine，M 是线程，P 负责调度本地队列。"
+	if err := r.Resume(context.Background(), sess); err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+
+	if sess.Suspension != nil {
+		t.Fatalf("suspension should be cleared, got %+v", sess.Suspension)
+	}
+	if sess.Rounds[0].Evaluation == nil || sess.Rounds[0].Evaluation.Score != 82 {
+		t.Fatalf("evaluation = %+v, want score 82", sess.Rounds[0].Evaluation)
+	}
+	if sess.PendingDecision != nil {
+		t.Fatalf("pending decision should be cleared by report, got %+v", sess.PendingDecision)
+	}
+	if sess.Report == nil {
+		t.Fatal("report should be written")
+	}
+	if sess.Status != domain.StatusCompleted {
+		t.Fatalf("status = %q, want completed", sess.Status)
+	}
+	if model.idx != 5 {
+		t.Fatalf("LLM calls = %d, want 5", model.idx)
+	}
+}

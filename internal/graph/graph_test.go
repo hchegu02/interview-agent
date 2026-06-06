@@ -150,6 +150,51 @@ func TestGraph_PatchNodeApplyFailureIsPermanent(t *testing.T) {
 	}
 }
 
+func TestGraph_PatchNodeSuspendWithPatchAppliesPatchAndSuspends(t *testing.T) {
+	pool := []domain.Question{{ID: "q1", Content: "Go GMP?"}}
+	g := New("patch-node-suspend").AddNodeSpec(
+		PatchNode("pick_next", []string{WriteCandidatePool}, func(ctx context.Context, sess *domain.Session) (domain.StatePatch, error) {
+			return domain.StatePatch{CandidatePool: &pool}, SuspendWithPatch(fmt.Errorf("waiting for answer: %w", ErrSuspended))
+		}),
+	).Entry("pick_next").AddEdge("pick_next", EndNode)
+
+	r, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	sess := &domain.Session{}
+	if err := r.Invoke(context.Background(), sess); err != nil {
+		t.Fatalf("invoke should swallow suspend, got %v", err)
+	}
+	if len(sess.CandidatePool) != 1 || sess.CandidatePool[0].ID != "q1" {
+		t.Fatalf("candidate pool = %+v, want q1", sess.CandidatePool)
+	}
+	if sess.CurrentNode != "pick_next" || sess.Suspension == nil {
+		t.Fatalf("suspend state not recorded: current=%q suspension=%+v", sess.CurrentNode, sess.Suspension)
+	}
+}
+
+func TestGraph_PatchNodeOrdinaryErrorDoesNotApplyPatch(t *testing.T) {
+	pool := []domain.Question{{ID: "q1", Content: "Go GMP?"}}
+	g := New("patch-node-error").AddNodeSpec(
+		PatchNode("retrieve", []string{WriteCandidatePool}, func(ctx context.Context, sess *domain.Session) (domain.StatePatch, error) {
+			return domain.StatePatch{CandidatePool: &pool}, errors.New("ordinary failure")
+		}),
+	).Entry("retrieve").AddEdge("retrieve", EndNode)
+
+	r, err := g.Compile()
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	sess := &domain.Session{}
+	if err := r.Invoke(context.Background(), sess); err == nil {
+		t.Fatal("expected ordinary error")
+	}
+	if len(sess.CandidatePool) != 0 {
+		t.Fatalf("ordinary error should not apply patch, got %+v", sess.CandidatePool)
+	}
+}
+
 func TestGraph_ConcurrentFrontierRejectsConflictingWrites(t *testing.T) {
 	var ran int32
 	g := New("conflicting-writes").

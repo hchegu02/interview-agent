@@ -60,6 +60,87 @@ func TestApplyStatePatch_AppendsRoundAndSetsDecision(t *testing.T) {
 	}
 }
 
+func TestApplyStatePatch_AppendsCurrentRoundFollowUp(t *testing.T) {
+	followUp := &FollowUp{
+		Question: "work stealing 触发时机是什么?",
+		Reason:   "深挖调度细节",
+		AskedAt:  time.Now(),
+	}
+	sess := &Session{
+		Rounds: []AnswerRound{{
+			RoundID:  "r1",
+			Question: Question{ID: "q1"},
+			FollowUps: []FollowUp{{
+				Question: "已有追问",
+				Answer:   "已有回答",
+			}},
+		}},
+	}
+
+	if err := ApplyStatePatch(sess, StatePatch{AppendCurrentFollowUp: followUp}); err != nil {
+		t.Fatalf("apply patch: %v", err)
+	}
+
+	if len(sess.Rounds[0].FollowUps) != 2 {
+		t.Fatalf("followups = %+v", sess.Rounds[0].FollowUps)
+	}
+	if sess.Rounds[0].FollowUps[1].Question != followUp.Question {
+		t.Fatalf("appended followup = %+v", sess.Rounds[0].FollowUps[1])
+	}
+}
+
+func TestApplyStatePatch_UpdatesCurrentCriticProbeSignalOnly(t *testing.T) {
+	sess := &Session{
+		Rounds: []AnswerRound{{
+			RoundID:  "r1",
+			Question: Question{ID: "q1"},
+			CriticResult: &Critic{
+				GroundedScore:  80,
+				NeedRefine:     true,
+				Issues:         []string{"issue"},
+				Summary:        "summary",
+				HasProbeSignal: true,
+				ProbeTopic:     "old",
+			},
+		}},
+	}
+
+	if err := ApplyStatePatch(sess, StatePatch{
+		CurrentCriticProbeSignal: &CriticProbeSignalPatch{
+			HasProbeSignal: false,
+			ProbeTopic:     "",
+		},
+	}); err != nil {
+		t.Fatalf("apply patch: %v", err)
+	}
+
+	got := sess.Rounds[0].CriticResult
+	if got.HasProbeSignal || got.ProbeTopic != "" {
+		t.Fatalf("probe signal not updated: %+v", got)
+	}
+	if got.GroundedScore != 80 || !got.NeedRefine || len(got.Issues) != 1 || got.Summary != "summary" {
+		t.Fatalf("critic audit fields should be preserved: %+v", got)
+	}
+}
+
+func TestApplyStatePatch_CurrentRoundMissingForFollowUpReturnsError(t *testing.T) {
+	err := ApplyStatePatch(&Session{}, StatePatch{
+		AppendCurrentFollowUp: &FollowUp{Question: "q"},
+	})
+	if err == nil {
+		t.Fatal("expected error when current round is missing")
+	}
+}
+
+func TestApplyStatePatch_CurrentCriticMissingForProbeSignalReturnsError(t *testing.T) {
+	err := ApplyStatePatch(&Session{Rounds: []AnswerRound{{RoundID: "r1", Question: Question{ID: "q1"}}}}, StatePatch{
+		CurrentCriticProbeSignal: &CriticProbeSignalPatch{},
+	})
+	if err == nil {
+		t.Fatal("expected error when current critic is missing")
+	}
+}
+
 func TestApplyStatePatch_WritesCurrentRoundEvaluationAndCompletion(t *testing.T) {
 	completedAt := time.Now()
 	eval := &Evaluation{QuestionID: "q1", Score: 82}

@@ -104,6 +104,37 @@ func TestPickNext_LLMSuccess_Suspends(t *testing.T) {
 	}
 }
 
+func TestPickNextPatchNode_LLMSuccessReturnsSuspendPatch(t *testing.T) {
+	stub := &stubChatModel{responses: []string{
+		`{"next_question_id":"redis-001","reasoning":"go 已 cover,补 redis"}`,
+	}}
+	sess := buildPickSession(2, 8, samplePool())
+	node := NewPickNextPatchNode(stub, PickNextOptions{})
+
+	patch, err := node(context.Background(), sess)
+	if !errors.Is(err, graph.ErrSuspended) || !graph.IsPatchSuspend(err) {
+		t.Fatalf("expected patch suspend, got %v", err)
+	}
+	if sess.PendingDecision != nil || len(sess.Rounds) != 0 {
+		t.Fatalf("patch node should not apply directly: decision=%+v rounds=%+v", sess.PendingDecision, sess.Rounds)
+	}
+	if patch.PendingDecision == nil || patch.PendingDecision.NextQuestionID != "redis-001" {
+		t.Fatalf("patch decision = %+v", patch.PendingDecision)
+	}
+	if patch.AppendRound == nil || patch.AppendRound.Question.ID != "redis-001" {
+		t.Fatalf("patch round = %+v", patch.AppendRound)
+	}
+	if patch.WorkingMemory == nil || patch.WorkingMemory.RoundsAsked != 3 {
+		t.Fatalf("patch working memory = %+v, want RoundsAsked=3", patch.WorkingMemory)
+	}
+	if err := domain.ApplyStatePatch(sess, patch); err != nil {
+		t.Fatalf("apply patch: %v", err)
+	}
+	if sess.PendingDecision.NextQuestionID != "redis-001" || len(sess.Rounds) != 1 {
+		t.Fatalf("session after apply: decision=%+v rounds=%+v", sess.PendingDecision, sess.Rounds)
+	}
+}
+
 // LLM 编造 id: 被 schema 自纠正拦下, 自纠正后给合法 id
 func TestPickNext_RejectsHallucinatedID(t *testing.T) {
 	stub := &stubChatModel{responses: []string{

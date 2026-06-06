@@ -48,38 +48,42 @@ func BuildInterviewGraph(deps Deps) (*graph.Runnable, error) {
 		AddNode(nodeParseResume, nodes.NewParseResumeNode(deps.Model)).
 		AddNode(nodeGapAnalyze, nodes.NewGapAnalyzeNode(deps.Model)).
 		AddNode(nodeAnalyzeProfile, nodes.NewAnalyzeProfileNode()).
-		AddNodeSpec(graph.NodeSpec{
-			Name:   nodeRetrieveRAG,
-			Fn:     nodes.NewRetrieveRAGNode(deps.Embedder, deps.Retriever, nodes.RetrieveRAGOptions{}),
-			Writes: []string{graph.WriteCandidatePool, graph.WriteRetrievalTrace, graph.WriteWorkingMemory},
-		}).
-		AddNodeSpec(graph.NodeSpec{
-			Name: nodes.NodePickNext,
-			Fn:   nodes.NewPickNextNode(deps.Model, nodes.PickNextOptions{}),
-			Writes: []string{
+		AddNodeSpec(graph.PatchNode(
+			nodeRetrieveRAG,
+			[]string{graph.WriteCandidatePool, graph.WriteRetrievalTrace, graph.WriteWorkingMemory},
+			nodes.NewRetrieveRAGPatchNode(deps.Embedder, deps.Retriever, nodes.RetrieveRAGOptions{}),
+		)).
+		AddNodeSpec(graph.PatchNode(
+			nodes.NodePickNext,
+			[]string{
 				graph.WritePendingDecision,
 				graph.WriteRounds,
 				graph.WriteWorkingMemory,
 				graph.WriteSuspension,
 			},
-		}).
-		AddNodeSpec(graph.NodeSpec{
-			Name:   nodes.NodeEvaluate,
-			Fn:     nodes.NewEvaluateNode(deps.Model, nodes.EvaluateOptions{}),
-			Writes: []string{graph.WritePendingDecision, graph.WriteCurrentEvaluation, graph.WriteWorkingMemory},
-		}).
+			nodes.NewPickNextPatchNode(deps.Model, nodes.PickNextOptions{}),
+		)).
+		AddNodeSpec(graph.PatchNode(
+			nodes.NodeEvaluate,
+			[]string{graph.WritePendingDecision, graph.WriteCurrentEvaluation, graph.WriteWorkingMemory},
+			nodes.NewEvaluatePatchNode(deps.Model, nodes.EvaluateOptions{}),
+		)).
 		AddNode(nodeCritic, nodes.NewCriticNode(deps.Model, nodes.CriticOptions{})).
 		AddNode(nodes.NodeRefine, nodes.NewRefineNode(deps.Model, nodes.RefineOptions{})).
-		AddNode(nodes.NodeProbeAsk, nodes.NewProbeAskNode(deps.Model, nodes.ProbeAskOptions{})).
+		AddNodeSpec(graph.PatchNode(
+			nodes.NodeProbeAsk,
+			[]string{graph.WriteRounds, graph.WriteWorkingMemory},
+			nodes.NewProbeAskPatchNode(deps.Model, nodes.ProbeAskOptions{}),
+		)).
 		AddNode(nodeProbeEval, nodes.NewProbeEvalNode(deps.Model, nodes.ProbeEvalOptions{})).
 		AddNode(nodes.NodeUpdateMemory, nodes.NewUpdateMemoryNode(nodes.UpdateMemoryOptions{})).
 		AddNode(nodes.NodeUpdateDifficulty, nodes.NewUpdateDifficultyNode(nodes.UpdateDifficultyOptions{})).
 		AddNode(nodeReflectionCheck, nodes.NewReflectionCheckNode(deps.Model, nodes.ReflectionCheckOptions{})).
-		AddNodeSpec(graph.NodeSpec{
-			Name:   nodes.NodeReport,
-			Fn:     nodes.NewReportNode(),
-			Writes: []string{graph.WritePendingDecision, graph.WriteReport, graph.WriteStatus, graph.WriteWorkingMemory},
-		}).
+		AddNodeSpec(graph.PatchNode(
+			nodes.NodeReport,
+			[]string{graph.WritePendingDecision, graph.WriteReport, graph.WriteStatus, graph.WriteWorkingMemory},
+			nodes.NewReportPatchNodeWithHook(nil),
+		)).
 		Entry(nodeParseJD).
 		AddEdge(nodeParseJD, nodeParseResume).
 		AddEdge(nodeParseResume, nodeGapAnalyze).

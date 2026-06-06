@@ -394,6 +394,11 @@ func (r *Runnable) callNode(ctx context.Context, sess *domain.Session, spec Node
 		}
 		patch, err := spec.patch(ctx, sess)
 		if err != nil {
+			if IsPatchSuspend(err) {
+				if applyErr := domain.ApplyStatePatch(sess, patch); applyErr != nil {
+					return fmt.Errorf("%s: apply suspend state patch: %w: %v", spec.Name, ErrPermanent, applyErr)
+				}
+			}
 			return err
 		}
 		if err := domain.ApplyStatePatch(sess, patch); err != nil {

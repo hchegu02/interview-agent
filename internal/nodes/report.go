@@ -21,11 +21,24 @@ func NewReportNode() graph.NodeFunc {
 }
 
 func NewReportNodeWithHook(hook agentkit.Hook) graph.NodeFunc {
+	patchNode := NewReportPatchNodeWithHook(hook)
+	return func(ctx context.Context, sess *domain.Session) error {
+		patch, err := patchNode(ctx, sess)
+		if err != nil {
+			return err
+		}
+		return applyNodePatch(sess, "report", patch)
+	}
+}
+
+// NewReportPatchNodeWithHook 构造由 Graph runner 统一应用 StatePatch 的 report 节点。
+func NewReportPatchNodeWithHook(hook agentkit.Hook) graph.PatchNodeFunc {
 	if hook == nil {
 		hook = agentkit.NoopHook{}
 	}
-	return func(ctx context.Context, sess *domain.Session) (err error) {
+	return func(ctx context.Context, sess *domain.Session) (patch domain.StatePatch, err error) {
 		start := time.Now()
+		var report *domain.Report
 		_ = hook.HandleHook(ctx, agentkit.HookEvent{
 			Type:         agentkit.HookBeforeSkill,
 			SessionID:    sess.ID,
@@ -35,8 +48,8 @@ func NewReportNodeWithHook(hook agentkit.Hook) graph.NodeFunc {
 		})
 		defer func() {
 			summary := "report=missing"
-			if sess.Report != nil {
-				summary = fmt.Sprintf("overall_score=%d drill_plan=%d", sess.Report.OverallScore, len(sess.Report.DrillPlan))
+			if report != nil {
+				summary = fmt.Sprintf("overall_score=%d drill_plan=%d", report.OverallScore, len(report.DrillPlan))
 			}
 			ev := agentkit.HookEvent{
 				Type:          agentkit.HookAfterSkill,
@@ -54,35 +67,40 @@ func NewReportNodeWithHook(hook agentkit.Hook) graph.NodeFunc {
 		}()
 
 		if err := ctx.Err(); err != nil {
-			return err
+			return domain.StatePatch{}, err
 		}
 		if sess.Status != "" {
 			if err := sess.Status.Validate(); err != nil {
-				return graph.Permanent(fmt.Errorf("report: invalid session status: %w", err))
+				return domain.StatePatch{}, graph.Permanent(fmt.Errorf("report: invalid session status: %w", err))
 			}
 		}
-		if sess.WorkingMemory == nil {
-			sess.WorkingMemory = domain.NewWorkingMemory()
+		workingMemory := sess.WorkingMemory
+		if workingMemory == nil {
+			workingMemory = domain.NewWorkingMemory()
 		}
+		reportSess := *sess
+		reportSess.WorkingMemory = workingMemory
 
-		report := &domain.Report{
+		report = &domain.Report{
 			SessionID:          sess.ID,
 			OverallScore:       overallScore(sess.Rounds),
-			SkillBreakdown:     skillBreakdown(sess.WorkingMemory.SkillCoverage),
-			TranscriptAnalysis: transcriptAnalysis(sess.Rounds),
-			DrillPlan:          drillPlan(sess),
-			Highlights:         reportHighlights(sess),
-			Improvements:       reportImprovements(sess),
-			NextSteps:          reportNextSteps(sess),
+			SkillBreakdown:     skillBreakdown(workingMemory.SkillCoverage),
+			TranscriptAnalysis: transcriptAnalysis(reportSess.Rounds),
+			DrillPlan:          drillPlan(&reportSess),
+			Highlights:         reportHighlights(&reportSess),
+			Improvements:       reportImprovements(&reportSess),
+			NextSteps:          reportNextSteps(&reportSess),
 		}
-		if err := applyNodePatch(sess, "report", domain.StatePatch{
+		status := domain.StatusCompleted
+		statePatch := domain.StatePatch{
 			ClearPendingDecision: true,
 			Report:               report,
-		}); err != nil {
-			return err
+			Status:               &status,
 		}
-		sess.Status = domain.StatusCompleted
-		return nil
+		if sess.WorkingMemory == nil {
+			statePatch.WorkingMemory = workingMemory
+		}
+		return statePatch, nil
 	}
 }
 

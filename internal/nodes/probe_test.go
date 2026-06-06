@@ -63,6 +63,37 @@ func TestProbeAsk_Success_SuspendsAndRecordsFollowUp(t *testing.T) {
 	}
 }
 
+func TestProbeAskPatchNode_SuccessReturnsSuspendPatch(t *testing.T) {
+	stub := &stubChatModel{responses: []string{
+		`{"question":"work stealing 的触发时机和窃取目标是怎么选的?","reason":"候选人没讲 work stealing,需要确认深度"}`,
+	}}
+	sess := buildProbeAskSession(true, 0)
+	node := NewProbeAskPatchNode(stub, ProbeAskOptions{})
+
+	patch, err := node(context.Background(), sess)
+	if !errors.Is(err, graph.ErrSuspended) || !graph.IsPatchSuspend(err) {
+		t.Fatalf("expected patch suspend, got %v", err)
+	}
+	if len(sess.Rounds[0].FollowUps) != 0 || sess.WorkingMemory.ProbesUsed != 0 {
+		t.Fatalf("patch node should not apply directly: followups=%+v memory=%+v", sess.Rounds[0].FollowUps, sess.WorkingMemory)
+	}
+	if patch.AppendCurrentFollowUp == nil || patch.AppendCurrentFollowUp.Question == "" {
+		t.Fatalf("patch followup = %+v", patch.AppendCurrentFollowUp)
+	}
+	if patch.WorkingMemory == nil || patch.WorkingMemory.ProbesUsed != 1 {
+		t.Fatalf("patch working memory = %+v, want ProbesUsed=1", patch.WorkingMemory)
+	}
+	if err := domain.ApplyStatePatch(sess, patch); err != nil {
+		t.Fatalf("apply patch: %v", err)
+	}
+	if len(sess.Rounds[0].FollowUps) != 1 || sess.Rounds[0].FollowUps[0].Answer != "" {
+		t.Fatalf("followups after apply = %+v", sess.Rounds[0].FollowUps)
+	}
+	if sess.WorkingMemory.ProbesUsed != 1 {
+		t.Fatalf("ProbesUsed after apply = %d, want 1", sess.WorkingMemory.ProbesUsed)
+	}
+}
+
 func TestProbeAsk_NoSignal_Skips(t *testing.T) {
 	stub := &stubChatModel{}
 	sess := buildProbeAskSession(false, 0)
@@ -112,6 +143,54 @@ func TestProbeAsk_LLMFails_ClosesSignals(t *testing.T) {
 	}
 	if len(sess.Rounds[0].FollowUps) != 0 {
 		t.Error("FollowUps should not be appended on failure")
+	}
+}
+
+func TestProbeAskPatchNode_LLMFailsReturnsFallbackPatch(t *testing.T) {
+	stub := &stubChatModel{
+		errs:      []error{errors.New("boom"), errors.New("boom2")},
+		responses: []string{"", ""},
+	}
+	sess := buildProbeAskSession(true, 0)
+	originalCritic := *sess.Rounds[0].CriticResult
+	originalCritic.GroundedScore = 88
+	originalCritic.NeedRefine = true
+	originalCritic.Issues = []string{"keep"}
+	originalCritic.Summary = "keep summary"
+	sess.Rounds[0].CriticResult = &originalCritic
+	node := NewProbeAskPatchNode(stub, ProbeAskOptions{})
+
+	patch, err := node(context.Background(), sess)
+	if err != nil {
+		t.Fatalf("patch node should degrade to nil error, got %v", err)
+	}
+	if len(sess.Rounds[0].FollowUps) != 0 {
+		t.Fatalf("patch node should not append followup directly, got %+v", sess.Rounds[0].FollowUps)
+	}
+	if !sess.Rounds[0].CriticResult.HasProbeSignal {
+		t.Fatalf("patch node should not close critic directly, got %+v", sess.Rounds[0].CriticResult)
+	}
+	if patch.AppendCurrentFollowUp != nil {
+		t.Fatalf("failure should not append followup, got %+v", patch.AppendCurrentFollowUp)
+	}
+	if patch.CurrentCriticProbeSignal == nil || patch.CurrentCriticProbeSignal.HasProbeSignal {
+		t.Fatalf("patch critic probe signal = %+v", patch.CurrentCriticProbeSignal)
+	}
+	if patch.WorkingMemory == nil || patch.WorkingMemory.DegradedReasons["probe_ask"] == "" {
+		t.Fatalf("patch working memory degraded reason missing: %+v", patch.WorkingMemory)
+	}
+	if err := domain.ApplyStatePatch(sess, patch); err != nil {
+		t.Fatalf("apply patch: %v", err)
+	}
+	c := sess.Rounds[0].CriticResult
+	if c.HasProbeSignal || c.ProbeTopic != "" {
+		t.Fatalf("probe signal should be closed after apply: %+v", c)
+	}
+	if c.GroundedScore != 88 || !c.NeedRefine || len(c.Issues) != 1 || c.Summary != "keep summary" {
+		t.Fatalf("critic audit fields should be preserved: %+v", c)
+	}
+	if sess.WorkingMemory.DegradedReasons["probe_ask"] == "" {
+		t.Fatalf("degraded reason after apply = %+v", sess.WorkingMemory.DegradedReasons)
 	}
 }
 

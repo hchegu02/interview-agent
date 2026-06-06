@@ -81,6 +81,18 @@ func validateEvaluation(raw []byte) error {
 //	返回:  nil(始终,失败走降级);
 //	       ErrPermanent 仅当 CurrentRound() 为 nil(说明上游节点链路 bug)
 func NewEvaluateNode(model llm.ChatModel, opts EvaluateOptions) graph.NodeFunc {
+	patchNode := NewEvaluatePatchNode(model, opts)
+	return func(ctx context.Context, sess *domain.Session) error {
+		patch, err := patchNode(ctx, sess)
+		if err != nil {
+			return err
+		}
+		return applyNodePatch(sess, "evaluate", patch)
+	}
+}
+
+// NewEvaluatePatchNode 构造由 Graph runner 统一应用 StatePatch 的 evaluate 节点。
+func NewEvaluatePatchNode(model llm.ChatModel, opts EvaluateOptions) graph.PatchNodeFunc {
 	if opts.Temperature == 0 {
 		opts.Temperature = 0.2
 	}
@@ -91,8 +103,9 @@ func NewEvaluateNode(model llm.ChatModel, opts EvaluateOptions) graph.NodeFunc {
 		opts.Hook = agentkit.NoopHook{}
 	}
 
-	return func(ctx context.Context, sess *domain.Session) (err error) {
+	return func(ctx context.Context, sess *domain.Session) (patch domain.StatePatch, err error) {
 		start := time.Now()
+		var evaluation *domain.Evaluation
 		_ = opts.Hook.HandleHook(ctx, agentkit.HookEvent{
 			Type:         agentkit.HookBeforeSkill,
 			SessionID:    sess.ID,
@@ -102,8 +115,8 @@ func NewEvaluateNode(model llm.ChatModel, opts EvaluateOptions) graph.NodeFunc {
 		})
 		defer func() {
 			summary := "evaluation=missing"
-			if round := sess.CurrentRound(); round != nil && round.Evaluation != nil {
-				summary = fmt.Sprintf("question_id=%s score=%d", round.Evaluation.QuestionID, round.Evaluation.Score)
+			if evaluation != nil {
+				summary = fmt.Sprintf("question_id=%s score=%d", evaluation.QuestionID, evaluation.Score)
 			}
 			ev := agentkit.HookEvent{
 				Type:          agentkit.HookAfterSkill,
@@ -122,50 +135,50 @@ func NewEvaluateNode(model llm.ChatModel, opts EvaluateOptions) graph.NodeFunc {
 
 		round := sess.CurrentRound()
 		if round == nil {
-			return fmt.Errorf("evaluate: no current round: %w", graph.ErrPermanent)
+			return domain.StatePatch{}, fmt.Errorf("evaluate: no current round: %w", graph.ErrPermanent)
 		}
 		if round.Question.ID == "" {
-			return fmt.Errorf("evaluate: round has no question: %w", graph.ErrPermanent)
+			return domain.StatePatch{}, fmt.Errorf("evaluate: round has no question: %w", graph.ErrPermanent)
 		}
 
 		// 1. 空答案短路
 		if strings.TrimSpace(round.Answer) == "" {
-			eval := &domain.Evaluation{
+			evaluation = &domain.Evaluation{
 				QuestionID: round.Question.ID,
 				Score:      0,
 				Strengths:  []string{},
 				Weaknesses: []string{"候选人未作答"},
 				Suggestion: "本题未作答,建议下次至少给出思考方向",
 			}
-			return applyNodePatch(sess, "evaluate", domain.StatePatch{
+			return domain.StatePatch{
 				ClearPendingDecision: true,
-				CurrentEvaluation:    eval,
-			})
+				CurrentEvaluation:    evaluation,
+			}, nil
 		}
 
 		// 2. LLM 评估
-		eval, err := evaluateByLLM(ctx, model, round, opts)
+		evaluation, err = evaluateByLLM(ctx, model, round, opts)
 		if err != nil {
 			// 3. 降级:写一个明显标识"评估失败"的 eval,会话继续
-			markEvalFallback(sess, err.Error())
-			eval := &domain.Evaluation{
+			evaluation = &domain.Evaluation{
 				QuestionID: round.Question.ID,
 				Score:      -1,
 				Strengths:  []string{},
 				Weaknesses: []string{},
 				Suggestion: fmt.Sprintf("评估失败(降级): %s", err.Error()),
 			}
-			return applyNodePatch(sess, "evaluate", domain.StatePatch{
+			return domain.StatePatch{
 				ClearPendingDecision: true,
-				CurrentEvaluation:    eval,
-			})
+				CurrentEvaluation:    evaluation,
+				WorkingMemory:        workingMemoryWithDegradedReason(sess.WorkingMemory, "eval", err.Error()),
+			}, nil
 		}
 
 		// 注意:CompletedAt 不在这里写,留给 update_memory 节点统一标记
-		return applyNodePatch(sess, "evaluate", domain.StatePatch{
+		return domain.StatePatch{
 			ClearPendingDecision: true,
-			CurrentEvaluation:    eval,
-		})
+			CurrentEvaluation:    evaluation,
+		}, nil
 	}
 }
 
@@ -213,11 +226,4 @@ func evaluateByLLM(
 		Weaknesses: s.Weaknesses,
 		Suggestion: strings.TrimSpace(s.Suggestion),
 	}, nil
-}
-
-func markEvalFallback(sess *domain.Session, reason string) {
-	if sess.WorkingMemory == nil {
-		sess.WorkingMemory = domain.NewWorkingMemory()
-	}
-	markDegradedReason(sess.WorkingMemory, "eval", reason)
 }

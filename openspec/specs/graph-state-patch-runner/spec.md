@@ -31,6 +31,32 @@ Graph runner MUST support nodes that return `domain.StatePatch` and apply those 
 - **WHEN** `domain.ApplyStatePatch` fails
 - **THEN** runner should return an error associated with the node
 
+#### Scenario: patch-aware node may apply patch before suspension
+
+- **WHEN** a patch-aware node returns a `StatePatch`
+- **AND** returns an error explicitly marked as patch suspension
+- **AND** the error wraps `ErrSuspended`
+- **THEN** runner should apply the patch before entering the existing suspension flow
+
+#### Scenario: ordinary error does not apply patch
+
+- **WHEN** a patch-aware node returns a `StatePatch`
+- **AND** returns an error that is not explicitly marked as patch suspension
+- **THEN** runner MUST NOT apply the patch
+
+#### Scenario: interview suspend nodes use explicit patch-on-suspend
+
+- **WHEN** the Interview Graph registers `pick_next` or `probe_ask`
+- **THEN** it SHOULD register them as patch-aware nodes
+- **AND** the runner should apply their patch before suspension only through explicit patch-on-suspend semantics
+
+#### Scenario: non-suspend interview nodes use runner-level patch
+
+- **WHEN** the Interview Graph registers `retrieve_rag`, `evaluate`, or `report`
+- **THEN** it SHOULD register them as patch-aware nodes
+- **AND** the runner should apply their `StatePatch`
+- **AND** their legacy direct-call constructors should remain compatible
+
 ### Requirement: 并发 frontier 必须检测写冲突
 
 Graph runner MUST reject unsafe concurrent frontiers before executing their nodes.

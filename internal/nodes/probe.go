@@ -68,11 +68,29 @@ func validateProbeAsk(raw []byte) error {
 // NewProbeAskNode 构造 probe_ask 节点。
 //
 // 节点契约:
-//   输入: CurrentRound() 存在, CriticResult.HasProbeSignal==true, CriticResult.ProbeTopic 非空
-//   输出: round.FollowUps 追加一项, ProbesUsed++
-//   返回: ErrSuspended (成功) | nil (降级: 关掉 probe 信号让 router 跳过)
-//         ErrPermanent: round/critic 缺
+//
+//	输入: CurrentRound() 存在, CriticResult.HasProbeSignal==true, CriticResult.ProbeTopic 非空
+//	输出: round.FollowUps 追加一项, ProbesUsed++
+//	返回: ErrSuspended (成功) | nil (降级: 关掉 probe 信号让 router 跳过)
+//	      ErrPermanent: round/critic 缺
 func NewProbeAskNode(model llm.ChatModel, opts ProbeAskOptions) graph.NodeFunc {
+	patchNode := NewProbeAskPatchNode(model, opts)
+	return func(ctx context.Context, sess *domain.Session) error {
+		patch, err := patchNode(ctx, sess)
+		if err != nil {
+			if graph.IsPatchSuspend(err) {
+				if applyErr := applyNodePatch(sess, "probe_ask", patch); applyErr != nil {
+					return applyErr
+				}
+			}
+			return err
+		}
+		return applyNodePatch(sess, "probe_ask", patch)
+	}
+}
+
+// NewProbeAskPatchNode 构造由 Graph runner 统一应用 StatePatch 的 probe_ask 节点。
+func NewProbeAskPatchNode(model llm.ChatModel, opts ProbeAskOptions) graph.PatchNodeFunc {
 	if opts.Temperature == 0 {
 		opts.Temperature = 0.3
 	}
@@ -80,41 +98,50 @@ func NewProbeAskNode(model llm.ChatModel, opts ProbeAskOptions) graph.NodeFunc {
 		opts.MaxTokens = 200
 	}
 
-	return func(ctx context.Context, sess *domain.Session) error {
+	return func(ctx context.Context, sess *domain.Session) (domain.StatePatch, error) {
 		round := sess.CurrentRound()
 		if round == nil {
-			return fmt.Errorf("probe_ask: no current round: %w", graph.ErrPermanent)
+			return domain.StatePatch{}, fmt.Errorf("probe_ask: no current round: %w", graph.ErrPermanent)
 		}
 		if round.CriticResult == nil {
-			return fmt.Errorf("probe_ask: critic required: %w", graph.ErrPermanent)
+			return domain.StatePatch{}, fmt.Errorf("probe_ask: critic required: %w", graph.ErrPermanent)
 		}
-		if sess.WorkingMemory == nil {
-			sess.WorkingMemory = domain.NewWorkingMemory()
-		}
+		mem := cloneWorkingMemory(sess.WorkingMemory)
 
 		// 节点自检(router 通常已挡掉)
-		if !round.CriticResult.HasProbeSignal || !sess.WorkingMemory.CanProbe() {
-			return nil
+		if !round.CriticResult.HasProbeSignal || !mem.CanProbe() {
+			if sess.WorkingMemory == nil {
+				return domain.StatePatch{WorkingMemory: mem}, nil
+			}
+			return domain.StatePatch{}, nil
 		}
 
 		question, reason, err := probeAskByLLM(ctx, model, round, opts)
 		if err != nil {
 			// 降级: 关掉信号让下游 router 走 update_memory, 会话继续
-			markProbeAskFallback(sess, err.Error())
-			round.CriticResult.HasProbeSignal = false
-			round.CriticResult.ProbeTopic = ""
-			return nil
+			markDegradedReason(mem, "probe_ask", err.Error())
+			return domain.StatePatch{
+				CurrentCriticProbeSignal: &domain.CriticProbeSignalPatch{
+					HasProbeSignal: false,
+					ProbeTopic:     "",
+				},
+				WorkingMemory: mem,
+			}, nil
 		}
 
-		round.FollowUps = append(round.FollowUps, domain.FollowUp{
+		followUp := &domain.FollowUp{
 			Question: question,
 			Reason:   reason,
 			AskedAt:  time.Now(),
-		})
-		sess.WorkingMemory.ProbesUsed++
+		}
+		mem.ProbesUsed++
+		patch := domain.StatePatch{
+			AppendCurrentFollowUp: followUp,
+			WorkingMemory:         mem,
+		}
 
-		return fmt.Errorf("probe_ask: waiting for follow-up answer (probes_used=%d): %w",
-			sess.WorkingMemory.ProbesUsed, graph.ErrSuspended)
+		return patch, graph.SuspendWithPatch(fmt.Errorf("probe_ask: waiting for follow-up answer (probes_used=%d): %w",
+			mem.ProbesUsed, graph.ErrSuspended))
 	}
 }
 
@@ -159,10 +186,6 @@ func probeAskByLLM(
 	return strings.TrimSpace(s.Question), strings.TrimSpace(s.Reason), nil
 }
 
-func markProbeAskFallback(sess *domain.Session, reason string) {
-	markDegradedReason(sess.WorkingMemory, "probe_ask", reason)
-}
-
 // =============================================================================
 // probe_eval
 // =============================================================================
@@ -203,10 +226,11 @@ func validateProbeEval(raw []byte) error {
 // NewProbeEvalNode 构造 probe_eval 节点。
 //
 // 节点契约:
-//   输入: CurrentRound() 存在, FollowUps 非空, last FollowUp.Answer 已填(可空字符串)
-//   输出: last FollowUp.Evaluation 填入; round.CriticResult.HasProbeSignal/ProbeTopic
-//         按 LLM 决策 + 预算约束更新
-//   返回: nil (始终, 失败走降级); ErrPermanent: round/followup 缺
+//
+//	输入: CurrentRound() 存在, FollowUps 非空, last FollowUp.Answer 已填(可空字符串)
+//	输出: last FollowUp.Evaluation 填入; round.CriticResult.HasProbeSignal/ProbeTopic
+//	      按 LLM 决策 + 预算约束更新
+//	返回: nil (始终, 失败走降级); ErrPermanent: round/followup 缺
 func NewProbeEvalNode(model llm.ChatModel, opts ProbeEvalOptions) graph.NodeFunc {
 	if opts.Temperature == 0 {
 		opts.Temperature = 0.2

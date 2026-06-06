@@ -726,6 +726,41 @@ func TestRetrieveRAG_EmbedderFails_Fallback(t *testing.T) {
 	}
 }
 
+func TestRetrieveRAGPatchNode_EmbedderFailureReturnsWorkingMemoryPatch(t *testing.T) {
+	embedder := &stubEmbedder{dim: 1024, err: errors.New("embed boom")}
+	r := newFakeRetriever(nil, nil)
+	hook := agentkit.NewRecorderHook()
+	node := NewRetrieveRAGPatchNode(embedder, r, RetrieveRAGOptions{TopK: 10, Hook: hook})
+
+	sess := buildRAGSession([]string{"go"}, []string{"go"})
+	patch, err := node(context.Background(), sess)
+	if err != nil {
+		t.Fatalf("patch node should degrade, not fail: %v", err)
+	}
+	if len(sess.CandidatePool) != 0 {
+		t.Fatalf("patch node should not apply candidate pool directly, got %+v", sess.CandidatePool)
+	}
+	if patch.CandidatePool == nil || len(*patch.CandidatePool) == 0 {
+		t.Fatalf("patch should include fallback candidate pool, got %+v", patch.CandidatePool)
+	}
+	if patch.WorkingMemory == nil || patch.WorkingMemory.DegradedReasons["rag"] == "" {
+		t.Fatalf("patch working memory should include rag degraded reason, got %+v", patch.WorkingMemory)
+	}
+	events := hook.Events()
+	if len(events) != 2 {
+		t.Fatalf("events = %+v", events)
+	}
+	if !strings.Contains(events[1].OutputSummary, "candidate_pool=") || !strings.Contains(events[1].OutputSummary, "degraded=rag:") {
+		t.Fatalf("output summary = %q", events[1].OutputSummary)
+	}
+	if err := domain.ApplyStatePatch(sess, patch); err != nil {
+		t.Fatalf("apply patch: %v", err)
+	}
+	if len(sess.CandidatePool) == 0 || sess.WorkingMemory.DegradedReasons["rag"] == "" {
+		t.Fatalf("session after apply: pool=%+v memory=%+v", sess.CandidatePool, sess.WorkingMemory)
+	}
+}
+
 func TestRetrieveRAG_RetrieverEmpty_Fallback(t *testing.T) {
 	embedder := &stubEmbedder{dim: 1024}
 	r := newFakeRetriever(nil, nil) // 空结果

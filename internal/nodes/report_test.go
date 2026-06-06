@@ -187,6 +187,39 @@ func TestReportNode_EmitsSkillHookEvents(t *testing.T) {
 	}
 }
 
+func TestReportPatchNode_ReturnsStatusAndNonMissingHookSummary(t *testing.T) {
+	sess := buildReportSession()
+	hook := agentkit.NewRecorderHook()
+	node := NewReportPatchNodeWithHook(hook)
+
+	patch, err := node(context.Background(), sess)
+	if err != nil {
+		t.Fatalf("patch node failed: %v", err)
+	}
+	if sess.Report != nil {
+		t.Fatalf("patch node should not apply report directly, got %+v", sess.Report)
+	}
+	if patch.Report == nil {
+		t.Fatal("patch should include report")
+	}
+	if patch.Status == nil || *patch.Status != domain.StatusCompleted {
+		t.Fatalf("patch status = %+v, want completed", patch.Status)
+	}
+	events := hook.Events()
+	if len(events) != 2 {
+		t.Fatalf("events = %+v", events)
+	}
+	if events[1].OutputSummary == "report=missing" || events[1].OutputSummary == "" {
+		t.Fatalf("output summary = %q", events[1].OutputSummary)
+	}
+	if err := domain.ApplyStatePatch(sess, patch); err != nil {
+		t.Fatalf("apply patch: %v", err)
+	}
+	if sess.Report == nil || sess.Status != domain.StatusCompleted {
+		t.Fatalf("session after apply = %+v", sess)
+	}
+}
+
 func TestReportNode_NoRounds_StillBuildsEmptyReport(t *testing.T) {
 	sess := &domain.Session{
 		ID:            "sess-empty",

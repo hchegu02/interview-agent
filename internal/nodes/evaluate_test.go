@@ -158,6 +158,35 @@ func TestEvaluate_LLMFails_DegradesWithScoreMinusOne(t *testing.T) {
 	}
 }
 
+func TestEvaluatePatchNode_LLMFailureReturnsWorkingMemoryPatch(t *testing.T) {
+	stub := &stubChatModel{errs: []error{errors.New("boom"), errors.New("boom2")}, responses: []string{"", ""}}
+	sess := buildEvalSession("answer", []string{"p1"})
+	node := NewEvaluatePatchNode(stub, EvaluateOptions{})
+
+	patch, err := node(context.Background(), sess)
+	if err != nil {
+		t.Fatalf("patch node failed: %v", err)
+	}
+	if sess.Rounds[0].Evaluation != nil {
+		t.Fatalf("patch node should not apply evaluation directly, got %+v", sess.Rounds[0].Evaluation)
+	}
+	if patch.CurrentEvaluation == nil || patch.CurrentEvaluation.Score != -1 {
+		t.Fatalf("patch evaluation = %+v, want degraded score -1", patch.CurrentEvaluation)
+	}
+	if patch.WorkingMemory == nil || patch.WorkingMemory.DegradedReasons["eval"] == "" {
+		t.Fatalf("patch working memory should include eval degraded reason, got %+v", patch.WorkingMemory)
+	}
+	if err := domain.ApplyStatePatch(sess, patch); err != nil {
+		t.Fatalf("apply patch: %v", err)
+	}
+	if sess.Rounds[0].Evaluation == nil || sess.Rounds[0].Evaluation.Score != -1 {
+		t.Fatalf("evaluation after apply = %+v", sess.Rounds[0].Evaluation)
+	}
+	if sess.WorkingMemory.DegradedReasons["eval"] == "" {
+		t.Fatalf("degraded reason after apply = %+v", sess.WorkingMemory.DegradedReasons)
+	}
+}
+
 func TestEvaluate_NilLLM_Degrades(t *testing.T) {
 	sess := buildEvalSession("有内容", []string{"p1"})
 	node := NewEvaluateNode(nil, EvaluateOptions{})

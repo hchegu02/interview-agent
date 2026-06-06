@@ -66,6 +66,23 @@ type pickNextShape struct {
 //
 // model 可为 nil(测试 / 完全规则模式),走降级路径。
 func NewPickNextNode(model llm.ChatModel, opts PickNextOptions) graph.NodeFunc {
+	patchNode := NewPickNextPatchNode(model, opts)
+	return func(ctx context.Context, sess *domain.Session) error {
+		patch, err := patchNode(ctx, sess)
+		if err != nil {
+			if graph.IsPatchSuspend(err) {
+				if applyErr := applyNodePatch(sess, "pick_next", patch); applyErr != nil {
+					return applyErr
+				}
+			}
+			return err
+		}
+		return applyNodePatch(sess, "pick_next", patch)
+	}
+}
+
+// NewPickNextPatchNode 构造由 Graph runner 统一应用 StatePatch 的 pick_next 节点。
+func NewPickNextPatchNode(model llm.ChatModel, opts PickNextOptions) graph.PatchNodeFunc {
 	if opts.Temperature == 0 {
 		opts.Temperature = 0.3
 	}
@@ -76,14 +93,13 @@ func NewPickNextNode(model llm.ChatModel, opts PickNextOptions) graph.NodeFunc {
 		opts.RecentRoundsForContext = 3
 	}
 
-	return func(ctx context.Context, sess *domain.Session) error {
+	return func(ctx context.Context, sess *domain.Session) (domain.StatePatch, error) {
 		if sess.JobProfile == nil {
-			return fmt.Errorf("pick_next: job_profile required: %w", graph.ErrPermanent)
+			return domain.StatePatch{}, fmt.Errorf("pick_next: job_profile required: %w", graph.ErrPermanent)
 		}
-		if sess.WorkingMemory == nil {
-			sess.WorkingMemory = domain.NewWorkingMemory()
-		}
-		mem := sess.WorkingMemory
+		mem := cloneWorkingMemory(sess.WorkingMemory)
+		viewSess := *sess
+		viewSess.WorkingMemory = mem
 
 		// 1. 过滤候选:去掉已问过的题
 		asked := make(map[string]struct{}, len(sess.Rounds))
@@ -108,7 +124,7 @@ func NewPickNextNode(model llm.ChatModel, opts PickNextOptions) graph.NodeFunc {
 				Reasoning: reason,
 				DecidedAt: time.Now(),
 			}
-			return applyNodePatch(sess, "pick_next", domain.StatePatch{PendingDecision: decision})
+			return domain.StatePatch{PendingDecision: decision, WorkingMemory: mem}, nil
 		}
 
 		// 3. 如果 reflection_check 指定了补漏 topic,优先缩小候选池
@@ -120,9 +136,9 @@ func NewPickNextNode(model llm.ChatModel, opts PickNextOptions) graph.NodeFunc {
 		}
 
 		// 4. 选题:LLM 主导,失败降级到规则
-		picked, reasoning, err := pickByLLM(ctx, model, sess, pool, opts)
+		picked, reasoning, err := pickByLLM(ctx, model, &viewSess, pool, opts)
 		if err != nil {
-			markPickFallback(sess, err.Error())
+			markDegradedReason(mem, "pick", err.Error())
 			picked, reasoning = pickByRule(pool, mem)
 		}
 
@@ -140,17 +156,16 @@ func NewPickNextNode(model llm.ChatModel, opts PickNextOptions) graph.NodeFunc {
 			PickReason: reasoning,
 			DecidedAt:  now,
 		}
-		if err := applyNodePatch(sess, "pick_next", domain.StatePatch{
+		mem.RoundsAsked++
+		patch := domain.StatePatch{
 			PendingDecision: decision,
 			AppendRound:     round,
-		}); err != nil {
-			return err
+			WorkingMemory:   mem,
 		}
-		mem.RoundsAsked++
 
 		// 6. suspend 等用户答题
-		return fmt.Errorf("pick_next: waiting for candidate answer (round=%d): %w",
-			mem.RoundsAsked, graph.ErrSuspended)
+		return patch, graph.SuspendWithPatch(fmt.Errorf("pick_next: waiting for candidate answer (round=%d): %w",
+			mem.RoundsAsked, graph.ErrSuspended))
 	}
 }
 

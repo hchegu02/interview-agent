@@ -20,6 +20,7 @@ package graph
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"interview-agent/internal/domain"
 )
@@ -134,3 +135,33 @@ var (
 	// 上层用 errors.Is 检查。
 	ErrSuspended = errors.New("graph: suspended waiting for external input")
 )
+
+type patchSuspendError struct {
+	err error
+}
+
+func (e patchSuspendError) Error() string {
+	return e.err.Error()
+}
+
+func (e patchSuspendError) Unwrap() error {
+	return e.err
+}
+
+// SuspendWithPatch 标记 patch-aware 节点需要先应用 StatePatch 再暂停。
+// patch 本身仍由 PatchNodeFunc 的第一个返回值提供。
+func SuspendWithPatch(err error) error {
+	if err == nil {
+		err = ErrSuspended
+	}
+	if !errors.Is(err, ErrSuspended) {
+		err = fmt.Errorf("%v: %w", err, ErrSuspended)
+	}
+	return patchSuspendError{err: err}
+}
+
+// IsPatchSuspend 判断错误是否显式允许 runner 在暂停前应用 patch。
+func IsPatchSuspend(err error) bool {
+	var suspendErr patchSuspendError
+	return errors.As(err, &suspendErr)
+}
