@@ -6,7 +6,7 @@
 ## 2. Rollout Documents
 
 - [x] 2.1 Update the internal trial launch checklist as the single entry point.
-- [ ] 2.2 Add technical trial Runbook with startup, validation, diagnosis, and rollback steps.
+- [x] 2.2 Add technical trial Runbook with startup, validation, diagnosis, and rollback steps.
 - [ ] 2.3 Add business trial Runbook with fixed user flow and feedback collection steps.
 - [ ] 2.4 Add issue record template with required reproduction and diagnostic fields.
 - [ ] 2.5 Add product feedback scoring template.
