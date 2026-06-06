@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -176,7 +177,7 @@ func (s *PGImportStore) AddItems(ctx context.Context, items []ImportItem) error 
 	batch := &pgx.Batch{}
 	for _, item := range items {
 		itemJSON, _ := json.Marshal(item.Item)
-		fieldProvenanceJSON := marshalStringMapJSON(item.FieldProvenance)
+		fieldProvenanceJSON := marshalStringMapJSON(packImportItemMetadata(item))
 		rawJSON := marshalOriginalItemJSON(item.OriginalItem)
 		batch.Queue(`
 INSERT INTO question_bank_import_items (
@@ -224,6 +225,7 @@ ORDER BY created_at, id
 		}
 		_ = json.Unmarshal(itemJSON, &item.Item)
 		_ = json.Unmarshal(fieldProvenanceJSON, &item.FieldProvenance)
+		unpackImportItemMetadata(&item)
 		if len(rawJSON) > 0 && string(rawJSON) != "{}" {
 			var original Item
 			if err := json.Unmarshal(rawJSON, &original); err == nil {
@@ -242,7 +244,7 @@ func (s *PGImportStore) UpdateItems(ctx context.Context, items []ImportItem) err
 	batch := &pgx.Batch{}
 	for _, item := range items {
 		itemJSON, _ := json.Marshal(item.Item)
-		fieldProvenanceJSON := marshalStringMapJSON(item.FieldProvenance)
+		fieldProvenanceJSON := marshalStringMapJSON(packImportItemMetadata(item))
 		batch.Queue(`
 UPDATE question_bank_import_items
 SET status=$2, review_status=$3, item_json=$4::jsonb, field_provenance=$5::jsonb, errors=$6, updated_at=now()
@@ -276,6 +278,58 @@ func marshalStringMapJSON(in map[string]string) []byte {
 		return []byte("{}")
 	}
 	return raw
+}
+
+const (
+	importMetaAgentReviewStatus = "__agent_review_status"
+	importMetaAgentReviewReason = "__agent_review_reason"
+	importMetaSourcePrefix      = "__source_"
+)
+
+func packImportItemMetadata(item ImportItem) map[string]string {
+	out := cloneStringMap(item.FieldProvenance)
+	if out == nil {
+		out = map[string]string{}
+	}
+	if item.AgentReviewStatus != "" {
+		out[importMetaAgentReviewStatus] = item.AgentReviewStatus
+	}
+	if item.AgentReviewReason != "" {
+		out[importMetaAgentReviewReason] = item.AgentReviewReason
+	}
+	for key, value := range item.SourceProvenance {
+		out[importMetaSourcePrefix+key] = value
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func unpackImportItemMetadata(item *ImportItem) {
+	if item == nil || len(item.FieldProvenance) == 0 {
+		return
+	}
+	source := map[string]string{}
+	for key, value := range item.FieldProvenance {
+		switch {
+		case key == importMetaAgentReviewStatus:
+			item.AgentReviewStatus = value
+			delete(item.FieldProvenance, key)
+		case key == importMetaAgentReviewReason:
+			item.AgentReviewReason = value
+			delete(item.FieldProvenance, key)
+		case strings.HasPrefix(key, importMetaSourcePrefix):
+			source[strings.TrimPrefix(key, importMetaSourcePrefix)] = value
+			delete(item.FieldProvenance, key)
+		}
+	}
+	if len(source) > 0 {
+		item.SourceProvenance = source
+	}
+	if len(item.FieldProvenance) == 0 {
+		item.FieldProvenance = nil
+	}
 }
 
 func (s *PGImportStore) UpdateItemReviews(ctx context.Context, jobID string, itemIDs []string, reviewStatus string) error {

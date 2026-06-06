@@ -13,6 +13,7 @@ import (
 
 	"interview-agent/internal/embedding"
 	"interview-agent/internal/llm"
+	"interview-agent/internal/parser"
 )
 
 func TestLocalImportSpool_SaveOpenDelete(t *testing.T) {
@@ -334,6 +335,81 @@ func TestStageItemsPreservesAgentReviewAndSourceProvenance(t *testing.T) {
 	cloned.SourceProvenance["source_hash"] = "changed"
 	if items[0].SourceProvenance["source_hash"] != "sha256:abc" {
 		t.Fatalf("clone mutated original provenance: %+v", items[0].SourceProvenance)
+	}
+}
+
+func TestImportDocumentStagesSourceProvenance(t *testing.T) {
+	ctx := context.Background()
+	imports := NewMemoryImportStore()
+	service := NewImportService(ImportServiceDeps{
+		Imports: imports,
+		Writer:  NewMemoryStore(nil),
+		Parser:  &parser.MockParser{Text: "Go 服务需要 context 超时、重试和熔断。", PageCount: 1},
+		Model:   llm.NewMockChatModel(""),
+	})
+
+	job, err := service.ImportDocument(ctx, ImportFile{
+		Filename:    "go-resilience.md",
+		ContentType: "text/markdown",
+		Reader:      strings.NewReader("Go 服务需要 context 超时、重试和熔断。"),
+		Size:        64,
+	})
+	if err != nil {
+		t.Fatalf("ImportDocument: %v", err)
+	}
+	items, err := imports.ListItems(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %+v, want one generated item", items)
+	}
+	if items[0].AgentReviewStatus != ImportAgentReviewNeedsHumanReview {
+		t.Fatalf("AgentReviewStatus = %q, want %q", items[0].AgentReviewStatus, ImportAgentReviewNeedsHumanReview)
+	}
+	if got := items[0].SourceProvenance["source_type"]; got != ImportSourceDocument {
+		t.Fatalf("source_type = %q, want %q; provenance=%+v", got, ImportSourceDocument, items[0].SourceProvenance)
+	}
+	if got := items[0].SourceProvenance["filename"]; got != "go-resilience.md" {
+		t.Fatalf("filename = %q, want go-resilience.md; provenance=%+v", got, items[0].SourceProvenance)
+	}
+	if !strings.HasPrefix(items[0].SourceProvenance["source_hash"], "sha256:") {
+		t.Fatalf("source_hash missing: %+v", items[0].SourceProvenance)
+	}
+	if !strings.HasPrefix(items[0].SourceProvenance["chunk_hash"], "sha256:") {
+		t.Fatalf("chunk_hash missing: %+v", items[0].SourceProvenance)
+	}
+}
+
+func TestPGImportMetadataPackingRoundTripsAgentReviewAndSource(t *testing.T) {
+	item := ImportItem{
+		FieldProvenance: map[string]string{"difficulty": "generated"},
+		AgentReviewStatus: ImportAgentReviewAutoApproved,
+		AgentReviewReason: "complete and grounded",
+		SourceProvenance: map[string]string{
+			"source_type": ImportSourceDocument,
+			"source_hash": "sha256:abc",
+		},
+	}
+
+	packed := packImportItemMetadata(item)
+	roundTrip := ImportItem{FieldProvenance: cloneStringMap(packed)}
+	unpackImportItemMetadata(&roundTrip)
+
+	if roundTrip.FieldProvenance["difficulty"] != "generated" {
+		t.Fatalf("FieldProvenance = %+v, want difficulty", roundTrip.FieldProvenance)
+	}
+	if roundTrip.AgentReviewStatus != ImportAgentReviewAutoApproved {
+		t.Fatalf("AgentReviewStatus = %q", roundTrip.AgentReviewStatus)
+	}
+	if roundTrip.AgentReviewReason != "complete and grounded" {
+		t.Fatalf("AgentReviewReason = %q", roundTrip.AgentReviewReason)
+	}
+	if roundTrip.SourceProvenance["source_hash"] != "sha256:abc" {
+		t.Fatalf("SourceProvenance = %+v", roundTrip.SourceProvenance)
+	}
+	if _, ok := roundTrip.FieldProvenance[importMetaAgentReviewStatus]; ok {
+		t.Fatalf("reserved key leaked into field provenance: %+v", roundTrip.FieldProvenance)
 	}
 }
 

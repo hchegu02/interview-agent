@@ -3,6 +3,8 @@ package questionbank
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -110,12 +112,32 @@ func (s *ImportService) processDocument(ctx context.Context, job ImportJob, file
 		if err != nil {
 			return s.failJob(ctx, job, err)
 		}
-		job, err = s.stageItems(ctx, job, chunk.ID, items)
+		provenances := make([]map[string]string, len(items))
+		for i := range provenances {
+			provenances[i] = sourceProvenanceForChunk(file, raw, chunk)
+		}
+		job, err = s.stageItemsWithOriginalsAndProvenance(ctx, job, chunk.ID, items, nil, provenances)
 		if err != nil {
 			return job, err
 		}
 	}
 	return job, nil
+}
+
+func sourceProvenanceForChunk(file ImportFile, raw []byte, chunk ImportChunk) map[string]string {
+	return map[string]string{
+		"source_type":  ImportSourceDocument,
+		"filename":     file.Filename,
+		"content_type": file.ContentType,
+		"source_hash":  "sha256:" + sha256Hex(raw),
+		"chunk_id":     chunk.ID,
+		"chunk_hash":   "sha256:" + sha256Hex([]byte(chunk.Content)),
+	}
+}
+
+func sha256Hex(raw []byte) string {
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }
 
 func (s *ImportService) Get(ctx context.Context, id string) (ImportJob, []ImportItem, error) {
