@@ -1,17 +1,17 @@
 workflow: full
-phase: verify
+phase: archive
 build_mode: subagent-driven-development
 isolation: branch
 verify_mode: full
 base_ref: e8632f34774fc8aeeb801853fe09adb0822c9765
 design_doc: docs/superpowers/specs/2026-06-06-graph-state-closure-design.md
 plan: docs/superpowers/plans/2026-06-06-graph-state-closure.md
-verify_result: pending
+verify_result: pass
 verification_report: docs/superpowers/reports/2026-06-06-complete-graph-state-closure-verify.md
-branch_status: pending
+branch_status: handled
 created_at: 2026-06-06
-verified_at: null
-archived: false
+verified_at: 2026-06-06
+archived: true
 handoff_context: openspec/changes/complete-graph-state-closure/.comet/handoff/design-context.json
 handoff_hash: fba08db59eaa10ebc434b07b24b0b157f337be7b57afaf0276e491080450d03b
 build_command: go test ./...
