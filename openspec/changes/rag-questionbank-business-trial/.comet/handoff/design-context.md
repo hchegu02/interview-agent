@@ -341,4 +341,3 @@ Full source: openspec/changes/rag-questionbank-business-trial/design.md
 - **AND** 验证 MUST 输出 baseline 与 query rewrite 的对比结果
 - **AND** HyDE shadow 结果 MUST 可用于人工判断是否升级到 enabled
 ```
-
