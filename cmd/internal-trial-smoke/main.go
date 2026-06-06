@@ -16,19 +16,24 @@ import (
 )
 
 type smokeOptions struct {
-	SessionPath string
-	RealGitHub  bool
+	SessionPath          string
+	BusinessFeedbackPath string
+	RealGitHub           bool
 }
 
 func main() {
 	var opts smokeOptions
 	flag.StringVar(&opts.SessionPath, "session", defaultSessionFixturePath, "session fixture JSON path")
+	flag.StringVar(&opts.BusinessFeedbackPath, "business-feedback", defaultBusinessFeedbackFixturePath, "business feedback fixture JSON path")
 	flag.BoolVar(&opts.RealGitHub, "real-github", false, "reserved for explicitly configured real GitHub trial wiring")
 	flag.Parse()
 	os.Exit(run(opts, os.Stdout, os.Stderr))
 }
 
-const defaultSessionFixturePath = "testdata/agent_verify/pass_session.json"
+const (
+	defaultSessionFixturePath          = "testdata/agent_verify/pass_session.json"
+	defaultBusinessFeedbackFixturePath = "testdata/internal_trial/business_feedback_pass.json"
+)
 
 func run(opts smokeOptions, stdout, stderr io.Writer) int {
 	failures := []string{}
@@ -44,6 +49,13 @@ func run(opts smokeOptions, stdout, stderr io.Writer) int {
 	failures = appendFailures(failures, "interview fixture", verify.ReportCompletenessVerifier{}.VerifyReport(sess))
 	failures = appendFailures(failures, "interview fixture", verify.RetrievalTraceVerifier{}.VerifyRetrieval(sess))
 	failures = appendFailures(failures, "interview graph", verify.GraphStructureVerifier{}.VerifyInterviewGraph())
+
+	feedback, err := loadBusinessFeedbackFixture(businessFeedbackFixturePath(opts))
+	if err != nil {
+		failures = append(failures, fmt.Sprintf("load business feedback fixture: %v", err))
+	} else {
+		failures = appendFailures(failures, "business feedback fixture", verify.BusinessTrialFeedbackVerifier{}.Verify(feedback))
+	}
 
 	if memoryFailures := verifyTrialMemoryObservations(); len(memoryFailures) > 0 {
 		failures = append(failures, fmt.Sprintf("memory observations failed: %+v", memoryFailures))
@@ -73,6 +85,7 @@ func run(opts smokeOptions, stdout, stderr io.Writer) int {
 
 	fmt.Fprintln(stdout, "interview: fixture verified with report")
 	fmt.Fprintln(stdout, "memory: observations verified")
+	fmt.Fprintln(stdout, "business_trial: feedback evidence verified")
 	fmt.Fprintln(stdout, "project_polish: agent skill verified")
 	fmt.Fprintln(stdout, "tool_trace: github.project_analyze status verified")
 	return 0
@@ -93,6 +106,21 @@ func sessionFixturePath(opts smokeOptions) string {
 	return defaultSessionFixturePath
 }
 
+func businessFeedbackFixturePath(opts smokeOptions) string {
+	if opts.BusinessFeedbackPath != "" {
+		return opts.BusinessFeedbackPath
+	}
+	for _, candidate := range []string{
+		defaultBusinessFeedbackFixturePath,
+		filepath.Join("..", "..", defaultBusinessFeedbackFixturePath),
+	} {
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	return defaultBusinessFeedbackFixturePath
+}
+
 func loadSessionFixture(path string) (*domain.Session, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
@@ -103,6 +131,18 @@ func loadSessionFixture(path string) (*domain.Session, error) {
 		return nil, err
 	}
 	return &sess, nil
+}
+
+func loadBusinessFeedbackFixture(path string) (verify.BusinessTrialFeedback, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return verify.BusinessTrialFeedback{}, err
+	}
+	var feedback verify.BusinessTrialFeedback
+	if err := json.Unmarshal(raw, &feedback); err != nil {
+		return verify.BusinessTrialFeedback{}, err
+	}
+	return feedback, nil
 }
 
 func appendFailures(dst []string, label string, failures []verify.Failure) []string {
