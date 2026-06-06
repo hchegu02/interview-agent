@@ -250,3 +250,16 @@ func TestSessionRowVersionMigration(t *testing.T) {
 		t.Fatal("session row version down migration should drop row_version column")
 	}
 }
+
+func TestUserMemoryMigration(t *testing.T) {
+	up := read(t, "011_user_memory.up.sql")
+	down := read(t, "011_user_memory.down.sql")
+	for _, token := range []string{"CREATE TABLE IF NOT EXISTS user_memory", "user_id text PRIMARY KEY", "memory_json jsonb NOT NULL", "updated_at timestamptz NOT NULL", "user_memory_user_id_not_blank"} {
+		if !strings.Contains(up, token) {
+			t.Fatalf("user memory migration missing %q", token)
+		}
+	}
+	if !strings.Contains(down, "DROP TABLE IF EXISTS user_memory") {
+		t.Fatal("user memory down migration should drop user_memory table")
+	}
+}

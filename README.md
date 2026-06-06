@@ -14,7 +14,7 @@ Interview Agent 面向求职面试训练场景：用户输入岗位 JD 和简历
 - **多轮面试闭环**：支持主题题、追问、答案评分、critic、refine、reflection 和最终报告。
 - **会话与流式交互**：提供 REST API、SSE 事件流、历史会话查询和前端页面。
 - **存储与恢复**：本地默认内存模式；配置 PostgreSQL 后持久化 session 和题库；配置 Redis 后启用 Streams、snapshot 和 lease。
-- **记忆与动态难度**：面试完成后沉淀长期记忆，下一次启动时回填当前 WorkingMemory；动态难度会影响选题 prompt 和规则兜底。
+- **记忆与动态难度**：面试完成后沉淀长期记忆，PostgreSQL 模式可持久化用户画像；下一次启动时回填当前 WorkingMemory；动态难度会影响选题 prompt 和规则兜底。
 - **可靠性保护**：LLM 调用支持并发 limiter、熔断器、超时、降级和 `/readyz` degraded 状态。
 - **质量评估**：提供 RAG eval、questionbank lint、mock eval，以及 Agent Graph / Tool event verifier。
 
@@ -157,11 +157,14 @@ $env:INTERVIEW_RERANK_ENDPOINT="http://127.0.0.1:9000/rerank"
 | `GET` | `/api/interview/stream?session_id=...` | SSE 事件流 |
 | `GET` | `/api/interview/sessions` | 会话列表 |
 | `GET` | `/api/interview/sessions/:session_id` | 会话详情 |
+| `GET` | `/api/users/:user_id/memory` | 只读长期用户画像 |
 | `POST` | `/api/agent/message` | Intent Router + Skill 消息入口 |
 | `POST` | `/api/documents/parse-resume` | 解析 PDF/DOCX/TXT/Markdown 简历 |
 | `GET` | `/api/question-bank` | 题库查询 |
 | `GET` | `/api/question-bank/:id` | 题目详情 |
 | `GET` | `/api/question-bank/facets` | 题库筛选项 |
+
+注意：当前长期用户画像 API 还没有接入鉴权和 ownership 校验，只适合本地演示或受信环境；生产暴露前必须接入用户体系，不能只依赖 path 中的 `user_id`。
 
 ## 快速启动
 
@@ -384,6 +387,8 @@ mingw32-make verify-local
 
 - MCP 当前是 client adapter 抽象和测试替身，没有接入真实生产 MCP Server。
 - Verification 已有本地和 CI 基础门禁，覆盖强 RAG、strict 题库、Agent Graph 和 tool event fixture；后续仍可补真实链路生成 fixture。
+- 长期记忆已有内存 Store、PostgreSQL Store 和只读画像 API；当前不提供画像编辑 API。
+- 画像 API 当前按 path `user_id` 读取，没有鉴权和 ownership 校验；生产接入前必须补用户身份边界。
 - rerank 默认是本地 lexical reranker；HTTP 模式只负责调用本地 rerank 服务，模型服务本身需单独部署。
 - PG 模式下 BM25/rule 本地阶段在服务启动时从 active 题库加载，题库运行时变更后的热刷新仍需后续完善。
 - OTel tracing 后端和真实业务规模压测报告仍未完成。

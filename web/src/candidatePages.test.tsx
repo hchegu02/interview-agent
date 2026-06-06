@@ -1,8 +1,42 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { InterviewPage, ReportPage } from "./candidatePages";
-import type { Session } from "./types";
+import { InterviewPage, ReportPage, UserMemoryPanel } from "./candidatePages";
+import type { Session, UserMemory } from "./types";
+
+describe("user memory panel", () => {
+  it("renders long-term user memory evidence", () => {
+    const memory: UserMemory = {
+      strengths: ["Go 并发", "项目复盘"],
+      weaknesses: [
+        { topic: "Redis", evidence: "缓存击穿回答缺少互斥锁方案", severity: 3, updated_at: "2026-06-01T12:30:00Z" },
+        { topic: "系统设计", severity: 2 },
+      ],
+      skill_scores: { Go: 86, Redis: 61 },
+      last_advice: ["下一轮先练 Redis 高并发缓存场景。"],
+      updated_at: "2026-06-01T12:30:00Z",
+    };
+
+    const html = renderToStaticMarkup(<UserMemoryPanel memory={memory} />);
+
+    expect(html).toContain("长期用户画像");
+    expect(html).toContain("Go 并发");
+    expect(html).toContain("Redis");
+    expect(html).toContain("缓存击穿回答缺少互斥锁方案");
+    expect(html).toContain("Go");
+    expect(html).toContain("86");
+    expect(html).toContain("下一轮先练 Redis 高并发缓存场景。");
+    expect(html).toContain("2026-06-01T12:30:00Z");
+  });
+
+  it("renders a readable empty state when memory is missing", () => {
+    const html = renderToStaticMarkup(<UserMemoryPanel memory={null} />);
+
+    expect(html).toContain("长期用户画像");
+    expect(html).toContain("暂无长期画像数据");
+    expect(html).toContain("完成更多面试后再展示稳定弱项和建议");
+  });
+});
 
 describe("candidate report page", () => {
   it("renders retrieval trace evidence on the report page", () => {

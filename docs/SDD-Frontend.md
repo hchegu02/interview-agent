@@ -29,7 +29,7 @@
 | 路径 | 职责 |
 |---|---|
 | `web/src/main.tsx` | 应用入口、路由切换、Session 拉取和页面组合 |
-| `web/src/candidatePages.tsx` | 简历页、JD 页、面试页、报告页、Agent Skill 入口 |
+| `web/src/candidatePages.tsx` | 简历页、JD 页、面试页、报告页、Agent Skill 入口、长期画像展示 |
 | `web/src/apiClient.ts` | REST API 调用封装 |
 | `web/src/useInterviewStream.ts` | SSE 事件订阅 |
 | `web/src/types.ts` | 前后端共享 JSON 响应的 TypeScript 类型 |
@@ -101,6 +101,16 @@
 
 前端不实现意图判断、Skill 执行、工具调用或权限判断。
 
+### 4.6 UserMemoryPage
+
+`UserMemoryPage` 是长期用户画像的只读页面：
+
+- 调用 `GET /api/users/:user_id/memory`。
+- 展示跨 Session 沉淀出的优势、弱项、技能分数、最近建议和更新时间。
+- 找不到画像时展示空状态。
+
+前端不编辑长期画像，也不把长期画像塞回当前 Session。当前后端画像 API 尚未提供鉴权和 ownership 校验，前端只作为本地演示或受信环境的只读展示层，生产接入前必须由后端补用户身份边界。
+
 ## 5. 状态设计
 
 前端状态分两类：
@@ -141,9 +151,12 @@
 | `POST` | `/api/interview/answer` | 提交回答 |
 | `GET` | `/api/interview/sessions` | 获取会话列表 |
 | `GET` | `/api/interview/sessions/:session_id` | 获取会话详情 |
+| `GET` | `/api/users/:user_id/memory` | 获取只读长期用户画像 |
 | `POST` | `/api/agent/message` | 后端 Intent Router + Skill 消息入口 |
 | `GET` | `/api/question-bank` | 题库预览 |
 | `GET` | `/api/question-bank/facets` | 题库筛选项 |
+
+`GET /api/users/:user_id/memory` 当前按 path `user_id` 读取画像；在后端接入鉴权前，前端不得把它包装成生产级用户中心能力。
 
 接口对齐要求：
 
@@ -217,7 +230,10 @@ npm --prefix web run build
 
 ### 10.2 Long-term Memory 展示
 
-后端已有长期记忆基础层，并会在新 Session 启动时把历史弱点注入当前 `WorkingMemory`。当前尚无用户可读的长期记忆 HTTP API；前端已先展示 Session 响应中的 `working_memory` 白名单字段，例如弱项、已确认技能、平均分、剩余轮次和降级原因。
+后端已有长期记忆基础层，并会在新 Session 启动时把历史弱点注入当前 `WorkingMemory`。前端已展示两类记忆信号：
+
+- 面试页 / 报告页展示当前 Session 响应中的 `working_memory` 白名单字段，例如弱项、已确认技能、平均分、剩余轮次和降级原因。
+- 画像页调用 `GET /api/users/:user_id/memory`，展示跨 Session 的长期强项、弱项、技能分数和最近建议。
 
 前端只展示用户可见的画像摘要，不直接编辑底层 memory 结构，也不展示 `applied_nodes`、原始 `notes` 等后端内部运行标记。
 

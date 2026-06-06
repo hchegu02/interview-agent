@@ -18,6 +18,7 @@ import type {
   TranscriptAnalysis,
   QuestionFacets,
   SkillAction,
+  UserMemory,
   WorkingMemory,
 } from "./types";
 import type { StreamEvent } from "./useInterviewStream";
@@ -323,6 +324,22 @@ export function AgentPage({ userId, busy, setBusy, setNotice, goJD, startAgentDr
   );
 }
 
+export function UserMemoryPage({ memory, busy, refresh }: {
+  memory: UserMemory | null;
+  busy: boolean;
+  refresh: () => void;
+}) {
+  return (
+    <section className="page memory-page">
+      <PageHeader eyebrow="Memory" title="长期用户画像" copy="这里只读展示跨 Session 沉淀出的稳定强项、弱项、技能分数和复习建议。" />
+      <div className="memory-toolbar">
+        <button className="secondary" disabled={busy} onClick={refresh}>{busy ? "刷新中" : "刷新画像"}</button>
+      </div>
+      <UserMemoryPanel memory={memory} />
+    </section>
+  );
+}
+
 export function ProgressBar({ session, route }: { session: Session | null; route: Route }) {
   const steps = session?.progress || [
     { key: "resume", label: "简历", status: route === routes.resume ? "active" : "pending" },
@@ -366,6 +383,52 @@ function ProfileAnalysisPanel({ analysis, compact = false }: { analysis?: Profil
 
 function AnalysisBlock({ title, items, tone }: { title: string; items?: string[]; tone: string }) {
   return <section className="analysis-block"><h3>{title}</h3><div>{items?.length ? items.map((item) => <span key={item} className={tone}>{item}</span>) : <em>暂无</em>}</div></section>;
+}
+
+export function UserMemoryPanel({ memory }: { memory?: UserMemory | null }) {
+  const strengths = memory?.strengths?.filter(Boolean) || [];
+  const weaknesses = memory?.weaknesses?.filter((item) => item.topic || item.evidence) || [];
+  const skillScores = Object.entries(memory?.skill_scores || {}).sort((a, b) => b[1] - a[1]);
+  const advice = memory?.last_advice?.filter(Boolean) || [];
+  const hasMemory = strengths.length || weaknesses.length || skillScores.length || advice.length || memory?.updated_at;
+  return (
+    <section className="user-memory">
+      <div className="analysis-head">
+        <div>
+          <p className="eyebrow">长期用户画像</p>
+          <h2>{hasMemory ? "跨 Session 沉淀的稳定信号。" : "暂无长期画像数据"}</h2>
+        </div>
+        {memory?.updated_at && <span className="memory-updated">{memory.updated_at}</span>}
+      </div>
+      {hasMemory ? (
+        <div className="user-memory-grid">
+          <StatePills title="优势" items={strengths} empty="暂无优势记录" tone="good" />
+          <section className="state-block">
+            <h3>弱项</h3>
+            <div className="memory-weaknesses">
+              {weaknesses.length ? weaknesses.map((item) => (
+                <article key={`${item.topic}-${item.evidence || ""}`}>
+                  <strong>{item.topic || "未命名弱项"}</strong>
+                  <span>严重度 {item.severity ?? "-"}</span>
+                  {item.evidence && <p>{item.evidence}</p>}
+                  {item.updated_at && <em>{item.updated_at}</em>}
+                </article>
+              )) : <em>暂无弱项记录</em>}
+            </div>
+          </section>
+          <StateCoverage items={skillScores} />
+          <section className="state-block">
+            <h3>最近建议</h3>
+            <div className="memory-advice">
+              {advice.length ? advice.map((item) => <p key={item}>{item}</p>) : <em>暂无最近建议</em>}
+            </div>
+          </section>
+        </div>
+      ) : (
+        <p className="memory-empty">完成更多面试后再展示稳定弱项和建议。</p>
+      )}
+    </section>
+  );
 }
 
 function EventTimeline({ events }: { events: StreamEvent[] }) {

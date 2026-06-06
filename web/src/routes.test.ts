@@ -3,7 +3,7 @@ import { navItemsForWorkspace, questionURL, resolveNavigationState } from "./rou
 
 describe("workspace navigation", () => {
   it("keeps candidate interview navigation separate from admin navigation", () => {
-    expect(navItemsForWorkspace("candidate").map((item) => item.label)).toEqual(["简历", "JD 分析", "面试", "报告", "Agent"]);
+    expect(navItemsForWorkspace("candidate").map((item) => item.label)).toEqual(["简历", "JD 分析", "面试", "报告", "Agent", "画像"]);
     expect(navItemsForWorkspace("admin").map((item) => item.label)).toEqual(["题库"]);
   });
 
@@ -15,6 +15,11 @@ describe("workspace navigation", () => {
     });
     expect(resolveNavigationState("/agent", "")).toEqual({
       route: "/agent",
+      workspace: "candidate",
+      questionJump: "",
+    });
+    expect(resolveNavigationState("/memory", "")).toEqual({
+      route: "/memory",
       workspace: "candidate",
       questionJump: "",
     });

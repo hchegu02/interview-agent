@@ -508,6 +508,7 @@ h3 {
 .control-panel,
 .profile-analysis,
 .agent-state,
+.user-memory,
 .transcript-analysis,
 .retrieval-trace,
 .drill-plan,
@@ -567,6 +568,12 @@ h3 {
 
 .agent-actions button {
   min-height: 34px;
+}
+
+.memory-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin: -6px 0 14px;
 }
 
 .scope-panel {
@@ -932,6 +939,76 @@ h3 {
 
 .state-reasons strong {
   color: #9a3412;
+}
+
+.user-memory {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 14px;
+  padding: 16px;
+}
+
+.memory-updated {
+  padding: 6px 9px;
+  color: #475569;
+  background: #eef2f7;
+  border: 1px solid #dbe4ef;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.user-memory-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.memory-weaknesses,
+.memory-advice {
+  display: grid;
+  gap: 8px;
+}
+
+.memory-weaknesses article {
+  display: grid;
+  gap: 4px;
+  padding: 9px;
+  background: #fff8ed;
+  border: 1px solid #fed7aa;
+  border-radius: var(--radius);
+}
+
+.memory-weaknesses strong {
+  color: #7c2d12;
+}
+
+.memory-weaknesses span,
+.memory-weaknesses em,
+.memory-advice em,
+.memory-empty {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.memory-weaknesses p,
+.memory-advice p {
+  margin: 0;
+  color: #334155;
+  line-height: 1.55;
+}
+
+.memory-advice p {
+  padding: 9px;
+  background: #eefcf7;
+  border: 1px solid #c7f1df;
+  border-radius: var(--radius);
+}
+
+.memory-empty {
+  margin: 0;
 }
 
 .event-timeline {
@@ -1721,7 +1798,8 @@ h3 {
   .import-grid,
   .profile-analysis,
   .profile-columns,
-  .agent-state-details {
+  .agent-state-details,
+  .user-memory-grid {
     grid-template-columns: 1fr;
   }
 

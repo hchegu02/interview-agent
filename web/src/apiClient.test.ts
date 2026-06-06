@@ -40,4 +40,20 @@ describe("apiClient", () => {
       body: JSON.stringify({ user_id: "u1", message: "考我 Redis" }),
     }));
   });
+
+  it("loads a read-only user memory profile", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      text: () => Promise.resolve(`{"user_id":"u1","strengths":["Go"],"skill_scores":{"Go":82}}`),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(apiClient.getUserMemory("u1")).resolves.toEqual({
+      user_id: "u1",
+      strengths: ["Go"],
+      skill_scores: { Go: 82 },
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/users/u1/memory", expect.any(Object));
+  });
 });

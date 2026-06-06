@@ -9,6 +9,7 @@ import type {
   QuestionFacets,
   Session,
   SessionSummary,
+  UserMemory,
 } from "./types";
 
 type RequestOptions = RequestInit & { form?: FormData };
@@ -73,6 +74,9 @@ export const apiClient = {
 
   listSessions: (userId: string) =>
     api<{ sessions: SessionSummary[] }>(`/api/interview/sessions?user_id=${encodeURIComponent(userId)}&limit=20`),
+
+  getUserMemory: (userId: string) =>
+    api<UserMemory>(`/api/users/${encodeURIComponent(userId)}/memory`),
 
   deleteSession: (sessionId: string, userId: string) =>
     api<{ deleted: boolean }>(`/api/interview/sessions/${encodeURIComponent(sessionId)}?user_id=${encodeURIComponent(userId)}`, {

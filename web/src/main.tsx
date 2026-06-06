@@ -3,7 +3,7 @@ import { createRoot } from "react-dom/client";
 import { apiClient } from "./apiClient";
 import { buildDraft, clearDraft, DRAFT_KEY, drillJDText, loadDraft, normalizeQuestionBankFilter, saveDraft } from "./draftStore";
 import { formatTime, modeLabel } from "./interviewView";
-import { AgentPage, InterviewPage, JDPage, ProgressBar, ReportPage, ResumePage } from "./candidatePages";
+import { AgentPage, InterviewPage, JDPage, ProgressBar, ReportPage, ResumePage, UserMemoryPage } from "./candidatePages";
 import { QuestionBankPage } from "./questionBankPage";
 import { defaultRouteForWorkspace, navItemsForWorkspace, resolveNavigationState, routes, workspaceForRoute, type Route, type Workspace } from "./routes";
 import { useInterviewStream, type StreamEvent } from "./useInterviewStream";
@@ -13,6 +13,7 @@ import type {
   Mode,
   Session,
   SessionSummary,
+  UserMemory,
 } from "./types";
 import "./styles.css";
 
@@ -38,6 +39,7 @@ function App() {
   const [notice, setNotice] = useState("");
   const [session, setSession] = useState<Session | null>(null);
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [userMemory, setUserMemory] = useState<UserMemory | null>(null);
   const [events, setEvents] = useState<StreamEvent[]>([]);
   const [pendingAnswer, setPendingAnswer] = useState("");
   const [questionJump, setQuestionJump] = useState(() => initialNavigation.questionJump);
@@ -84,6 +86,31 @@ function App() {
   useEffect(() => {
     refreshSessions();
   }, [refreshSessions]);
+
+  const refreshUserMemory = useCallback(() => {
+    const uid = userId.trim();
+    if (!uid) {
+      setUserMemory(null);
+      return;
+    }
+    setBusy(true);
+    apiClient.getUserMemory(uid)
+      .then((data) => {
+        setUserMemory(data);
+        setNotice("");
+      })
+      .catch((err) => {
+        setUserMemory(null);
+        if (!String(errorMessage(err)).includes("user memory not found")) {
+          setNotice(errorMessage(err));
+        }
+      })
+      .finally(() => setBusy(false));
+  }, [userId]);
+
+  useEffect(() => {
+    if (route === routes.memory) refreshUserMemory();
+  }, [refreshUserMemory, route]);
 
   const updateDraft = useCallback((patch: Partial<Draft>) => {
     setDraft((prev) => {
@@ -299,6 +326,9 @@ function App() {
         )}
         {route === routes.agent && (
           <AgentPage userId={userId} busy={busy} setBusy={setBusy} setNotice={setNotice} goJD={() => navigate(routes.jd)} startAgentDrill={startAgentDrill} />
+        )}
+        {route === routes.memory && (
+          <UserMemoryPage memory={userMemory} busy={busy} refresh={refreshUserMemory} />
         )}
         {route === routes.questions && <QuestionBankPage jumpId={questionJump} adminDefault={workspace === "admin"} />}
       </section>

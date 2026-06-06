@@ -239,6 +239,22 @@ export type WorkingMemory = {
   notes?: Record<string, string>;
 };
 
+export type UserMemory = {
+  user_id?: string;
+  strengths?: string[];
+  weaknesses?: UserWeakness[];
+  skill_scores?: Record<string, number>;
+  last_advice?: string[];
+  updated_at?: string;
+};
+
+export type UserWeakness = {
+  topic: string;
+  evidence?: string;
+  severity?: number;
+  updated_at?: string;
+};
+
 export type DifficultyState = {
   current: 1 | 2 | 3 | number;
   correct_streak?: number;

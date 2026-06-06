@@ -14,10 +14,13 @@ import (
 	"interview-agent/internal/agent"
 	"interview-agent/internal/config"
 	"interview-agent/internal/domain"
+	"interview-agent/internal/graph"
 	"interview-agent/internal/httpapi"
 	"interview-agent/internal/llm"
 	"interview-agent/internal/questionbank"
 	"interview-agent/internal/retriever"
+
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestBuildInterviewRunner_MockModeStartsInterview(t *testing.T) {
@@ -159,12 +162,42 @@ func TestBuildInterviewService_NoPostgresUsesMemoryStore(t *testing.T) {
 	}
 }
 
+func TestBuildInterviewService_PostgresUsesPGMemoryStore(t *testing.T) {
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.PostgresDSN = "postgres://example"
+	deps := appDeps{PGPool: &pgxpool.Pool{}}
+	events := httpapi.NewMemoryInterviewEventHub(16)
+
+	svc, cleanupSvc, err := buildInterviewService(context.Background(), cfg, deps, &graph.Runnable{}, events)
+	if err != nil {
+		t.Fatalf("build service: %v", err)
+	}
+	defer cleanupSvc()
+	if got := interviewServiceMemoryStoreType(svc); !strings.Contains(got, "PGStore") {
+		t.Fatalf("memory store type = %q, want PGStore", got)
+	}
+}
+
 func interviewServiceMemoryStoreConfigured(svc *httpapi.InterviewService) bool {
 	if svc == nil {
 		return false
 	}
 	field := reflect.ValueOf(svc).Elem().FieldByName("memoryStore")
 	return field.IsValid() && !field.IsNil()
+}
+
+func interviewServiceMemoryStoreType(svc *httpapi.InterviewService) string {
+	if svc == nil {
+		return ""
+	}
+	field := reflect.ValueOf(svc).Elem().FieldByName("memoryStore")
+	if !field.IsValid() || field.IsNil() {
+		return ""
+	}
+	return field.Elem().Type().String()
 }
 
 func TestBuildQuestionBankStore_NoPostgresLoadsSeed(t *testing.T) {

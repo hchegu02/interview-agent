@@ -30,7 +30,7 @@ func buildInterviewService(ctx context.Context, cfg *config.Config, deps appDeps
 	}
 	store := httpapi.NewPGSessionStore(deps.PGPool, 24*time.Hour)
 	service := httpapi.NewInterviewServiceWithStoreEventsAndCoordinator(runner, store, events, coordinator, ownerID)
-	service.SetMemoryStore(memory.NewMemoryStore())
+	service.SetMemoryStore(memory.NewPGStore(deps.PGPool))
 	return service, func() {}, nil
 }
 

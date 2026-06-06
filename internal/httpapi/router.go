@@ -90,6 +90,7 @@ func (s *Server) Router() *gin.Engine {
 		api.GET("/question-bank", s.listQuestionBank)
 		api.GET("/question-bank/facets", s.questionBankFacets)
 		api.GET("/question-bank/:id", s.getQuestionBankItem)
+		api.GET("/users/:user_id/memory", s.getUserMemory)
 		api.GET("/interview/sessions", s.listInterviewSessions)
 		api.GET("/interview/sessions/:session_id", s.getInterviewSession)
 		api.DELETE("/interview/sessions/:session_id", s.deleteInterviewSession)
