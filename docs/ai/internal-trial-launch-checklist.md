@@ -11,6 +11,14 @@
 - 工具 trace：`project_polish` 可返回顶层 `tool_trace`，前端只读展示工具名、状态、错误类别和摘要。
 - 内部试用 smoke：`go run ./cmd/internal-trial-smoke` 默认离线验证核心链路。
 
+### 试用闭环文档
+
+- [技术试用 Runbook](internal-trial/technical-trial-runbook.md)
+- [业务试用 Runbook](internal-trial/business-trial-runbook.md)
+- [试用问题模板](internal-trial/trial-issue-template.md)
+- [试用反馈模板](internal-trial/trial-feedback-template.md)
+- [试用 Go/No-Go](internal-trial/trial-go-no-go.md)
+
 ## 2. 明确不可试用范围
 
 - 不提供完整 JWT/OIDC 登录。
