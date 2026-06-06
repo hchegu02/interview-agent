@@ -15,6 +15,7 @@
 
 - [技术试用 Runbook](internal-trial/technical-trial-runbook.md)
 - [业务试用 Runbook](internal-trial/business-trial-runbook.md)
+- [RAG 题库业务试用 Runbook](internal-trial/rag-questionbank-business-trial-runbook.md)
 - [试用问题模板](internal-trial/trial-issue-template.md)
 - [试用反馈模板](internal-trial/trial-feedback-template.md)
 - [试用 Go/No-Go](internal-trial/trial-go-no-go.md)

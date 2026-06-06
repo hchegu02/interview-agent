@@ -1,0 +1,8 @@
+{"id":"go-backend-runtime-scheduler","query":"Go 后端面试中如何考察 GMP 调度模型里 P 的职责和 work stealing？","tags":["go","go_runtime","go_concurrency"],"difficulty":3,"relevant_ids":["go-001"]}
+{"id":"go-backend-channel-close","query":"channel 关闭后读写分别发生什么，如何避免重复 close？","tags":["go","channel","go_concurrency"],"difficulty":3,"relevant_ids":["go-012","go-002"]}
+{"id":"go-backend-context-cancel","query":"Go 服务里 context cancel 如何沿派生树传播，为什么不能把 context 当容器？","tags":["go","context","cancellation"],"difficulty":3,"relevant_ids":["go-008"]}
+{"id":"go-backend-http-backpressure","query":"Go net/http 每请求 goroutine 的模型下如何做限流和背压避免服务被打满？","tags":["go","http_server","backpressure"],"difficulty":3,"relevant_ids":["go-010","system-007"]}
+{"id":"go-backend-redis-aof","query":"Redis AOF rewrite 期间新写入命令如何处理，和 RDB 的取舍是什么？","tags":["redis","aof","rdb","persistence"],"difficulty":3,"relevant_ids":["redis-001"]}
+{"id":"go-backend-cache-consistency","query":"Go 后端缓存一致性为什么常见方案是先更新数据库再删缓存？","tags":["redis","cache","system_design"],"difficulty":3,"relevant_ids":["redis-012","redis-005"]}
+{"id":"go-backend-pg-isolation","query":"PostgreSQL 和 MySQL 的 RR 隔离级别在幻读处理上有什么差异？","tags":["pg","mysql","transaction"],"difficulty":4,"relevant_ids":["pg-004","mysql-003"]}
+{"id":"go-backend-p99-debugging","query":"线上 Go 服务 P99 延迟抖动但平均延迟正常，该如何排查？","tags":["system_design","performance"],"difficulty":4,"relevant_ids":["sd-005","go-014"]}
