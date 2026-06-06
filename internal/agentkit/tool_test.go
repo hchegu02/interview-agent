@@ -42,6 +42,33 @@ func TestToolRegistryCallsToolAndRecordsHooks(t *testing.T) {
 	}
 	if events := rec.Events(); len(events) != 2 || events[0].Type != HookBeforeTool || events[1].Type != HookAfterTool {
 		t.Fatalf("hook events = %+v", events)
+	} else if events[1].Status != "success" || events[1].ErrorClass != "" {
+		t.Fatalf("after hook status = %+v, want successful status without error class", events[1])
+	}
+}
+
+func TestToolRegistryRecordsFailedHookStatusAndErrorClass(t *testing.T) {
+	rec := NewRecorderHook()
+	reg := NewToolRegistry(rec)
+	err := reg.Register(stubTool{
+		spec: ToolSpec{Name: "github.project_analyze", Permission: PermissionReadOnly},
+		run: func(context.Context, ToolCall) (ToolResult, error) {
+			return ToolResult{}, MCPToolError{Code: "invalid_github_url", Message: "bad repo"}
+		},
+	})
+	if err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	if _, err := reg.Call(context.Background(), ToolCall{Name: "github.project_analyze", Permission: PermissionReadOnly}); err == nil {
+		t.Fatal("call should fail")
+	}
+	events := rec.Events()
+	if len(events) != 2 {
+		t.Fatalf("events = %+v, want before and after", events)
+	}
+	after := events[1]
+	if after.Type != HookAfterTool || after.Status != "failed" || after.ErrorClass != "invalid_github_url" || after.Error == "" {
+		t.Fatalf("after hook = %+v, want failed hook with MCP error class", after)
 	}
 }
 

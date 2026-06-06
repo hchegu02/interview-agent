@@ -1,0 +1,10 @@
+[
+  {
+    "user_id": "agent-verify-user",
+    "session_id": "agent-verify-pass",
+    "status": "failed",
+    "error_class": "store_write_failed",
+    "attempts": 1,
+    "elapsed_ms": 3
+  }
+]

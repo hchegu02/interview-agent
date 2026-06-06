@@ -43,6 +43,36 @@ func TestRunPassesWithToolEvents(t *testing.T) {
 	}
 }
 
+func TestRunPassesWithFailedMemoryObservation(t *testing.T) {
+	sessionPath := filepath.Join("..", "..", "testdata", "agent_verify", "pass_session.json")
+	memoryObservationsPath := filepath.Join("..", "..", "testdata", "agent_verify", "pass_memory_observations.json")
+
+	var stdout, stderr bytes.Buffer
+	code := run(options{SessionPath: sessionPath, MemoryObservationsPath: memoryObservationsPath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d, stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+}
+
+func TestRunFailsWithInvalidMemoryObservation(t *testing.T) {
+	dir := t.TempDir()
+	sessionPath := filepath.Join(dir, "session.json")
+	memoryObservationsPath := filepath.Join(dir, "memory_observations.json")
+	writeSession(t, sessionPath, completeSession())
+	writeMemoryObservations(t, memoryObservationsPath, []map[string]any{
+		{"status": "failed", "session_id": "s1", "attempts": 1, "elapsed_ms": 2},
+	})
+
+	var stdout, stderr bytes.Buffer
+	code := run(options{SessionPath: sessionPath, MemoryObservationsPath: memoryObservationsPath}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("code = %d, want 1, stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "memory_error_class_missing") {
+		t.Fatalf("summary should include memory_error_class_missing, got %s", stdout.String())
+	}
+}
+
 func TestRunFailsWithInvalidToolEvents(t *testing.T) {
 	dir := t.TempDir()
 	sessionPath := filepath.Join(dir, "session.json")
@@ -87,6 +117,17 @@ func writeToolEvents(t *testing.T, path string, events []map[string]string) {
 	}
 	if err := os.WriteFile(path, raw, 0o644); err != nil {
 		t.Fatalf("write tool events: %v", err)
+	}
+}
+
+func writeMemoryObservations(t *testing.T, path string, observations []map[string]any) {
+	t.Helper()
+	raw, err := json.Marshal(observations)
+	if err != nil {
+		t.Fatalf("marshal memory observations: %v", err)
+	}
+	if err := os.WriteFile(path, raw, 0o644); err != nil {
+		t.Fatalf("write memory observations: %v", err)
 	}
 }
 

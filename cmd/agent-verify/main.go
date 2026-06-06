@@ -14,8 +14,9 @@ import (
 )
 
 type options struct {
-	SessionPath    string
-	ToolEventsPath string
+	SessionPath            string
+	ToolEventsPath         string
+	MemoryObservationsPath string
 }
 
 type verifySummary struct {
@@ -29,6 +30,7 @@ func main() {
 	opts := options{}
 	flag.StringVar(&opts.SessionPath, "session", "", "session JSON file path")
 	flag.StringVar(&opts.ToolEventsPath, "tool-events", "", "optional hook events JSON file path")
+	flag.StringVar(&opts.MemoryObservationsPath, "memory-observations", "", "optional long-term memory observations JSON file path")
 	flag.Parse()
 	os.Exit(run(opts, os.Stdout, os.Stderr))
 }
@@ -57,6 +59,14 @@ func run(opts options, stdout, stderr io.Writer) int {
 			return 2
 		}
 		failures = append(failures, verify.ToolCallVerifier{}.VerifyToolEvents(events)...)
+	}
+	if opts.MemoryObservationsPath != "" {
+		observations, err := loadMemoryObservations(opts.MemoryObservationsPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "ERROR: load memory observations: %v\n", err)
+			return 2
+		}
+		failures = append(failures, verify.MemoryPersistVerifier{SessionID: sess.ID}.VerifyMemoryObservations(observations)...)
 	}
 
 	summary := verifySummary{
@@ -99,4 +109,16 @@ func loadToolEvents(path string) ([]agentkit.HookEvent, error) {
 		return nil, err
 	}
 	return events, nil
+}
+
+func loadMemoryObservations(path string) ([]verify.MemoryPersistObservation, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var observations []verify.MemoryPersistObservation
+	if err := json.Unmarshal(raw, &observations); err != nil {
+		return nil, err
+	}
+	return observations, nil
 }

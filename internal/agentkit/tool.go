@@ -114,14 +114,25 @@ func (r *ToolRegistry) Call(ctx context.Context, call ToolCall) (ToolResult, err
 		InputSummary:  call.InputSummary,
 		OutputSummary: result.Summary,
 		Latency:       time.Since(start),
+		Status:        "success",
 		Permission:    spec.Permission,
 	}
 	if err != nil {
+		ev.Status = "failed"
 		ev.Error = err.Error()
+		ev.ErrorClass = toolErrorClass(err)
 	}
 	_ = r.hook.HandleHook(ctx, ev)
 	if err != nil {
 		return ToolResult{}, err
 	}
 	return result, nil
+}
+
+func toolErrorClass(err error) string {
+	var toolErr MCPToolError
+	if errors.As(err, &toolErr) && strings.TrimSpace(toolErr.Code) != "" {
+		return strings.TrimSpace(toolErr.Code)
+	}
+	return "tool_call_failed"
 }

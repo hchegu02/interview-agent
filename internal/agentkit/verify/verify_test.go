@@ -148,7 +148,7 @@ func TestToolCallVerifier(t *testing.T) {
 	v := ToolCallVerifier{ExpectedTool: "github.project_analyze"}
 	events := []agentkit.HookEvent{
 		{Type: agentkit.HookBeforeTool, TraceID: "tr1", Name: "github.project_analyze", Permission: agentkit.PermissionReadOnly},
-		{Type: agentkit.HookAfterTool, TraceID: "tr1", Name: "github.project_analyze", Permission: agentkit.PermissionReadOnly},
+		{Type: agentkit.HookAfterTool, TraceID: "tr1", Name: "github.project_analyze", Permission: agentkit.PermissionReadOnly, Status: "success"},
 	}
 	failures := v.VerifyToolEvents(events)
 	if len(failures) != 0 {
@@ -160,8 +160,8 @@ func TestToolCallVerifierReportsInvalidToolEvents(t *testing.T) {
 	v := ToolCallVerifier{ExpectedTool: "github.project_analyze"}
 	events := []agentkit.HookEvent{
 		{Type: agentkit.HookBeforeTool, TraceID: "tr1", Name: "github.project_analyze", Permission: agentkit.PermissionReadOnly},
-		{Type: agentkit.HookAfterTool, TraceID: "tr1", Name: "github.project_analyze", Permission: agentkit.PermissionReadOnly, Error: "timeout"},
-		{Type: agentkit.HookAfterTool, TraceID: "tr2", Name: "web.fetch", Permission: agentkit.PermissionReadOnly},
+		{Type: agentkit.HookAfterTool, TraceID: "tr1", Name: "github.project_analyze", Permission: agentkit.PermissionReadOnly, Status: "failed", Error: "timeout", ErrorClass: "timeout"},
+		{Type: agentkit.HookAfterTool, TraceID: "tr2", Name: "web.fetch", Permission: agentkit.PermissionReadOnly, Status: "success"},
 		{Type: agentkit.HookBeforeTool, TraceID: "tr3", Name: "report.write", Permission: agentkit.PermissionWriteReport},
 	}
 	failures := v.VerifyToolEvents(events)
@@ -187,7 +187,7 @@ func TestToolCallVerifierRequiresExpectedTool(t *testing.T) {
 	v := ToolCallVerifier{ExpectedTool: "github.project_analyze"}
 	events := []agentkit.HookEvent{
 		{Type: agentkit.HookBeforeTool, TraceID: "tr1", Name: "web.fetch", Permission: agentkit.PermissionReadOnly},
-		{Type: agentkit.HookAfterTool, TraceID: "tr1", Name: "web.fetch", Permission: agentkit.PermissionReadOnly},
+		{Type: agentkit.HookAfterTool, TraceID: "tr1", Name: "web.fetch", Permission: agentkit.PermissionReadOnly, Status: "success"},
 	}
 	failures := v.VerifyToolEvents(events)
 	if len(failures) != 1 || failures[0].Code != "tool_expected_not_called" {

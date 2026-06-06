@@ -27,9 +27,9 @@
 
 ## 5. 验证门禁增强
 
-- [ ] 5.1 扩展 `cmd/agent-verify` 或 fixture，验证真实工具事件 before/after 成对、权限、状态和错误类别。
-- [ ] 5.2 增加长期记忆观测相关测试或 fixture，确认失败不阻断面试完成。
-- [ ] 5.3 更新本地验证说明，明确需要运行 Go 测试、前端测试/build、agent-verify tool events。
+- [x] 5.1 扩展 `cmd/agent-verify` 或 fixture，验证真实工具事件 before/after 成对、权限、状态和错误类别。
+- [x] 5.2 增加长期记忆观测相关测试或 fixture，确认失败不阻断面试完成。
+- [x] 5.3 更新本地验证说明，明确需要运行 Go 测试、前端测试/build、agent-verify tool events。
 
 ## 6. 文档和收口
 

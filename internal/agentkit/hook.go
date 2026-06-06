@@ -24,7 +24,9 @@ type HookEvent struct {
 	InputSummary  string
 	OutputSummary string
 	Latency       time.Duration
+	Status        string
 	Error         string
+	ErrorClass    string
 	Permission    Permission
 }
 

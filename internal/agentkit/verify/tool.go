@@ -1,6 +1,10 @@
 package verify
 
-import "interview-agent/internal/agentkit"
+import (
+	"strings"
+
+	"interview-agent/internal/agentkit"
+)
 
 const DefaultExpectedTool = "github.project_analyze"
 
@@ -43,6 +47,33 @@ func (v ToolCallVerifier) VerifyToolEvents(events []agentkit.HookEvent) []Failur
 				})
 			} else {
 				pending[key]--
+			}
+			status := strings.TrimSpace(ev.Status)
+			switch status {
+			case "":
+				failures = append(failures, Failure{
+					Code:    "tool_status_missing",
+					Message: "tool after event must include status",
+					Target:  ev.Name,
+				})
+			case "success":
+				if ev.Error != "" {
+					failures = append(failures, Failure{Code: "tool_status_invalid", Message: "success tool event must not include error", Target: ev.Name})
+				}
+			case "failed":
+				if strings.TrimSpace(ev.ErrorClass) == "" {
+					failures = append(failures, Failure{
+						Code:    "tool_error_class_missing",
+						Message: "failed tool event must include error_class",
+						Target:  ev.Name,
+					})
+				}
+			default:
+				failures = append(failures, Failure{
+					Code:    "tool_status_invalid",
+					Message: "tool after event status must be success or failed",
+					Target:  ev.Name,
+				})
 			}
 			if ev.Error != "" {
 				failures = append(failures, Failure{Code: "tool_call_failed", Message: ev.Error, Target: ev.Name})

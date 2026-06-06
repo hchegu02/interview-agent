@@ -14,6 +14,7 @@
     "Name": "github.project_analyze",
     "InputSummary": "github.com/example/interview-agent",
     "OutputSummary": "mock GitHub project analysis",
+    "Status": "success",
     "Permission": "read_only"
   }
 ]
