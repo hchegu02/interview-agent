@@ -3,9 +3,7 @@
 ## Purpose
 
 定义本地质量门禁、Agent 输出验证、工具事件 fixture、长期记忆观测 fixture 和验证命令文档一致性要求。
-
 ## Requirements
-
 ### Requirement: 本地质量门禁应包含 Agent 输出验证
 
 系统 MUST 提供本地质量门禁命令来运行 `cmd/agent-verify` 的通过用例，并将其纳入统一本地验证流程。
@@ -123,3 +121,31 @@
 
 - **WHEN** 维护者准备标记某版本可供内部试用
 - **THEN** 检查清单 MUST 包含 Go 测试、前端测试、前端构建、agent-verify tool/memory fixtures、内部试用 smoke、业务反馈证据校验和 OpenSpec strict validation
+
+### Requirement: Verification gates must detect incomplete report scoring evidence
+
+Local verification gates for internal trial readiness MUST detect final reports that are missing per-question scoring evidence.
+
+#### Scenario: Missing answered question in report fails verification
+
+- **WHEN** a verification fixture contains an answered main question round
+- **AND** the final report omits that answered question from per-question review data
+- **THEN** the verification gate MUST fail
+
+#### Scenario: Missing original answer in report review fails verification
+
+- **WHEN** a report review item represents an answered question or answered follow-up
+- **AND** the review item does not expose the original answer
+- **THEN** the verification gate MUST fail
+
+#### Scenario: Missing per-question score evidence fails verification
+
+- **WHEN** a report review item participates in scoring
+- **AND** it lacks score, hit/missed point evidence, or suggestion where the source evaluation has those fields
+- **THEN** the verification gate MUST fail
+
+#### Scenario: Aggregate score mismatch fails verification
+
+- **WHEN** `overall_score` cannot be reproduced from the effective per-question review scores
+- **THEN** the verification gate MUST fail
+
