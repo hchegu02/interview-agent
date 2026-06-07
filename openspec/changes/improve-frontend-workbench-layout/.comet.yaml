@@ -1,7 +1,7 @@
 workflow: full
 phase: build
 build_mode: subagent-driven-development
-isolation: null
+isolation: worktree
 verify_mode: null
 base_ref: 273ec397532be39785d37375cdf5c8226c52c4ba
 design_doc: docs/superpowers/specs/2026-06-07-frontend-workbench-layout-design.md

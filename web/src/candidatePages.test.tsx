@@ -4,6 +4,16 @@ import { describe, expect, it } from "vitest";
 import { AgentToolTracePanel, InterviewPage, JDPage, ReportPage, UserMemoryPanel } from "./candidatePages";
 import type { Session, UserMemory } from "./types";
 
+function markerIndex(html: string, marker: string): number {
+  const index = html.indexOf(marker);
+  expect(index).toBeGreaterThanOrEqual(0);
+  return index;
+}
+
+function sliceFrom(html: string, marker: string): string {
+  return html.slice(markerIndex(html, marker));
+}
+
 describe("user memory panel", () => {
   it("renders long-term user memory evidence", () => {
     const memory: UserMemory = {
@@ -47,7 +57,7 @@ describe("candidate jd page", () => {
 
   it("shows question bank scope controls in practice mode", () => {
     const html = renderToStaticMarkup(
-      <JDPage draft={draft} mode="practice" busy={false} updateDraft={() => undefined} analyze={() => Promise.resolve()} startInterview={() => Promise.resolve()} />,
+      <JDPage draft={draft} mode="practice" busy={false} updateDraft={() => undefined} setMode={() => undefined} analyze={() => Promise.resolve()} startInterview={() => Promise.resolve()} />,
     );
 
     expect(html).toContain("题库范围");
@@ -56,12 +66,33 @@ describe("candidate jd page", () => {
 
   it("hides question bank scope controls in exam mode", () => {
     const html = renderToStaticMarkup(
-      <JDPage draft={draft} mode="exam" busy={false} updateDraft={() => undefined} analyze={() => Promise.resolve()} startInterview={() => Promise.resolve()} />,
+      <JDPage draft={draft} mode="exam" busy={false} updateDraft={() => undefined} setMode={() => undefined} analyze={() => Promise.resolve()} startInterview={() => Promise.resolve()} />,
     );
 
     expect(html).toContain("岗位 JD");
     expect(html).not.toContain("题库范围");
     expect(html).not.toContain("全部技能");
+  });
+
+  it("shows interview mode controls in the preparation workflow", () => {
+    const html = renderToStaticMarkup(
+      <JDPage
+        draft={draft}
+        mode="practice"
+        busy={false}
+        updateDraft={() => undefined}
+        setMode={() => undefined}
+        analyze={() => Promise.resolve()}
+        startInterview={() => Promise.resolve()}
+      />,
+    );
+
+    expect(html).toContain("面试模式");
+    expect(html).toContain("模拟");
+    expect(html).toContain("考试");
+    expect(html).toContain("开始面试");
+    expect(markerIndex(html, "准备检查")).toBeLessThan(markerIndex(html, "面试模式"));
+    expect(markerIndex(html, "面试模式")).toBeLessThan(markerIndex(html, "开始面试"));
   });
 });
 
@@ -250,6 +281,55 @@ describe("candidate report page", () => {
     expect(html).toContain("redis");
     expect(html).toContain("fallback used");
   });
+
+  it("renders training plan before retrieval diagnostics on the report page", () => {
+    const session: Session = {
+      session_id: "s-report-layout",
+      mode: "practice",
+      status: "completed",
+      phase: "completed",
+      report: {
+        session_id: "s-report-layout",
+        overall_score: 78,
+        skill_breakdown: { Go: 78 },
+        highlights: ["表达清楚"],
+        improvements: ["补充线上排障案例"],
+        next_steps: [],
+        drill_plan: [{
+          practice_order: 1,
+          skill: "Go 并发",
+          reason: "GMP 调度细节薄弱",
+          target_score: 85,
+          recommended_question_ids: ["go-001"],
+        }],
+      },
+      working_memory: {
+        weak_skills: ["Go 并发"],
+        difficulty: { current: 2 },
+        rounds_asked: 2,
+        max_rounds: 8,
+      },
+      retrieval_trace: {
+        query: "go scheduler",
+        final: [{ id: "go-001", rank: 1, score: 0.91 }],
+      },
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    };
+
+    const html = renderToStaticMarkup(<ReportPage session={session} startDrill={() => undefined} jumpQuestion={() => undefined} />);
+
+    expect(html).toContain("训练计划");
+    expect(html).toContain("检索链路");
+    expect(html).toContain("辅助诊断");
+    const auxIndex = markerIndex(html, "辅助诊断");
+    expect(markerIndex(html, "训练计划")).toBeLessThan(auxIndex);
+    expect(markerIndex(html, "Agent 状态")).toBeGreaterThan(auxIndex);
+    expect(markerIndex(html, "检索链路")).toBeGreaterThan(auxIndex);
+    const diagnostics = sliceFrom(html, "辅助诊断");
+    expect(diagnostics).toContain("Agent 状态");
+    expect(diagnostics).toContain("检索链路");
+  });
 });
 
 describe("candidate interview page", () => {
@@ -313,6 +393,43 @@ describe("candidate interview page", () => {
     expect(html).not.toContain("Agent 状态");
     expect(html).not.toContain("Graph 节点");
     expect(html).not.toContain("score_answer");
+  });
+
+  it("keeps practice diagnostics available as auxiliary interview information", () => {
+    const session: Session = {
+      session_id: "s-interview-aux",
+      mode: "practice",
+      status: "running",
+      phase: "answering",
+      question: { id: "go-001", content: "讲一下 Go GMP。" },
+      working_memory: {
+        difficulty: { current: 1 },
+        rounds_asked: 1,
+        max_rounds: 8,
+      },
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    };
+
+    const html = renderToStaticMarkup(
+      <InterviewPage
+        session={session}
+        events={[{ type: "graph.node", label: "Graph 节点", detail: "score_answer", at: "12:00:00" }]}
+        busy={false}
+        pendingAnswer=""
+        submitAnswer={() => Promise.resolve()}
+        goJD={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("讲一下 Go GMP。");
+    expect(html).toContain("辅助诊断");
+    const auxIndex = markerIndex(html, "辅助诊断");
+    expect(markerIndex(html, "Agent 状态")).toBeGreaterThan(auxIndex);
+    expect(markerIndex(html, "Graph 节点")).toBeGreaterThan(auxIndex);
+    const diagnostics = sliceFrom(html, "辅助诊断");
+    expect(diagnostics).toContain("Agent 状态");
+    expect(diagnostics).toContain("Graph 节点");
   });
 });
 

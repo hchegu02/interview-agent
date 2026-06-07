@@ -99,11 +99,12 @@ export function ResumePage({ draft, busy, updateDraft, resetDraft, goNext, setNo
   );
 }
 
-export function JDPage({ draft, mode, busy, updateDraft, analyze, startInterview }: {
+export function JDPage({ draft, mode, busy, updateDraft, setMode, analyze, startInterview }: {
   draft: Draft;
   mode: Mode;
   busy: boolean;
   updateDraft: (patch: Partial<Draft>) => void;
+  setMode: (mode: Mode) => void;
   analyze: () => Promise<void>;
   startInterview: () => Promise<void>;
 }) {
@@ -128,6 +129,16 @@ export function JDPage({ draft, mode, busy, updateDraft, analyze, startInterview
         <aside className="control-panel">
           <h2>准备检查</h2>
           <p>{analysisSummary(draft.analysis)}</p>
+          <div className="mode-panel" aria-label="面试模式">
+            <div>
+              <h3>面试模式</h3>
+              <p>{mode === "practice" ? "模拟模式会展示训练策略和诊断信息。" : "考试模式隐藏内部诊断信息。"}</p>
+            </div>
+            <div className="segmented mode-segmented">
+              <button type="button" className={mode === "practice" ? "active" : ""} onClick={() => setMode("practice")}>模拟</button>
+              <button type="button" className={mode === "exam" ? "active" : ""} onClick={() => setMode("exam")}>考试</button>
+            </div>
+          </div>
           {mode === "practice" && (
             <div className="scope-panel">
               <h3>题库范围</h3>
@@ -189,10 +200,10 @@ export function InterviewPage({ session, events, busy, pendingAnswer, submitAnsw
         {busy && <div className="system-line">正在评估回答，准备下一题...</div>}
       </div>
       {session.mode === "practice" && (
-        <>
+        <AuxiliarySection title="辅助诊断">
           <AgentStatePanel memory={session.working_memory} />
           <EventTimeline events={events} />
-        </>
+        </AuxiliarySection>
       )}
       <form className="answer-dock" onSubmit={send}>
         <label className="answer-box">
@@ -228,20 +239,20 @@ export function ReportPage({ session, startDrill, jumpQuestion }: {
           {Object.entries(report.skill_breakdown || {}).map(([skill, score]) => <ScoreCard key={skill} skill={skill} score={score} />)}
         </div>
       </div>
-      <ProfileAnalysisPanel analysis={session.profile_analysis} />
-      <ReportRoundReviews session={session} />
-      <TranscriptPanel analysis={report.transcript_analysis} />
-      <DrillPlanPanel plan={report.drill_plan || []} startDrill={startDrill} jumpQuestion={jumpQuestion} />
       <div className="report-summary">
         <ListSection title="亮点" items={report.highlights} />
         <ListSection title="改进项" items={report.improvements} />
         <ListSection title="下一步" items={report.next_steps} />
       </div>
+      <DrillPlanPanel plan={report.drill_plan || []} startDrill={startDrill} jumpQuestion={jumpQuestion} />
+      <ReportRoundReviews session={session} />
+      <TranscriptPanel analysis={report.transcript_analysis} />
+      <ProfileAnalysisPanel analysis={session.profile_analysis} />
       {session.mode === "practice" && (
-        <>
+        <AuxiliarySection title="辅助诊断">
           <AgentStatePanel memory={session.working_memory} />
           <RetrievalTracePanel trace={session.retrieval_trace} />
-        </>
+        </AuxiliarySection>
       )}
     </section>
   );
@@ -424,6 +435,17 @@ function ProfileAnalysisPanel({ analysis, compact = false }: { analysis?: Profil
 
 function AnalysisBlock({ title, items, tone }: { title: string; items?: string[]; tone: string }) {
   return <section className="analysis-block"><h3>{title}</h3><div>{items?.length ? items.map((item) => <span key={item} className={tone}>{item}</span>) : <em>暂无</em>}</div></section>;
+}
+
+function AuxiliarySection({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <section className="auxiliary-section">
+      <details open>
+        <summary>{title}</summary>
+        <div className="auxiliary-content">{children}</div>
+      </details>
+    </section>
+  );
 }
 
 export function UserMemoryPanel({ memory }: { memory?: UserMemory | null }) {

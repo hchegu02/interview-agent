@@ -275,8 +275,8 @@ function App() {
           </button>
         </div>
         <div className="mode-switch" aria-label="工作区">
-          <button className={workspace === "candidate" ? "active" : ""} onClick={() => switchWorkspace("candidate")}>候选人面试</button>
-          <button className={workspace === "admin" ? "active" : ""} onClick={() => switchWorkspace("admin")}>管理后台</button>
+          <button data-short="候" className={workspace === "candidate" ? "active" : ""} onClick={() => switchWorkspace("candidate")}>候选人面试</button>
+          <button data-short="管" className={workspace === "admin" ? "active" : ""} onClick={() => switchWorkspace("admin")}>管理后台</button>
         </div>
         <nav className="nav-list" aria-label="主导航">
           {navItems.map((item) => (
@@ -285,10 +285,6 @@ function App() {
             </button>
           ))}
         </nav>
-        <div className="mode-switch">
-          <button className={mode === "practice" ? "active" : ""} onClick={() => setMode("practice")}>模拟</button>
-          <button className={mode === "exam" ? "active" : ""} onClick={() => setMode("exam")}>考试</button>
-        </div>
         <label className="field compact">
           <span>用户 ID</span>
           <input value={userId} onChange={(evt) => setUserId(evt.target.value)} onBlur={refreshSessions} />
@@ -323,7 +319,7 @@ function App() {
           <ResumePage draft={draft} busy={busy} updateDraft={updateDraft} resetDraft={resetDraft} goNext={() => navigate(routes.jd)} setNotice={setNotice} />
         )}
         {route === routes.jd && (
-          <JDPage draft={draft} mode={mode} busy={busy} updateDraft={updateDraft} analyze={analyze} startInterview={startInterview} />
+          <JDPage draft={draft} mode={mode} busy={busy} updateDraft={updateDraft} setMode={setMode} analyze={analyze} startInterview={startInterview} />
         )}
         {route === routes.interview && (
           <InterviewPage session={session} events={events} busy={busy} pendingAnswer={pendingAnswer} submitAnswer={submitAnswer} goJD={() => navigate(routes.jd)} />
