@@ -110,6 +110,9 @@ func (s *ImportService) EnqueueCommit(ctx context.Context, jobID string) (Import
 	if job.Status != ImportStatusReady {
 		return ImportJob{}, fmt.Errorf("import job %s is %s, not ready", job.ID, job.Status)
 	}
+	if err := s.ensureNoPendingHumanReview(ctx, job.ID); err != nil {
+		return ImportJob{}, err
+	}
 	job.Status = ImportStatusQueued
 	job, err = s.imports.UpdateJob(ctx, job)
 	if err != nil {

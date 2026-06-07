@@ -140,6 +140,8 @@ func NewPickNextPatchNode(model llm.ChatModel, opts PickNextOptions) graph.Patch
 		if err != nil {
 			markDegradedReason(mem, "pick", err.Error())
 			picked, reasoning = pickByRule(pool, mem)
+		} else {
+			picked, reasoning = enforceRetrievalRankGuard(pool, picked, reasoning)
 		}
 
 		// 5. 写 PendingDecision + 新建 round
@@ -167,6 +169,45 @@ func NewPickNextPatchNode(model llm.ChatModel, opts PickNextOptions) graph.Patch
 		return patch, graph.SuspendWithPatch(fmt.Errorf("pick_next: waiting for candidate answer (round=%d): %w",
 			mem.RoundsAsked, graph.ErrSuspended))
 	}
+}
+
+func enforceRetrievalRankGuard(pool []domain.Question, picked domain.Question, reasoning string) (domain.Question, string) {
+	if len(pool) == 0 || picked.ID == "" || picked.ID == pool[0].ID {
+		return picked, reasoning
+	}
+	pickedRank := -1
+	for i, q := range pool {
+		if q.ID == picked.ID {
+			pickedRank = i + 1
+			break
+		}
+	}
+	if pickedRank <= 2 {
+		return picked, reasoning
+	}
+	top := pool[0]
+	if !samePickSkill(top, picked) || difficultyDistance(top.Difficulty, picked.Difficulty) > 1 {
+		return picked, reasoning
+	}
+	reason := strings.TrimSpace(reasoning)
+	if reason == "" {
+		reason = "检索排名优先"
+	} else {
+		reason += "；检索排名优先"
+	}
+	return top, reason
+}
+
+func samePickSkill(a, b domain.Question) bool {
+	if a.SkillCategory != "" && a.SkillCategory == b.SkillCategory {
+		return true
+	}
+	for _, tag := range a.Tags {
+		if containsStr(b.Tags, tag) {
+			return true
+		}
+	}
+	return false
 }
 
 func consumeReflectTopic(mem *domain.WorkingMemory) string {

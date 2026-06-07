@@ -104,6 +104,30 @@ func TestPickNext_LLMSuccess_Suspends(t *testing.T) {
 	}
 }
 
+func TestPickNext_OverridesLowRankLLMPickWhenTopCandidateIsSameSkill(t *testing.T) {
+	stub := &stubChatModel{responses: []string{
+		`{"next_question_id":"generic-agent","reasoning":"泛化验证 Agent 概念"}`,
+	}}
+	pool := []domain.Question{
+		{ID: "rag-top", Content: "Agent RAG 评分一致性验证", Tags: []string{"agent", "rag", "evaluation"}, Difficulty: 4, SkillCategory: "ai_agent"},
+		{ID: "old-agent", Content: "Agent 难点", Tags: []string{"agent"}, Difficulty: 4, SkillCategory: "ai_agent"},
+		{ID: "generic-agent", Content: "什么是 Agent", Tags: []string{"agent", "llm"}, Difficulty: 4, SkillCategory: "ai_agent"},
+	}
+	sess := buildPickSession(0, 8, pool)
+	node := NewPickNextNode(stub, PickNextOptions{})
+
+	err := node(context.Background(), sess)
+	if !errors.Is(err, graph.ErrSuspended) {
+		t.Fatalf("expected ErrSuspended, got %v", err)
+	}
+	if got := sess.PendingDecision.NextQuestionID; got != "rag-top" {
+		t.Fatalf("picked %s, want top retrieval candidate rag-top", got)
+	}
+	if !strings.Contains(sess.PendingDecision.Reasoning, "检索排名") {
+		t.Fatalf("reasoning should explain retrieval rank guard, got %q", sess.PendingDecision.Reasoning)
+	}
+}
+
 func TestPickNextPrompt_IncludesDynamicDifficultyGuidance(t *testing.T) {
 	stub := &stubChatModel{responses: []string{
 		`{"next_question_id":"redis-001","reasoning":"动态难度匹配"}`,

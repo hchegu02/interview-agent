@@ -244,15 +244,22 @@ func TestCommitSkipsAgentNeedsHumanReviewItems(t *testing.T) {
 		t.Fatalf("UpdateItems: %v", err)
 	}
 
-	committed, err := service.Commit(ctx, job.ID)
-	if err != nil {
-		t.Fatalf("Commit: %v", err)
+	_, err = service.Commit(ctx, job.ID)
+	if err == nil {
+		t.Fatal("Commit should require human review before committing")
 	}
-	if committed.ImportedItems != 0 {
-		t.Fatalf("ImportedItems = %d, want 0", committed.ImportedItems)
+	if !strings.Contains(err.Error(), "requires human review") {
+		t.Fatalf("Commit error = %v, want requires human review", err)
 	}
 	if _, err := store.Get(ctx, "review-agent-001"); err == nil {
 		t.Fatal("needs_human_review item should not be written to question bank")
+	}
+	gotJob, err := imports.GetJob(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if gotJob.Status != ImportStatusReady {
+		t.Fatalf("job status = %s, want ready", gotJob.Status)
 	}
 }
 

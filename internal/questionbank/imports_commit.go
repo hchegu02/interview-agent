@@ -26,6 +26,9 @@ func (s *ImportService) Commit(ctx context.Context, jobID string) (ImportJob, er
 	if job.Status != ImportStatusReady {
 		return ImportJob{}, fmt.Errorf("import job %s is %s, not ready", job.ID, job.Status)
 	}
+	if err := s.ensureNoPendingHumanReview(ctx, job.ID); err != nil {
+		return ImportJob{}, err
+	}
 	return s.commitReadyJob(ctx, jobID)
 }
 
@@ -164,6 +167,29 @@ func (s *ImportService) commitReadyJob(ctx context.Context, jobID string) (Impor
 	job.Status = ImportStatusCommitted
 	job.ImportedItems = len(items)
 	return s.imports.UpdateJob(ctx, job)
+}
+
+func (s *ImportService) ensureNoPendingHumanReview(ctx context.Context, jobID string) error {
+	items, err := s.imports.ListItems(ctx, jobID)
+	if err != nil {
+		return err
+	}
+	var pending []string
+	for _, item := range items {
+		if item.Status != ImportItemStatusValid {
+			continue
+		}
+		if normalizedImportReviewStatus(item.ReviewStatus) != ImportReviewStatusAccepted {
+			continue
+		}
+		if item.AgentReviewStatus == ImportAgentReviewNeedsHumanReview {
+			pending = append(pending, item.ID)
+		}
+	}
+	if len(pending) > 0 {
+		return fmt.Errorf("import job %s requires human review for %d item(s): %s", jobID, len(pending), strings.Join(pending, ","))
+	}
+	return nil
 }
 
 func activeQuestionContentKeys(ctx context.Context, source any) (map[string]struct{}, error) {
