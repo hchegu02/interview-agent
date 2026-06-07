@@ -1,5 +1,5 @@
 workflow: full
-phase: build
+phase: verify
 build_mode: subagent-driven-development
 isolation: branch
 verify_mode: null
@@ -9,6 +9,8 @@ plan: docs/superpowers/plans/2026-06-08-harden-question-content-quality-gates.md
 verify_result: pending
 verification_report: null
 branch_status: pending
+build_command: "GOCACHE='D:/Documents/New project/interview-agent/tmp/gocache' go test ./..."
+verify_command: "GOCACHE='D:/Documents/New project/interview-agent/tmp/gocache' go test ./..."
 created_at: 2026-06-08
 verified_at: null
 archived: false
