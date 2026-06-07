@@ -2,6 +2,8 @@
 comet_change: internal-business-trial-stabilization
 role: technical-design
 canonical_spec: openspec
+archived-with: 2026-06-07-internal-business-trial-stabilization
+status: final
 ---
 
 # 内部业务试用稳定版技术设计

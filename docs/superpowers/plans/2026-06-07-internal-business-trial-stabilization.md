@@ -2,6 +2,7 @@
 change: internal-business-trial-stabilization
 design-doc: docs/superpowers/specs/2026-06-07-internal-business-trial-stabilization-design.md
 base-ref: 701d867b9873504ae1c14c65a2047c91da6ff138
+archived-with: 2026-06-07-internal-business-trial-stabilization
 ---
 
 # Internal Business Trial Stabilization Implementation Plan
@@ -14,6 +15,7 @@ base-ref: 701d867b9873504ae1c14c65a2047c91da6ff138
 
 **Tech Stack:** Go 1.23, standard `encoding/json`, existing `internal/agentkit/verify`, OpenSpec, PowerShell verification commands.
 
+archived-with: 2026-06-07-internal-business-trial-stabilization
 ---
 
 ## File Structure
