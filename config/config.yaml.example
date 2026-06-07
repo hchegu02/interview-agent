@@ -21,8 +21,8 @@ redis:
 
 llm:
   mode: mock                # mock | real（real 模式必须设 INTERVIEW_LLM_API_KEY）
-  base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
-  model: "qwen-plus"
+  base_url: "http://localhost:7853/v1"
+  model: "gpt-5.5"
   fallback_model: "qwen-turbo"
   timeout: 30s
   max_tokens: 1200
