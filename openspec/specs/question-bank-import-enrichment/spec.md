@@ -3,7 +3,9 @@
 ## Purpose
 
 定义题库导入、缺失元数据补全、Agent 审核建议和源文档追溯的正式行为边界，确保生成题目先进入暂存审核流程，再按发布策略进入正式题库。
+
 ## Requirements
+
 ### Requirement: 题库导入支持缺失元数据补全
 
 系统 MUST 在本地题库导入时支持对缺失元数据的题目进行补全，并保留审核后再提交的流程。系统 SHOULD expose Agent-generated quality review decisions so high-confidence generated items can be batch-confirmed while risky items remain blocked from formal question-bank commit.
@@ -74,6 +76,15 @@
 - **THEN** 系统 MUST 保存原文快照、来源类型和内容 hash
 - **AND** 系统 MUST 生成暂存题目而不是直接写入正式题库
 - **AND** 每道生成题 MUST 能追溯到源文档或源片段引用
+
+#### Scenario: 人工确认源文档生成题后进入可检索题库
+
+- **WHEN** 源文档导入生成了字段完整的有效暂存题
+- **AND** 人工审核接受这些题目
+- **AND** 本地 embedding 服务可用且维度与 `question_bank.embedding` 一致
+- **THEN** commit MUST 将接受的题目写入正式 `question_bank`
+- **AND** 系统 MUST 为提交题写入 embedded 状态和 embedding 模型
+- **AND** 后续题库查询或 RAG 检索 MUST 能召回这些新题
 
 #### Scenario: Skill 或 MCP 作为来源适配器
 
