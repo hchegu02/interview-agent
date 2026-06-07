@@ -54,6 +54,19 @@ func TestRunPassesWithFailedMemoryObservation(t *testing.T) {
 	}
 }
 
+func TestRunFailsWithReportScoringMissingReviewFixture(t *testing.T) {
+	sessionPath := filepath.Join("..", "..", "testdata", "agent_verify", "fail_report_scoring_missing_review.json")
+
+	var stdout, stderr bytes.Buffer
+	code := run(options{SessionPath: sessionPath}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("code = %d, want 1, stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "report_round_review_missing") {
+		t.Fatalf("summary should include report_round_review_missing, got %s", stdout.String())
+	}
+}
+
 func TestRunFailsWithInvalidMemoryObservation(t *testing.T) {
 	dir := t.TempDir()
 	sessionPath := filepath.Join(dir, "session.json")
@@ -143,11 +156,12 @@ func writeSession(t *testing.T, path string, sess *domain.Session) {
 }
 
 func completeSession() *domain.Session {
+	score80 := 80
 	return &domain.Session{
 		ID: "s1",
 		Rounds: []domain.AnswerRound{{
 			RoundID:  "r1",
-			Question: domain.Question{ID: "q1", SkillCategory: "go"},
+			Question: domain.Question{ID: "q1", Content: "讲一下 Go 的 GMP 调度模型。", SkillCategory: "go", ExpectedPoints: []string{"G/M/P 定义", "本地队列"}},
 			Answer:   "GMP 包含 G/M/P，并涉及本地队列和 work stealing。",
 			Evaluation: &domain.Evaluation{
 				QuestionID: "q1",
@@ -172,7 +186,21 @@ func completeSession() *domain.Session {
 			TranscriptAnalysis: &domain.TranscriptAnalysis{
 				Dimensions: []domain.TranscriptDimension{{Name: "技术相关性", Score: 80}},
 			},
-			DrillPlan:    []domain.DrillPlanItem{{Skill: "go", Reason: "继续提高深度"}},
+			DrillPlan: []domain.DrillPlanItem{{Skill: "go", Reason: "继续提高深度"}},
+			RoundReviews: []domain.RoundReview{{
+				RoundID:             "r1",
+				Number:              1,
+				Type:                "main",
+				QuestionID:          "q1",
+				Question:            "讲一下 Go 的 GMP 调度模型。",
+				Answer:              "GMP 包含 G/M/P，并涉及本地队列和 work stealing。",
+				Score:               &score80,
+				HitPoints:           []string{"覆盖核心概念"},
+				MissedPoints:        []string{"排障细节不足"},
+				Suggestion:          "补充线上调度排查案例",
+				ExpectedPoints:      []string{"G/M/P 定义", "本地队列"},
+				CountsTowardOverall: true,
+			}},
 			Improvements: []string{"补充项目排障细节"},
 			NextSteps:    []string{"复盘 Go 并发案例"},
 		},

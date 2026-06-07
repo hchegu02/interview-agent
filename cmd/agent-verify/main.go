@@ -49,6 +49,7 @@ func run(opts options, stdout, stderr io.Writer) int {
 
 	failures := []verify.Failure{}
 	failures = append(failures, verify.ReportCompletenessVerifier{}.VerifyReport(sess)...)
+	failures = append(failures, verify.ReportScoringVerifier{}.VerifyReportScoring(sess)...)
 	failures = append(failures, verify.RetrievalTraceVerifier{}.VerifyRetrieval(sess)...)
 	failures = append(failures, verify.GraphStructureVerifier{}.VerifyInterviewGraph()...)
 

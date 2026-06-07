@@ -1,5 +1,5 @@
 {
-  "id": "agent-verify-pass",
+  "id": "agent-verify-fail-report-scoring-missing-review",
   "rounds": [
     {
       "round_id": "r1",
@@ -35,7 +35,7 @@
     ]
   },
   "report": {
-    "session_id": "agent-verify-pass",
+    "session_id": "agent-verify-fail-report-scoring-missing-review",
     "overall_score": 82,
     "skill_breakdown": {
       "go": 82
@@ -60,22 +60,6 @@
         "reason": "补充并发排障案例",
         "target_score": 90,
         "recommended_question_ids": ["go-001"]
-      }
-    ],
-    "round_reviews": [
-      {
-        "round_id": "r1",
-        "number": 1,
-        "type": "main",
-        "question_id": "go-001",
-        "question": "讲一下 Go 的 GMP 调度模型。",
-        "answer": "G 是 goroutine，M 是线程，P 负责调度上下文和本地队列。任务不均衡时会通过 work stealing 做负载均衡。",
-        "score": 82,
-        "hit_points": ["覆盖 G/M/P 和 work stealing"],
-        "missed_points": ["项目排障案例不足"],
-        "suggestion": "补充线上 goroutine 堆积或调度延迟的排查案例",
-        "expected_points": ["G/M/P 定义", "本地队列", "work stealing"],
-        "counts_toward_overall": true
       }
     ],
     "highlights": ["Go 并发基础较稳"],
