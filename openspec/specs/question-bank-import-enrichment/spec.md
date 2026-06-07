@@ -3,9 +3,7 @@
 ## Purpose
 
 定义题库导入、缺失元数据补全、Agent 审核建议和源文档追溯的正式行为边界，确保生成题目先进入暂存审核流程，再按发布策略进入正式题库。
-
 ## Requirements
-
 ### Requirement: 题库导入支持缺失元数据补全
 
 系统 MUST 在本地题库导入时支持对缺失元数据的题目进行补全，并保留审核后再提交的流程。系统 SHOULD expose Agent-generated quality review decisions so high-confidence generated items can be batch-confirmed while risky items remain blocked from formal question-bank commit.
@@ -136,3 +134,28 @@
 - **WHEN** 系统通过 skill 或 MCP 获取外部链接、文档或知识库原文
 - **THEN** 该能力 MUST 只作为来源适配器进入源文档导入流程
 - **AND** 适配器 MUST NOT 直接写入正式 question bank
+
+### Requirement: 定向题库生成支持异步任务
+
+系统 MUST support asynchronous targeted question generation so long-running real LLM calls do not require the HTTP request to remain open until generation completes.
+
+#### Scenario: 异步创建生成任务
+
+- **WHEN** caller posts to `/api/question-bank/generation-jobs?async=true` with a valid generation request
+- **THEN** system MUST create a generation job with status `queued`
+- **AND** system MUST return HTTP 202 with the queued job
+- **AND** system MUST execute generation in a backend worker
+
+#### Scenario: 轮询异步生成任务状态
+
+- **WHEN** caller gets `/api/question-bank/generation-jobs/:id`
+- **THEN** system MUST return the latest persisted job status
+- **AND** status MUST eventually become `created` or `failed` after worker completion
+
+#### Scenario: 未完成任务不能暂存
+
+- **WHEN** caller posts `/api/question-bank/generation-jobs/:id/stage`
+- **AND** the generation job is not `created`
+- **THEN** system MUST reject staging
+- **AND** system MUST NOT create import review items
+
