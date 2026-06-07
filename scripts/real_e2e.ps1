@@ -2,11 +2,17 @@ param(
     [string]$ConfigPath = $(if ($env:CONFIG_PATH) { $env:CONFIG_PATH } else { "config/config.yaml.example" }),
     [string]$ScriptPath = $(if ($env:DEMO_SCRIPT) { $env:DEMO_SCRIPT } else { "testdata/demo/example.yaml" }),
     [string]$BaseUrl = $(if ($env:BASE_URL) { $env:BASE_URL } else { "http://127.0.0.1:18080" }),
+    [string]$RedisUrl = $(if ($env:INTERVIEW_REDIS_URL) { $env:INTERVIEW_REDIS_URL } else { "redis://localhost:6479/0" }),
+    [string]$RedisContainerName = $(if ($env:REAL_E2E_REDIS_CONTAINER) { $env:REAL_E2E_REDIS_CONTAINER } else { "interview-agent-redis-real-e2e" }),
     [string]$EmbeddingBaseUrl = $(if ($env:INTERVIEW_EMBEDDING_BASE_URL) { $env:INTERVIEW_EMBEDDING_BASE_URL } else { "http://127.0.0.1:8000/v1" }),
     [string]$EmbeddingModel = $(if ($env:INTERVIEW_EMBEDDING_MODEL) { $env:INTERVIEW_EMBEDDING_MODEL } else { "BAAI/bge-m3" }),
     [int]$EmbeddingDimension = $(if ($env:INTERVIEW_EMBEDDING_DIMENSION) { [int]$env:INTERVIEW_EMBEDDING_DIMENSION } else { 1024 }),
     [switch]$SkipDocker,
-    [switch]$SkipWeb
+    [switch]$SkipMigrations,
+    [switch]$SkipReindex,
+    [switch]$SkipCli,
+    [switch]$SkipWeb,
+    [string]$RunLog = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -20,7 +26,17 @@ $serverDir = Join-Path $root "tmp\real-e2e"
 $serverBin = Join-Path $serverDir "server-real-e2e.exe"
 $serverLog = Join-Path $serverDir "server-$timestamp.log"
 $serverErr = Join-Path $serverDir "server-$timestamp.err.log"
+$runLog = if ([string]::IsNullOrWhiteSpace($RunLog)) { Join-Path $serverDir "run-$timestamp.log" } else { $RunLog }
 $serverProcess = $null
+
+New-Item -ItemType Directory -Force -Path $serverDir | Out-Null
+
+function Write-RunLog {
+    param([string]$Message)
+    $line = "{0} {1}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Message
+    Write-Host $line
+    Add-Content -LiteralPath $runLog -Value $line
+}
 
 function Assert-Env {
     param([string]$Name)
@@ -34,8 +50,9 @@ function Invoke-Step {
         [string]$Name,
         [scriptblock]$Body
     )
-    Write-Host "==> $Name"
+    Write-RunLog "==> $Name"
     & $Body
+    Write-RunLog "<== $Name"
 }
 
 function Invoke-Checked {
@@ -47,6 +64,110 @@ function Invoke-Checked {
     if ($LASTEXITCODE -ne 0) {
         throw "$FilePath $($ArgumentList -join ' ') failed with exit code $LASTEXITCODE"
     }
+}
+
+function Get-UrlPort {
+    param(
+        [string]$RawUrl,
+        [int]$DefaultPort
+    )
+    try {
+        $uri = [Uri]$RawUrl
+        if ($uri.Port -gt 0) {
+            return $uri.Port
+        }
+    } catch {
+        throw "invalid URL: $RawUrl"
+    }
+    return $DefaultPort
+}
+
+function Test-TcpPort {
+    param(
+        [string]$HostName,
+        [int]$Port,
+        [int]$TimeoutMs = 1000
+    )
+    $client = [System.Net.Sockets.TcpClient]::new()
+    try {
+        $task = $client.ConnectAsync($HostName, $Port)
+        if (-not $task.Wait($TimeoutMs)) {
+            return $false
+        }
+        return $client.Connected
+    } catch {
+        return $false
+    } finally {
+        $client.Dispose()
+    }
+}
+
+function Wait-TcpPort {
+    param(
+        [string]$HostName,
+        [int]$Port,
+        [int]$Attempts = 30
+    )
+    for ($i = 0; $i -lt $Attempts; $i++) {
+        if (Test-TcpPort -HostName $HostName -Port $Port) {
+            return
+        }
+        Start-Sleep -Seconds 1
+    }
+    throw "$HostName`:$Port did not become reachable"
+}
+
+function Write-LogTail {
+    param(
+        [string]$Path,
+        [int]$Tail = 80
+    )
+    if (Test-Path $Path) {
+        Write-RunLog "--- $Path ---"
+        foreach ($line in Get-Content $Path -Tail $Tail) {
+            Write-RunLog $line
+        }
+    }
+}
+
+function Resolve-BaseUrl {
+    param([string]$RequestedBaseUrl)
+    if ($env:BASE_URL) {
+        return $RequestedBaseUrl
+    }
+    $uri = [Uri]$RequestedBaseUrl
+    if (-not (Test-TcpPort -HostName $uri.Host -Port $uri.Port -TimeoutMs 200)) {
+        return $RequestedBaseUrl
+    }
+    foreach ($port in 18081..18089) {
+        if (-not (Test-TcpPort -HostName $uri.Host -Port $port -TimeoutMs 200)) {
+            $resolved = "{0}://{1}:{2}" -f $uri.Scheme, $uri.Host, $port
+            Write-RunLog "BaseUrl $RequestedBaseUrl is busy; using $resolved"
+            return $resolved
+        }
+    }
+    throw "no free local HTTP port found in 18081..18089"
+}
+
+function Ensure-Redis {
+    param(
+        [string]$Url,
+        [string]$ContainerName
+    )
+    $uri = [Uri]$Url
+    $port = Get-UrlPort -RawUrl $Url -DefaultPort 6379
+    if (Test-TcpPort -HostName $uri.Host -Port $port) {
+        Write-RunLog "Redis reachable at $($uri.Host):$port"
+        return
+    }
+
+    $existing = (& docker ps -a --filter "name=^/$ContainerName$" --format "{{.Names}}").Trim()
+    if ($existing -eq $ContainerName) {
+        Invoke-Checked "docker" @("rm", "-f", $ContainerName)
+    }
+    Invoke-Checked "docker" @("run", "-d", "--name", $ContainerName, "-p", "$port`:6379", "redis:7-alpine", "redis-server", "--appendonly", "yes")
+    Wait-TcpPort -HostName $uri.Host -Port $port -Attempts 40
+    Write-RunLog "Redis started at $($uri.Host):$port with container $ContainerName"
 }
 
 function Invoke-Json {
@@ -125,22 +246,38 @@ function Wait-SessionDetail {
 }
 
 function Stop-Server {
-    if ($null -ne $serverProcess -and -not $serverProcess.HasExited) {
-        Stop-Process -Id $serverProcess.Id -Force -ErrorAction SilentlyContinue
-        $serverProcess.WaitForExit(5000) | Out-Null
+    if ($null -eq $script:serverProcess) {
+        return
+    }
+    try {
+        $script:serverProcess.Refresh()
+        if (-not $script:serverProcess.HasExited) {
+            Write-RunLog "Stopping server process $($script:serverProcess.Id)"
+            Stop-Process -Id $script:serverProcess.Id -Force -ErrorAction SilentlyContinue
+            if (-not $script:serverProcess.WaitForExit(5000)) {
+                Write-RunLog "warning: server process $($script:serverProcess.Id) did not exit within 5s"
+            }
+            $script:serverProcess.Refresh()
+            if (-not $script:serverProcess.HasExited) {
+                Write-RunLog "warning: server process $($script:serverProcess.Id) is still running after stop attempt"
+            }
+        }
+    } catch {
+        Write-RunLog "warning: failed to stop server process $($script:serverProcess.Id): $($_.Exception.Message)"
     }
 }
 
 try {
+    Write-RunLog "real e2e started"
+    Write-RunLog "run log: $runLog"
     Assert-Env "INTERVIEW_LLM_API_KEY"
     Assert-Env "INTERVIEW_EMBEDDING_API_KEY"
 
+    $BaseUrl = Resolve-BaseUrl -RequestedBaseUrl $BaseUrl
     if ([string]::IsNullOrWhiteSpace($env:INTERVIEW_POSTGRES_DSN)) {
         $env:INTERVIEW_POSTGRES_DSN = "postgres://interview:interview@localhost:5432/interview?sslmode=disable"
     }
-    if ([string]::IsNullOrWhiteSpace($env:INTERVIEW_REDIS_URL)) {
-        $env:INTERVIEW_REDIS_URL = "redis://localhost:6379/0"
-    }
+    $env:INTERVIEW_REDIS_URL = $RedisUrl
 
     $env:INTERVIEW_LLM_MODE = "real"
     $env:INTERVIEW_EMBEDDING_MODE = "real"
@@ -153,8 +290,8 @@ try {
     }
 
     if (-not $SkipDocker) {
-        Invoke-Step "Start PostgreSQL and Redis" {
-            Invoke-Checked "docker" @("compose", "up", "-d", "postgres", "redis")
+        Invoke-Step "Start PostgreSQL" {
+            Invoke-Checked "docker" @("compose", "up", "-d", "postgres")
             for ($i = 0; $i -lt 40; $i++) {
                 & docker compose exec -T postgres pg_isready -U interview | Out-Null
                 if ($LASTEXITCODE -eq 0) { return }
@@ -162,17 +299,29 @@ try {
             }
             throw "postgres did not become ready"
         }
-    }
 
-    Invoke-Step "Apply all migrations 001-008" {
-        $upFiles = Get-ChildItem -Path "migrations" -Filter "*.up.sql" | Sort-Object Name
-        foreach ($file in $upFiles) {
-            Invoke-Checked "docker" @("compose", "exec", "-T", "postgres", "psql", "-U", "interview", "-d", "interview", "-v", "ON_ERROR_STOP=1", "-f", "/docker-entrypoint-initdb.d/$($file.Name)")
+        Invoke-Step "Ensure Redis" {
+            Ensure-Redis -Url $env:INTERVIEW_REDIS_URL -ContainerName $RedisContainerName
         }
     }
 
-    Invoke-Step "Reindex question bank with real embedding" {
-        Invoke-Checked "go" @("run", "./cmd/reindex", "-seed", "seeds/question_bank.json", "-mode", "real", "-base-url", $EmbeddingBaseUrl, "-model", $EmbeddingModel, "-dim", [string]$EmbeddingDimension, "-dsn", $env:INTERVIEW_POSTGRES_DSN)
+    if (-not $SkipMigrations) {
+        Invoke-Step "Apply all migrations" {
+            $upFiles = Get-ChildItem -Path "migrations" -Filter "*.up.sql" | Sort-Object Name
+            foreach ($file in $upFiles) {
+                Invoke-Checked "docker" @("compose", "exec", "-T", "postgres", "psql", "-U", "interview", "-d", "interview", "-v", "ON_ERROR_STOP=1", "-f", "/docker-entrypoint-initdb.d/$($file.Name)")
+            }
+        }
+    } else {
+        Write-RunLog "Skip migrations"
+    }
+
+    if (-not $SkipReindex) {
+        Invoke-Step "Reindex question bank with real embedding" {
+            Invoke-Checked "go" @("run", "./cmd/reindex", "-seed", "seeds/question_bank.json", "-mode", "real", "-base-url", $EmbeddingBaseUrl, "-model", $EmbeddingModel, "-dim", [string]$EmbeddingDimension, "-dsn", $env:INTERVIEW_POSTGRES_DSN)
+        }
+    } else {
+        Write-RunLog "Skip reindex"
     }
 
     Invoke-Step "Verify RAG database has embedded active questions" {
@@ -186,26 +335,30 @@ try {
         }
     }
 
-    Invoke-Step "Run CLI real E2E demo" {
-        Invoke-Checked "go" @("run", "./cmd/demo", "-config", $ConfigPath, "-script", $ScriptPath, "-out", $outDir)
-        $runPath = Join-Path $outDir "run.json"
-        $reportPath = Join-Path $outDir "report.md"
-        if (-not (Test-Path $runPath)) { throw "run.json not created" }
-        if (-not (Test-Path $reportPath)) { throw "report.md not created" }
-        $run = Get-Content $runPath -Raw | ConvertFrom-Json
-        if ($run.config.retriever -ne "pgvector") { throw "run.json.config.retriever = $($run.config.retriever), want pgvector" }
-        if ($null -eq $run.session.report) { throw "run.json session.report missing" }
-        if ($null -eq $run.session.report.overall_score) { throw "run.json session.report.overall_score missing" }
-        if ($null -eq $run.session.report.skill_breakdown) { throw "run.json session.report.skill_breakdown missing" }
-        if ($null -eq $run.session.report.transcript_analysis) { throw "run.json session.report.transcript_analysis missing" }
-        if ($null -eq $run.session.report.drill_plan) { throw "run.json session.report.drill_plan missing" }
-        if ($run.llm_calls.Count -le 0) { throw "run.json.llm_calls is empty" }
-        $nodeNames = @($run.nodes | ForEach-Object { $_.node })
-        foreach ($requiredNode in @("parse_jd", "parse_resume", "gap_analyze", "retrieve_rag", "pick_next", "report")) {
-            if ($nodeNames -notcontains $requiredNode) {
-                throw "run.json.nodes missing $requiredNode"
+    if (-not $SkipCli) {
+        Invoke-Step "Run CLI real E2E demo" {
+            Invoke-Checked "go" @("run", "./cmd/demo", "-config", $ConfigPath, "-script", $ScriptPath, "-out", $outDir)
+            $runPath = Join-Path $outDir "run.json"
+            $reportPath = Join-Path $outDir "report.md"
+            if (-not (Test-Path $runPath)) { throw "run.json not created" }
+            if (-not (Test-Path $reportPath)) { throw "report.md not created" }
+            $run = Get-Content $runPath -Raw | ConvertFrom-Json
+            if ($run.config.retriever -ne "pgvector") { throw "run.json.config.retriever = $($run.config.retriever), want pgvector" }
+            if ($null -eq $run.session.report) { throw "run.json session.report missing" }
+            if ($null -eq $run.session.report.overall_score) { throw "run.json session.report.overall_score missing" }
+            if ($null -eq $run.session.report.skill_breakdown) { throw "run.json session.report.skill_breakdown missing" }
+            if ($null -eq $run.session.report.transcript_analysis) { throw "run.json session.report.transcript_analysis missing" }
+            if ($null -eq $run.session.report.drill_plan) { throw "run.json session.report.drill_plan missing" }
+            if ($run.llm_calls.Count -le 0) { throw "run.json.llm_calls is empty" }
+            $nodeNames = @($run.nodes | ForEach-Object { $_.node })
+            foreach ($requiredNode in @("parse_jd", "parse_resume", "gap_analyze", "retrieve_rag", "pick_next", "report")) {
+                if ($nodeNames -notcontains $requiredNode) {
+                    throw "run.json.nodes missing $requiredNode"
+                }
             }
         }
+    } else {
+        Write-RunLog "Skip CLI real E2E demo"
     }
 
     if (-not $SkipWeb) {
@@ -215,13 +368,18 @@ try {
         }
 
         Invoke-Step "Start real server" {
-            $serverProcess = Start-Process -FilePath $serverBin `
+            $script:serverProcess = Start-Process -FilePath $serverBin `
                 -ArgumentList @("-config", $ConfigPath) `
                 -RedirectStandardOutput $serverLog `
                 -RedirectStandardError $serverErr `
                 -WindowStyle Hidden `
                 -PassThru
             for ($i = 0; $i -lt 60; $i++) {
+                if ($script:serverProcess.HasExited) {
+                    Write-LogTail -Path $serverLog
+                    Write-LogTail -Path $serverErr
+                    throw "server exited before health check with code $($script:serverProcess.ExitCode)"
+                }
                 try {
                     Invoke-RestMethod -Method Get -Uri "$BaseUrl/healthz" | Out-Null
                     return
@@ -229,8 +387,8 @@ try {
                     Start-Sleep -Seconds 1
                 }
             }
-            if (Test-Path $serverLog) { Get-Content $serverLog }
-            if (Test-Path $serverErr) { Get-Content $serverErr }
+            Write-LogTail -Path $serverLog
+            Write-LogTail -Path $serverErr
             throw "server did not become healthy"
         }
 
@@ -321,7 +479,7 @@ try {
                     }
                 }
                 if (-not $seenProgress) {
-                    Write-Host "SSE progress event not observed before report; validating persisted session instead"
+                    Write-RunLog "SSE progress event not observed before report; validating persisted session instead"
                 }
             } finally {
                 if ($null -ne $reader) { $reader.Dispose() }
@@ -329,7 +487,8 @@ try {
                 if ($null -ne $client) { $client.Dispose() }
             }
 
-            $detail = Wait-SessionDetail -Url "$BaseUrl/api/interview/sessions/$sessionID?user_id=real-e2e"
+            $detailURL = "{0}/api/interview/sessions/{1}?user_id=real-e2e" -f $BaseUrl, $sessionID
+            $detail = Wait-SessionDetail -Url $detailURL
             if ($detail.status -ne "completed") { throw "session status = $($detail.status), want completed" }
             if ($null -eq $detail.report) { throw "session detail missing report" }
 
@@ -342,7 +501,13 @@ try {
         }
     }
 
-    Write-Host "real e2e ok: artifacts in $outDir"
+    Write-RunLog "real e2e ok: artifacts in $outDir"
+} catch {
+    Write-RunLog "real e2e failed: $($_.Exception.Message)"
+    Write-RunLog "artifacts dir: $outDir"
+    Write-LogTail -Path $serverLog
+    Write-LogTail -Path $serverErr
+    throw
 } finally {
     Stop-Server
 }

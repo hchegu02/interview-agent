@@ -240,7 +240,7 @@ Web 页面支持输入 JD、粘贴简历、上传简历文档、调用 Agent Ski
 
 ```powershell
 $env:INTERVIEW_POSTGRES_DSN="postgres://interview:interview@localhost:5432/interview?sslmode=disable"
-$env:INTERVIEW_REDIS_URL="redis://localhost:6379/0"
+$env:INTERVIEW_REDIS_URL="redis://localhost:6479/0"
 $env:INTERVIEW_LLM_API_KEY="sk-..."
 $env:INTERVIEW_LLM_BASE_URL="https://..."
 $env:INTERVIEW_EMBEDDING_API_KEY="sk-..."
@@ -254,6 +254,7 @@ $env:INTERVIEW_EMBEDDING_BASE_URL="https://..."
 ```
 
 脚本路径：`scripts/real_e2e.ps1`。
+脚本默认用 `6479` 启动临时 Redis 容器，避免 Windows 本机常见的 `6379` 保留端口冲突；如果 `BASE_URL` 未显式设置且 `18080` 已被占用，会自动选择 `18081..18089` 中的空闲端口。调试 Web/SSE 段时可使用 `-SkipMigrations -SkipReindex -SkipCli` 复用已有数据库和 embedding，避免重复执行全量真实 LLM 演练。
 
 Makefile 入口：
 
