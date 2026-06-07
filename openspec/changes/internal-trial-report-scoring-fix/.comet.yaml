@@ -1,0 +1,16 @@
+workflow: full
+phase: build
+build_mode: subagent-driven-development
+isolation: null
+verify_mode: null
+base_ref: 5279ee1668c7d5990712d0c9fe3c69d6eab668fe
+design_doc: docs/superpowers/specs/2026-06-07-internal-trial-report-scoring-fix-design.md
+plan: docs/superpowers/plans/2026-06-07-internal-trial-report-scoring-fix.md
+handoff_context: openspec/changes/internal-trial-report-scoring-fix/.comet/handoff/design-context.json
+handoff_hash: a913be39e145225d03783095efefd957e89cea6e88fe02d21c340e09a9f871eb
+verify_result: pending
+verification_report: null
+branch_status: pending
+created_at: 2026-06-07
+verified_at: null
+archived: false

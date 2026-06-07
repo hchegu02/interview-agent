@@ -1,0 +1,15 @@
+{
+  "change": "internal-trial-report-scoring-fix",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "5c4cedf365c57c30d2ccbc8adee4b836983e6fa43e19ab5f446da5fb5662a963",
+  "files": [
+    { "path": "openspec/changes/internal-trial-report-scoring-fix/proposal.md", "sha256": "977269286007b96111723b948e5b40e7838378b52e24b2e6fd734485910f528a" },
+    { "path": "openspec/changes/internal-trial-report-scoring-fix/design.md", "sha256": "37dcbc77d48833c43cedae32474f1a3d20581da733095fb7376228deaa4ee728" },
+    { "path": "openspec/changes/internal-trial-report-scoring-fix/tasks.md", "sha256": "f77788bf5d252f845f4d31a673725ff8075acc7eb1088f03c80214817582738e" },
+    { "path": "openspec/changes/internal-trial-report-scoring-fix/specs/interview-session-runtime/spec.md", "sha256": "fd5a403cec062d661659c6cdc5f83319f3f97062f61c6d3a2b21de16bc8d9689" },
+    { "path": "openspec/changes/internal-trial-report-scoring-fix/specs/quality-gates/spec.md", "sha256": "eb23aea6c7a0fc4c52f11ccd0033e02b939dd900dbabf8e121ec731aceed02cd" }
+  ]
+}
