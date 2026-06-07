@@ -284,6 +284,50 @@ func TestEvaluateCollectsPipelineStageMetrics(t *testing.T) {
 	}
 }
 
+func TestEvaluateAddsPGVectorStageAliases(t *testing.T) {
+	ctx := context.Background()
+	embedder := embedding.NewMockEmbedder(8)
+	r := fakePipelineSearcher{
+		result: retriever.PipelineResult{
+			Results:    []retriever.Result{{ID: "fusion-1"}},
+			RRFResults: []retriever.Result{{ID: "fusion-1"}},
+			Trace: retriever.RetrievalTrace{
+				Stages: []retriever.StageTrace{
+					{
+						Stage: retriever.StageRule,
+						Items: []retriever.ResultTrace{{ID: "tag-1", Rank: 1}},
+					},
+					{
+						Stage: retriever.StageBM25,
+						Items: []retriever.ResultTrace{{ID: "text-1", Rank: 1}},
+					},
+					{
+						Stage: retriever.StageRRF,
+						Items: []retriever.ResultTrace{{ID: "fusion-1", Rank: 1}},
+					},
+				},
+			},
+		},
+	}
+
+	got := evaluate(ctx, []evalCase{{
+		ID:          "case-1",
+		Query:       "Redis 持久化",
+		RelevantIDs: []string{"fusion-1"},
+	}}, 5, "pgvector", embedder, r)
+
+	candidates := got.Cases[0].StageCandidates
+	if candidates["tag"][0] != "tag-1" || candidates["text"][0] != "text-1" || candidates["fusion"][0] != "fusion-1" {
+		t.Fatalf("pgvector aliases = %+v, want tag/text/fusion aliases", candidates)
+	}
+	if got.Stages["tag"].RecallAt5 != got.Stages[retriever.StageRule].RecallAt5 {
+		t.Fatalf("tag stage alias = %+v, rule = %+v", got.Stages["tag"], got.Stages[retriever.StageRule])
+	}
+	if got.StageDeltas["fusion_vs_vector_recall_at_5"] != got.StageDeltas["rrf_vs_vector_recall_at_5"] {
+		t.Fatalf("stage deltas = %+v, want fusion alias for rrf delta", got.StageDeltas)
+	}
+}
+
 func TestEvaluateDoesNotDoubleCountExplicitRRFStage(t *testing.T) {
 	ctx := context.Background()
 	embedder := embedding.NewMockEmbedder(8)

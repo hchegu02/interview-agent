@@ -403,7 +403,7 @@ func evaluate(ctx context.Context, cases []evalCase, k int, source string, embed
 		if searcher, ok := r.(pipelineSearcher); ok {
 			pipelineResult, searchErr := searcher.Search(ctx, query)
 			collectPipelineStageResults(stageResults, stageSeen, caseKey, res, pipelineResult, k, searchErr == nil)
-			res.StageCandidates = stageCandidatesFromPipelineResult(pipelineResult)
+			res.StageCandidates = stageCandidatesFromPipelineResult(pipelineResult, source)
 			retrieved = pipelineResult.Results
 			retrieveErr = searchErr
 		} else {
@@ -426,12 +426,14 @@ func evaluate(ctx context.Context, cases []evalCase, k int, source string, embed
 		for stage, stageCases := range stageResults {
 			out.Stages[stage] = aggregateStageMetric(stageCases)
 		}
+		addPGVectorStageMetricAliases(out.Stages, source)
 		out.StageDeltas = stageDeltas(out)
+		addPGVectorStageDeltaAliases(out.StageDeltas, source)
 	}
 	return out
 }
 
-func stageCandidatesFromPipelineResult(result retriever.PipelineResult) map[string][]string {
+func stageCandidatesFromPipelineResult(result retriever.PipelineResult, source string) map[string][]string {
 	out := map[string][]string{}
 	for _, stage := range result.Trace.Stages {
 		if stage.Stage == "" || len(stage.Items) == 0 {
@@ -450,10 +452,62 @@ func stageCandidatesFromPipelineResult(result retriever.PipelineResult) map[stri
 		}
 		out[retriever.StageRRF] = resultIDs(rrfResults)
 	}
+	addPGVectorStageCandidateAliases(out, source)
 	if len(out) == 0 {
 		return nil
 	}
 	return out
+}
+
+func addPGVectorStageCandidateAliases(out map[string][]string, source string) {
+	if source != "pgvector" {
+		return
+	}
+	copyStageCandidateAlias(out, retriever.StageRule, "tag")
+	copyStageCandidateAlias(out, retriever.StageBM25, "text")
+	copyStageCandidateAlias(out, retriever.StageRRF, "fusion")
+}
+
+func copyStageCandidateAlias(out map[string][]string, from, to string) {
+	if len(out[to]) > 0 || len(out[from]) == 0 {
+		return
+	}
+	out[to] = append([]string(nil), out[from]...)
+}
+
+func addPGVectorStageMetricAliases(out map[string]groupMetric, source string) {
+	if source != "pgvector" {
+		return
+	}
+	copyStageMetricAlias(out, retriever.StageRule, "tag")
+	copyStageMetricAlias(out, retriever.StageBM25, "text")
+	copyStageMetricAlias(out, retriever.StageRRF, "fusion")
+}
+
+func copyStageMetricAlias(out map[string]groupMetric, from, to string) {
+	if _, ok := out[to]; ok {
+		return
+	}
+	if metric, ok := out[from]; ok {
+		out[to] = metric
+	}
+}
+
+func addPGVectorStageDeltaAliases(out map[string]float64, source string) {
+	if source != "pgvector" {
+		return
+	}
+	copyStageDeltaAlias(out, "rrf_vs_vector_recall_at_5", "fusion_vs_vector_recall_at_5")
+	copyStageDeltaAlias(out, "rrf_vs_vector_mrr_at_k", "fusion_vs_vector_mrr_at_k")
+}
+
+func copyStageDeltaAlias(out map[string]float64, from, to string) {
+	if _, ok := out[to]; ok {
+		return
+	}
+	if value, ok := out[from]; ok {
+		out[to] = value
+	}
 }
 
 func collectPipelineStageResults(out map[string][]caseResult, seen map[string]map[string]bool, caseKey string, base caseResult, result retriever.PipelineResult, k int, rrfExecuted bool) {

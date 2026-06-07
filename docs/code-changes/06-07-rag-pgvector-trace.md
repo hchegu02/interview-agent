@@ -18,8 +18,10 @@
 - `cmd/rag-eval/main.go`
   - `caseResult` 新增 `stage_candidates`。
   - pipeline search 结果会把每个阶段候选 ID 写入 `summary.json`。
+  - PGVector 来源额外写入 `tag`、`text`、`fusion` 诊断别名，保留 `rule`、`bm25`、`rrf` 旧键。
 - `cmd/rag-eval/main_test.go`
   - 覆盖 per-case stage candidates 输出。
+  - 覆盖 PGVector stage 诊断别名输出。
 
 ## 3. 函数级说明
 
@@ -105,13 +107,57 @@
 
 作用：从 pipeline trace 提取每个阶段候选 ID，写入 per-case 评估结果。
 
-输入：`retriever.PipelineResult`。
+输入：`retriever.PipelineResult`、检索来源 `source`。
 
 输出：`map[string][]string`。
 
 副作用：无。
 
 错误处理：空 trace 返回 nil；当 trace 没有显式 `rrf` 阶段时，用 `RRFResults` 或最终 `Results` 合成 fusion topK。
+
+行为变化：当 `source=pgvector` 时，会把 `rule` 复制为 `tag`、`bm25` 复制为 `text`、`rrf` 复制为 `fusion`。旧键保留，避免破坏已有 stage gate 和报告消费方。
+
+### `addPGVectorStageCandidateAliases`
+
+位置：`cmd/rag-eval/main.go`
+
+作用：给 per-case `stage_candidates` 增加 PGVector 业务语义别名。
+
+输入：候选 map、检索来源。
+
+输出：无，原地补充 map。
+
+副作用：仅修改内存中的评估结果。
+
+错误处理：非 PGVector 来源直接返回；目标别名已存在或源阶段为空时不覆盖。
+
+### `addPGVectorStageMetricAliases`
+
+位置：`cmd/rag-eval/main.go`
+
+作用：给 summary 的 `stages` 指标增加 `tag`、`text`、`fusion` 别名。
+
+输入：stage 指标 map、检索来源。
+
+输出：无，原地补充 map。
+
+副作用：仅修改内存中的评估结果。
+
+错误处理：非 PGVector 来源直接返回；目标别名已存在时不覆盖。
+
+### `addPGVectorStageDeltaAliases`
+
+位置：`cmd/rag-eval/main.go`
+
+作用：给 `stage_deltas` 增加 `fusion_vs_vector_*` 别名。
+
+输入：delta map、检索来源。
+
+输出：无，原地补充 map。
+
+副作用：仅修改内存中的评估结果。
+
+错误处理：非 PGVector 来源直接返回；目标别名已存在时不覆盖。
 
 ## 4. 调用链
 
@@ -143,11 +189,14 @@ PG SQL 原本返回候选基础字段和融合特征。本次额外返回：
   "vector": ["..."],
   "rule": ["..."],
   "bm25": ["..."],
-  "rrf": ["..."]
+  "rrf": ["..."],
+  "tag": ["..."],
+  "text": ["..."],
+  "fusion": ["..."]
 }
 ```
 
-其中 `rule` 当前对应 tag 候选证据，`bm25` 对应 PG 文本 similarity 候选证据，`rrf` 对应 Go 端 fusion topK。
+其中 `tag/text/fusion` 是 PGVector 业务语义别名，分别对应旧键 `rule/bm25/rrf`。旧键继续保留，用于兼容已有 stage 阈值和历史报告。
 
 ## 6. 依赖与副作用
 
@@ -170,9 +219,17 @@ go test ./cmd/rag-eval -count=1
 
 结果：全部通过。
 
+补充验证：
+
+```powershell
+go test ./cmd/rag-eval -run TestEvaluateAddsPGVectorStageAliases -count=1
+```
+
+结果：通过。
+
 ## 8. 风险
 
 - 兼容性：`Retriever` 接口未变；`Search` 是额外方法，`rag-eval` 通过可选接口检测使用。
 - 性能：SQL 多返回几个布尔/分数字段，正常检索成本变化很小；trace 构建只在 Go 内存中完成。
-- 指标语义：PGVector 的 `rrf` 阶段实际是现有 Go 端 fusion topK，不是 `RetrievalPipeline` 的真正 RRF merge；沿用该 stage 名是为了复用现有 eval stage gate。
+- 指标语义：PGVector 的 `rrf` 阶段实际是现有 Go 端 fusion topK，不是 `RetrievalPipeline` 的真正 RRF merge；本次新增 `fusion` 别名改善可读性，但保留 `rrf` 兼容旧门禁。
 - 已知限制：当前 trace 记录候选 ID 和分数来源，不记录完整 SQL plan；查询计划仍需配合 `cmd/questionbank-explain` 查看。
