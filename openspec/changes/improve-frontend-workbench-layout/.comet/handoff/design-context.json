@@ -1,0 +1,14 @@
+{
+  "change": "improve-frontend-workbench-layout",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "bab0e681166a618d7aff31b9cb6c66df586d023f0821dabd673520441ede1c17",
+  "files": [
+    { "path": "openspec/changes/improve-frontend-workbench-layout/proposal.md", "sha256": "90f9b03baf4272656019f42f4f4b5cb74d40cd83ca9eac2bfb19474c78078d99" },
+    { "path": "openspec/changes/improve-frontend-workbench-layout/design.md", "sha256": "a038c63042a94f58321b8b73e477e2477b6fd08637ad1ea3755fbc2f9654ecbe" },
+    { "path": "openspec/changes/improve-frontend-workbench-layout/tasks.md", "sha256": "c11dbd8bfc7740fa9471b277e668c56631c0cdaeec806247f0b5c9388db285da" },
+    { "path": "openspec/changes/improve-frontend-workbench-layout/specs/candidate-workbench-layout/spec.md", "sha256": "290cbb2285486c0147340236273e6d940b62064307b90ecf11745f37d9c87037" }
+  ]
+}

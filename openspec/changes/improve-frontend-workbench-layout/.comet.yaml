@@ -1,0 +1,16 @@
+workflow: full
+phase: build
+build_mode: subagent-driven-development
+isolation: null
+verify_mode: null
+base_ref: 273ec397532be39785d37375cdf5c8226c52c4ba
+design_doc: docs/superpowers/specs/2026-06-07-frontend-workbench-layout-design.md
+plan: docs/superpowers/plans/2026-06-07-frontend-workbench-layout.md
+verify_result: pending
+verification_report: null
+branch_status: pending
+created_at: 2026-06-07
+verified_at: null
+archived: false
+handoff_context: openspec/changes/improve-frontend-workbench-layout/.comet/handoff/design-context.json
+handoff_hash: bab0e681166a618d7aff31b9cb6c66df586d023f0821dabd673520441ede1c17
