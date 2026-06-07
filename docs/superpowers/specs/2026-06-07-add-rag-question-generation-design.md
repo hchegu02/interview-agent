@@ -2,6 +2,8 @@
 comet_change: add-rag-question-generation
 role: technical-design
 canonical_spec: openspec
+archived-with: 2026-06-07-add-rag-question-generation
+status: final
 ---
 
 # Add RAG Question Generation Technical Design
