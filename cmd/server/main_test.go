@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"interview-agent/internal/agent"
 	"interview-agent/internal/config"
@@ -22,6 +23,38 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestPostgresPoolConfigAppliesConfiguredPoolSettings(t *testing.T) {
+	cfg, err := config.Load("")
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	cfg.PostgresDSN = "postgres://user:pass@localhost:5432/interview_agent?sslmode=disable"
+	cfg.Postgres.MaxConns = 17
+	cfg.Postgres.MinConns = 3
+	cfg.Postgres.MaxConnLifetime = 11 * time.Minute
+	cfg.Postgres.HealthCheckPeriod = 13 * time.Second
+
+	poolCfg, err := postgresPoolConfig(cfg)
+	if err != nil {
+		t.Fatalf("postgres pool config: %v", err)
+	}
+	if poolCfg.ConnConfig.Config.Host != "localhost" {
+		t.Fatalf("host = %q, want localhost", poolCfg.ConnConfig.Config.Host)
+	}
+	if poolCfg.MaxConns != 17 {
+		t.Fatalf("max conns = %d, want 17", poolCfg.MaxConns)
+	}
+	if poolCfg.MinConns != 3 {
+		t.Fatalf("min conns = %d, want 3", poolCfg.MinConns)
+	}
+	if poolCfg.MaxConnLifetime != 11*time.Minute {
+		t.Fatalf("max conn lifetime = %v, want 11m", poolCfg.MaxConnLifetime)
+	}
+	if poolCfg.HealthCheckPeriod != 13*time.Second {
+		t.Fatalf("health check period = %v, want 13s", poolCfg.HealthCheckPeriod)
+	}
+}
 
 func TestBuildInterviewRunner_MockModeStartsInterview(t *testing.T) {
 	cfg, err := config.Load("")
