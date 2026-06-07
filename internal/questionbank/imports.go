@@ -121,7 +121,8 @@ func (s *ImportService) processDocument(ctx context.Context, job ImportJob, file
 			return job, err
 		}
 	}
-	return job, nil
+	job.Status = ImportStatusReady
+	return s.imports.UpdateJob(ctx, job)
 }
 
 func sourceProvenanceForChunk(file ImportFile, raw []byte, chunk ImportChunk) map[string]string {

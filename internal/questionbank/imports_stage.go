@@ -2,6 +2,7 @@ package questionbank
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -25,6 +26,9 @@ func (s *ImportService) stageItemsWithOriginalsAndProvenance(ctx context.Context
 		}
 		parsedItem := item
 		item = normalizeImportedItem(item)
+		if job.SourceType == ImportSourceDocument {
+			item.ID = documentGeneratedQuestionID(job.ID, chunkID, i, item)
+		}
 		fieldProvenance := importFieldProvenance(parsedItem, item, original)
 		var sourceProvenance map[string]string
 		if i < len(provenances) {
@@ -66,7 +70,11 @@ func (s *ImportService) stageItemsWithOriginalsAndProvenance(ctx context.Context
 		return s.failJob(ctx, job, err)
 	}
 	job.TotalItems += len(staged)
-	job.Status = ImportStatusReady
+	if job.SourceType == ImportSourceDocument && chunkID != "" {
+		job.Status = ImportStatusGenerating
+	} else {
+		job.Status = ImportStatusReady
+	}
 	return s.imports.UpdateJob(ctx, job)
 }
 
@@ -75,6 +83,10 @@ func defaultAgentReviewStatus(sourceType string) string {
 		return ImportAgentReviewNeedsHumanReview
 	}
 	return ""
+}
+
+func documentGeneratedQuestionID(jobID, chunkID string, index int, item Item) string {
+	return importGeneratedID("docq", fmt.Sprintf("%s:%s:%03d:%s:%s", jobID, chunkID, index, item.ID, item.Content))
 }
 
 func (s *ImportService) failJob(ctx context.Context, job ImportJob, err error) (ImportJob, error) {

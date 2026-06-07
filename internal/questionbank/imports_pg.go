@@ -191,7 +191,7 @@ ON CONFLICT (id) DO UPDATE SET
     errors=EXCLUDED.errors,
     raw_json=EXCLUDED.raw_json,
     updated_at=now()
-`, item.ID, item.JobID, item.ChunkID, item.QuestionID, item.Status, normalizedImportReviewStatus(item.ReviewStatus), string(itemJSON), string(fieldProvenanceJSON), item.Errors, string(rawJSON), item.CreatedAt, item.UpdatedAt)
+`, item.ID, item.JobID, item.ChunkID, item.QuestionID, item.Status, normalizedImportReviewStatus(item.ReviewStatus), string(itemJSON), string(fieldProvenanceJSON), pgImportItemErrorsForDB(item.Errors), string(rawJSON), item.CreatedAt, item.UpdatedAt)
 	}
 	br := s.Pool.SendBatch(ctx, batch)
 	defer br.Close()
@@ -249,7 +249,7 @@ func (s *PGImportStore) UpdateItems(ctx context.Context, items []ImportItem) err
 UPDATE question_bank_import_items
 SET status=$2, review_status=$3, item_json=$4::jsonb, field_provenance=$5::jsonb, errors=$6, updated_at=now()
 WHERE id=$1
-`, item.ID, item.Status, normalizedImportReviewStatus(item.ReviewStatus), string(itemJSON), string(fieldProvenanceJSON), item.Errors)
+`, item.ID, item.Status, normalizedImportReviewStatus(item.ReviewStatus), string(itemJSON), string(fieldProvenanceJSON), pgImportItemErrorsForDB(item.Errors))
 	}
 	br := s.Pool.SendBatch(ctx, batch)
 	defer br.Close()
@@ -267,6 +267,13 @@ func marshalOriginalItemJSON(item *Item) []byte {
 	}
 	raw, _ := json.Marshal(item)
 	return raw
+}
+
+func pgImportItemErrorsForDB(errors []string) []string {
+	if errors == nil {
+		return []string{}
+	}
+	return errors
 }
 
 func marshalStringMapJSON(in map[string]string) []byte {

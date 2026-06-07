@@ -325,6 +325,8 @@ func TestReviewAcceptsDocumentGeneratedItemForCommit(t *testing.T) {
 	if staged[0].AgentReviewStatus != ImportAgentReviewNeedsHumanReview {
 		t.Fatalf("AgentReviewStatus = %q, want needs_human_review", staged[0].AgentReviewStatus)
 	}
+	questionID := staged[0].Item.ID
+	markImportJobReady(t, ctx, imports, job.ID)
 
 	if _, _, err := service.ReviewItems(ctx, job.ID, []string{staged[0].ID}, ImportReviewStatusAccepted); err != nil {
 		t.Fatalf("ReviewItems accept: %v", err)
@@ -344,7 +346,7 @@ func TestReviewAcceptsDocumentGeneratedItemForCommit(t *testing.T) {
 	if committed.ImportedItems != 1 {
 		t.Fatalf("ImportedItems = %d, want 1", committed.ImportedItems)
 	}
-	if _, err := store.Get(ctx, "doc-accept-001"); err != nil {
+	if _, err := store.Get(ctx, questionID); err != nil {
 		t.Fatalf("accepted document item should be written to question bank: %v", err)
 	}
 }
@@ -369,6 +371,8 @@ func TestReviewRejectsDocumentGeneratedItemForCommit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListItems: %v", err)
 	}
+	questionID := staged[0].Item.ID
+	markImportJobReady(t, ctx, imports, job.ID)
 
 	if _, _, err := service.ReviewItems(ctx, job.ID, []string{staged[0].ID}, ImportReviewStatusRejected); err != nil {
 		t.Fatalf("ReviewItems reject: %v", err)
@@ -388,8 +392,103 @@ func TestReviewRejectsDocumentGeneratedItemForCommit(t *testing.T) {
 	if committed.ImportedItems != 0 {
 		t.Fatalf("ImportedItems = %d, want 0", committed.ImportedItems)
 	}
-	if _, err := store.Get(ctx, "doc-reject-001"); err == nil {
+	if _, err := store.Get(ctx, questionID); err == nil {
 		t.Fatal("rejected document item should not be written to question bank")
+	}
+}
+
+func TestDocumentImportStagesUniqueGeneratedIDsAcrossChunks(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore(nil)
+	imports := NewMemoryImportStore()
+	service := NewImportService(ImportServiceDeps{
+		Imports: imports,
+		Writer:  store,
+	})
+	job, err := imports.CreateJob(ctx, newImportJob(ImportSourceDocument, "source.md"))
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	job, err = service.stageItems(ctx, job, "chunk-1", []Item{completeImportTestItem("generated-go-001")})
+	if err != nil {
+		t.Fatalf("stageItems chunk-1: %v", err)
+	}
+	job, err = service.stageItems(ctx, job, "chunk-2", []Item{completeImportTestItem("generated-go-001")})
+	if err != nil {
+		t.Fatalf("stageItems chunk-2: %v", err)
+	}
+
+	staged, err := imports.ListItems(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	if len(staged) != 2 {
+		t.Fatalf("staged items = %d, want 2", len(staged))
+	}
+	seenImportIDs := map[string]struct{}{}
+	seenQuestionIDs := map[string]struct{}{}
+	for _, item := range staged {
+		if _, ok := seenImportIDs[item.ID]; ok {
+			t.Fatalf("duplicate import item id %q", item.ID)
+		}
+		if _, ok := seenQuestionIDs[item.Item.ID]; ok {
+			t.Fatalf("duplicate generated question id %q", item.Item.ID)
+		}
+		seenImportIDs[item.ID] = struct{}{}
+		seenQuestionIDs[item.Item.ID] = struct{}{}
+	}
+	markImportJobReady(t, ctx, imports, job.ID)
+
+	if _, _, err := service.ReviewAllValidItems(ctx, job.ID, ImportReviewStatusAccepted, true); err != nil {
+		t.Fatalf("ReviewAllValidItems: %v", err)
+	}
+	committed, err := service.Commit(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if committed.ImportedItems != 2 {
+		t.Fatalf("ImportedItems = %d, want 2", committed.ImportedItems)
+	}
+	for id := range seenQuestionIDs {
+		if _, err := store.Get(ctx, id); err != nil {
+			t.Fatalf("committed generated item %q missing from question bank: %v", id, err)
+		}
+	}
+}
+
+func TestDocumentChunkStagingDoesNotMarkJobReadyBeforeProcessCompletes(t *testing.T) {
+	ctx := context.Background()
+	imports := NewMemoryImportStore()
+	service := NewImportService(ImportServiceDeps{
+		Imports: imports,
+		Writer:  NewMemoryStore(nil),
+	})
+	job, err := imports.CreateJob(ctx, newImportJob(ImportSourceDocument, "source.md"))
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	if _, err := service.stageItems(ctx, job, "chunk-1", []Item{completeImportTestItem("generated-go-001")}); err != nil {
+		t.Fatalf("stageItems: %v", err)
+	}
+	got, err := imports.GetJob(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if got.Status == ImportStatusReady {
+		t.Fatal("document chunk staging must not expose job as ready before all chunks complete")
+	}
+}
+
+func markImportJobReady(t *testing.T, ctx context.Context, imports ImportStore, jobID string) {
+	t.Helper()
+	job, err := imports.GetJob(ctx, jobID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	job.Status = ImportStatusReady
+	if _, err := imports.UpdateJob(ctx, job); err != nil {
+		t.Fatalf("UpdateJob ready: %v", err)
 	}
 }
 
@@ -676,6 +775,16 @@ func TestPGImportStoreJSONMetadataEncodingUsesObjects(t *testing.T) {
 	}
 	if got := string(marshalStringMapJSON(nil)); got != "{}" {
 		t.Fatalf("nil field provenance json = %s, want {}", got)
+	}
+}
+
+func TestPGImportItemErrorsForDBUsesEmptyArray(t *testing.T) {
+	got := pgImportItemErrorsForDB(nil)
+	if got == nil {
+		t.Fatal("nil import errors should be stored as empty array, not SQL NULL")
+	}
+	if len(got) != 0 {
+		t.Fatalf("errors = %+v, want empty", got)
 	}
 }
 

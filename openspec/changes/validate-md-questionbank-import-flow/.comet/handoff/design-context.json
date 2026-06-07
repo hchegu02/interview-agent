@@ -1,0 +1,14 @@
+{
+  "change": "validate-md-questionbank-import-flow",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "b8feb7dd23499a17b663c9fadd125ac728a66ee5f36b8052f78314966cde2ada",
+  "files": [
+    { "path": "openspec/changes/validate-md-questionbank-import-flow/proposal.md", "sha256": "73a1182a58daed92ce2645b82c6f212f63f861b0650a547c89df643cfa56745a" },
+    { "path": "openspec/changes/validate-md-questionbank-import-flow/design.md", "sha256": "b40f64708ce2895c5e51be596f28c888aff18fcce7f4885fb26a9b2c53f8f471" },
+    { "path": "openspec/changes/validate-md-questionbank-import-flow/tasks.md", "sha256": "dfad70b6311ab09469a09b96461b3c3665d948d3e587542b7aeda1e14b6c72a0" },
+    { "path": "openspec/changes/validate-md-questionbank-import-flow/specs/question-bank-import-enrichment/spec.md", "sha256": "6a0e916f7c24144156f3da75486e6fdcc9186ec9ceb6bf228bfcb82bc829d082" }
+  ]
+}
