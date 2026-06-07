@@ -2,6 +2,7 @@
 change: improve-frontend-workbench-layout
 design-doc: docs/superpowers/specs/2026-06-07-frontend-workbench-layout-design.md
 base-ref: 273ec397532be39785d37375cdf5c8226c52c4ba
+archived-with: 2026-06-07-improve-frontend-workbench-layout
 ---
 
 # Frontend Workbench Layout Implementation Plan
@@ -14,6 +15,7 @@ base-ref: 273ec397532be39785d37375cdf5c8226c52c4ba
 
 **Tech Stack:** React 19, TypeScript, Vite, Vitest, SSR-style `renderToStaticMarkup` tests, plain CSS.
 
+archived-with: 2026-06-07-improve-frontend-workbench-layout
 ---
 
 ## File Map

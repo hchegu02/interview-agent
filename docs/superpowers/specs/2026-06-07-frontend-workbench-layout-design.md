@@ -2,6 +2,8 @@
 comet_change: improve-frontend-workbench-layout
 role: technical-design
 canonical_spec: openspec
+archived-with: 2026-06-07-improve-frontend-workbench-layout
+status: final
 ---
 
 # Frontend Workbench Layout Design
