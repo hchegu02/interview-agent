@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -105,7 +106,7 @@ tag_candidates AS MATERIALIZED (
     LIMIT $5
 ),
 text_candidates AS MATERIALIZED (
-    SELECT id
+    SELECT id, similarity(content, $11::text) AS text_score
     FROM question_bank
     WHERE $11::text <> ''
       AND status = 'active'
@@ -130,14 +131,45 @@ candidates AS (
 SELECT
     q.id, q.content, q.tags, q.difficulty, q.skill_category, q.expected_points,
     COALESCE(vc.vec_dist, q.embedding <=> $1::vector) AS vec_dist,
-    (SELECT count(*)::int FROM unnest(q.tags || ARRAY[q.skill_category]) t WHERE t = ANY($2::text[])) AS tag_overlap
+    (SELECT count(*)::int FROM unnest(q.tags || ARRAY[q.skill_category]) t WHERE t = ANY($2::text[])) AS tag_overlap,
+    vc.id IS NOT NULL AS vector_hit,
+    tc.id IS NOT NULL AS tag_hit,
+    txt.id IS NOT NULL AS text_hit,
+    COALESCE(txt.text_score, 0) AS text_score
 FROM candidates c
 JOIN question_bank q USING (id)
-LEFT JOIN vector_candidates vc USING (id);
+LEFT JOIN vector_candidates vc USING (id)
+LEFT JOIN tag_candidates tc USING (id)
+LEFT JOIN text_candidates txt USING (id);
 `
 
 // Retrieve 执行完整两阶段检索。
 func (r *PGVectorRetriever) Retrieve(ctx context.Context, q Query) ([]Result, error) {
+	result, err := r.Search(ctx, q)
+	if err != nil {
+		return nil, err
+	}
+	return result.Results, nil
+}
+
+func (r *PGVectorRetriever) Search(ctx context.Context, q Query) (PipelineResult, error) {
+	start := time.Now()
+	candidates, err := r.retrieveCandidates(ctx, q)
+	if err != nil {
+		return PipelineResult{}, err
+	}
+	return buildPGVectorPipelineResult(q, candidates, r.Fusion, float64(time.Since(start).Microseconds())/1000), nil
+}
+
+type pgCandidate struct {
+	Candidate
+	VectorHit bool
+	TagHit    bool
+	TextHit   bool
+	TextScore float64
+}
+
+func (r *PGVectorRetriever) retrieveCandidates(ctx context.Context, q Query) ([]pgCandidate, error) {
 	if r.Pool == nil {
 		return nil, errors.New("retriever: pool not initialized")
 	}
@@ -208,11 +240,12 @@ func (r *PGVectorRetriever) Retrieve(ctx context.Context, q Query) ([]Result, er
 	}
 	defer rows.Close()
 
-	var candidates []Candidate
+	var candidates []pgCandidate
 	for rows.Next() {
-		var c Candidate
+		var c pgCandidate
 		if err := rows.Scan(&c.ID, &c.Content, &c.Tags, &c.Difficulty,
-			&c.Category, &c.ExpectedPoints, &c.VecDist, &c.TagOverlap); err != nil {
+			&c.Category, &c.ExpectedPoints, &c.VecDist, &c.TagOverlap,
+			&c.VectorHit, &c.TagHit, &c.TextHit, &c.TextScore); err != nil {
 			return nil, fmt.Errorf("scan: %w", err)
 		}
 		c.QueryTagCount = len(canonical)
@@ -227,12 +260,82 @@ func (r *PGVectorRetriever) Retrieve(ctx context.Context, q Query) ([]Result, er
 	if rows.Err() != nil {
 		return nil, fmt.Errorf("rows iter: %w", rows.Err())
 	}
+	return candidates, nil
+}
 
-	results := r.Fusion.Fuse(candidates)
+func buildPGVectorPipelineResult(q Query, candidates []pgCandidate, fusion Fusion, durationMS float64) PipelineResult {
+	if fusion == nil {
+		fusion = NewLinearFusion(0, 0, 0)
+	}
+	raw := make([]Candidate, 0, len(candidates))
+	for _, c := range candidates {
+		raw = append(raw, c.Candidate)
+	}
+	results := fusion.Fuse(raw)
+	K := q.K
+	if K <= 0 {
+		K = 5
+	}
 	if len(results) > K {
 		results = results[:K]
 	}
-	return results, nil
+	trace := RetrievalTrace{Query: q.Text}
+	trace.Stages = append(trace.Stages,
+		pgCandidateStageTrace(StageVector, candidates, durationMS, func(c pgCandidate) (bool, float64) {
+			return c.VectorHit, clamp01(1 - c.VecDist)
+		}),
+		pgCandidateStageTrace(StageRule, candidates, 0, func(c pgCandidate) (bool, float64) {
+			if !c.TagHit {
+				return false, 0
+			}
+			if c.QueryTagCount <= 0 {
+				return true, 0
+			}
+			return true, clamp01(float64(c.TagOverlap) / float64(c.QueryTagCount))
+		}),
+		pgCandidateStageTrace(StageBM25, candidates, 0, func(c pgCandidate) (bool, float64) {
+			return c.TextHit, clamp01(c.TextScore)
+		}),
+		stageTraceFromResults(StageRRF, results, 0, ""),
+	)
+	for i, result := range results {
+		trace.Final = append(trace.Final, ResultTrace{
+			ID:    result.ID,
+			Rank:  i + 1,
+			Score: result.Score,
+			Stage: StageRRF,
+			Sources: map[string]float64{
+				"vector":     result.VectorScore,
+				"tag":        result.TagScore,
+				"difficulty": result.DifficultyScore,
+			},
+		})
+	}
+	return PipelineResult{Results: results, RRFResults: results, Trace: trace}
+}
+
+func pgCandidateStageTrace(stage string, candidates []pgCandidate, durationMS float64, include func(pgCandidate) (bool, float64)) StageTrace {
+	st := StageTrace{Stage: stage, DurationMS: durationMS}
+	for _, c := range candidates {
+		ok, score := include(c)
+		if !ok || c.ID == "" {
+			continue
+		}
+		item := ResultTrace{
+			ID:    c.ID,
+			Rank:  len(st.Items) + 1,
+			Score: score,
+			Stage: stage,
+			Sources: map[string]float64{
+				"vector":      clamp01(1 - c.VecDist),
+				"tag_overlap": float64(c.TagOverlap),
+				"text":        clamp01(c.TextScore),
+			},
+		}
+		st.Items = append(st.Items, item)
+	}
+	st.Count = len(st.Items)
+	return st
 }
 
 func compactQueryStrings(items []string) []string {

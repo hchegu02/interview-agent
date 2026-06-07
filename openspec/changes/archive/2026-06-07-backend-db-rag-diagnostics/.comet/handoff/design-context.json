@@ -1,0 +1,15 @@
+{
+  "change": "backend-db-rag-diagnostics",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "acb09cf72a991dafe5b533b8bea5cfef2e8d811d287666ccd0bf99440555e5fd",
+  "files": [
+    { "path": "openspec/changes/backend-db-rag-diagnostics/proposal.md", "sha256": "6adbfc3fea015356fb2cb72062be64b7a41a09c96e496b65227427e87dac425a" },
+    { "path": "openspec/changes/backend-db-rag-diagnostics/design.md", "sha256": "09f028caf07b58a497bb237c211970578d635338141087222c4eea77f5fe97ae" },
+    { "path": "openspec/changes/backend-db-rag-diagnostics/tasks.md", "sha256": "91e8a015dfd8c79fe7627c54aa33281768d2570c04e6d19ce44b449fc2343d13" },
+    { "path": "openspec/changes/backend-db-rag-diagnostics/specs/rag-retrieval-enhancement/spec.md", "sha256": "8eb22a652b83bfa8a7de3556f7072fc788972c6b7065f6d54cc511d1d0a756c7" },
+    { "path": "openspec/changes/backend-db-rag-diagnostics/specs/server-runtime/spec.md", "sha256": "b8891636ab90ac9575506e3534cae40dad8542f5be91c079773f94411833f8b8" }
+  ]
+}

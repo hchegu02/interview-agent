@@ -23,21 +23,10 @@ func (s *PGStore) List(ctx context.Context, filter Filter) (ListResult, error) {
 	if s == nil || s.Pool == nil {
 		return ListResult{}, nil
 	}
-	limit := normalizeLimit(filter.Limit)
-	offset, err := parseCursor(filter.Cursor)
+	query, args, limit, offset, err := buildListQuery(filter)
 	if err != nil {
 		return ListResult{}, err
 	}
-	where, args := buildWhere(filter)
-	args = append(args, limit+1, offset)
-	query := `
-SELECT id, content, tags, skill_category, difficulty, expected_points, source,
-       scenario, role_tags, rubric, sample_answer, follow_up_hints, locale, status,
-       embedding_status, embedding_model, embedded_at, embedding_error, created_at, updated_at
-FROM question_bank
-` + where + `
-ORDER BY skill_category, difficulty, id
-LIMIT $` + strconv.Itoa(len(args)-1) + ` OFFSET $` + strconv.Itoa(len(args))
 	rows, err := s.Pool.Query(ctx, query, args...)
 	if err != nil {
 		return ListResult{}, fmt.Errorf("question bank list: %w", err)
@@ -53,6 +42,60 @@ LIMIT $` + strconv.Itoa(len(args)-1) + ` OFFSET $` + strconv.Itoa(len(args))
 		next = strconv.Itoa(offset + limit)
 	}
 	return ListResult{Items: items, NextCursor: next}, nil
+}
+
+func (s *PGStore) ExplainList(ctx context.Context, filter Filter) ([]string, error) {
+	if s == nil || s.Pool == nil {
+		return nil, nil
+	}
+	query, args, err := BuildListExplainQuery(filter)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.Pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("question bank list explain: %w", err)
+	}
+	defer rows.Close()
+	var lines []string
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			return nil, fmt.Errorf("question bank list explain scan: %w", err)
+		}
+		lines = append(lines, line)
+	}
+	if rows.Err() != nil {
+		return nil, fmt.Errorf("question bank list explain rows: %w", rows.Err())
+	}
+	return lines, nil
+}
+
+func BuildListExplainQuery(filter Filter) (string, []any, error) {
+	query, args, _, _, err := buildListQuery(filter)
+	if err != nil {
+		return "", nil, err
+	}
+	return "EXPLAIN (ANALYZE, BUFFERS, FORMAT TEXT)\n" + query, args, nil
+}
+
+func buildListQuery(filter Filter) (string, []any, int, int, error) {
+	limit := normalizeLimit(filter.Limit)
+	offset, err := parseCursor(filter.Cursor)
+	if err != nil {
+		return "", nil, 0, 0, err
+	}
+	where, args := buildWhere(filter)
+	args = append(args, limit+1, offset)
+	query := `
+SELECT id, content, tags, skill_category, difficulty, expected_points, source,
+       scenario, role_tags, rubric, sample_answer, follow_up_hints, locale, status,
+       embedding_status, embedding_model, embedded_at, embedding_error, created_at, updated_at
+FROM question_bank
+` + where + `
+ORDER BY skill_category, difficulty, id
+LIMIT $` + strconv.Itoa(len(args)-1) + ` OFFSET $` + strconv.Itoa(len(args))
+	return query, args, limit, offset, nil
 }
 
 func (s *PGStore) Get(ctx context.Context, id string) (Item, error) {

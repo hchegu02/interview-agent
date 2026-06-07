@@ -265,7 +265,11 @@ func buildDemoRetriever(ctx context.Context, cfg *config.Config) (retriever.Retr
 	if cfg.PostgresDSN == "" {
 		return fallbackRetriever{}, func() {}, "fallback", nil
 	}
-	pool, err := pgxpool.New(ctx, cfg.PostgresDSN)
+	poolCfg, err := config.PostgresPoolConfig(cfg)
+	if err != nil {
+		return nil, func() {}, "pgvector", err
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 	if err != nil {
 		return nil, func() {}, "pgvector", fmt.Errorf("connect postgres: %w", err)
 	}

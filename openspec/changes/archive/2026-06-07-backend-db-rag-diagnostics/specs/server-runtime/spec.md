@@ -1,10 +1,4 @@
-# server-runtime Specification
-
-## Purpose
-
-定义后端服务运行时依赖装配要求，重点覆盖 PostgreSQL 连接池配置、无 DSN 的本地降级路径，以及后端诊断/评估 CLI 对运行时配置的复用。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: Postgres Pool Configuration
 

@@ -1,0 +1,19 @@
+workflow: full
+phase: archive
+build_mode: direct
+isolation: branch
+verify_mode: full
+base_ref: 4a9d34b926f64b552327d10c814236a3b8b60e69
+design_doc: docs/superpowers/specs/2026-06-07-backend-db-rag-diagnostics-design.md
+plan: docs/superpowers/plans/2026-06-07-backend-db-rag-diagnostics.md
+verify_result: pass
+verification_report: docs/superpowers/reports/2026-06-07-backend-db-rag-diagnostics-verify.md
+branch_status: handled
+created_at: 2026-06-07
+verified_at: 2026-06-07
+archived: true
+direct_override: true
+handoff_context: openspec/changes/backend-db-rag-diagnostics/.comet/handoff/design-context.json
+handoff_hash: acb09cf72a991dafe5b533b8bea5cfef2e8d811d287666ccd0bf99440555e5fd
+build_command: go test ./... -count=1
+verify_command: go test ./... -count=1

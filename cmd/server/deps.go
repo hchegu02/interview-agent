@@ -33,13 +33,5 @@ func buildAppDeps(ctx context.Context, cfg *config.Config) (appDeps, func(), err
 }
 
 func postgresPoolConfig(cfg *config.Config) (*pgxpool.Config, error) {
-	poolCfg, err := pgxpool.ParseConfig(cfg.PostgresDSN)
-	if err != nil {
-		return nil, fmt.Errorf("parse postgres dsn: %w", err)
-	}
-	poolCfg.MaxConns = cfg.Postgres.MaxConns
-	poolCfg.MinConns = cfg.Postgres.MinConns
-	poolCfg.MaxConnLifetime = cfg.Postgres.MaxConnLifetime
-	poolCfg.HealthCheckPeriod = cfg.Postgres.HealthCheckPeriod
-	return poolCfg, nil
+	return config.PostgresPoolConfig(cfg)
 }

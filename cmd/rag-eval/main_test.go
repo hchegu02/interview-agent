@@ -276,6 +276,12 @@ func TestEvaluateCollectsPipelineStageMetrics(t *testing.T) {
 	if got.StageDeltas["rrf_vs_vector_recall_at_5"] != 1 {
 		t.Fatalf("stage deltas = %+v, want rrf vector recall improvement", got.StageDeltas)
 	}
+	if got.Cases[0].StageCandidates[retriever.StageVector][0] != "a" {
+		t.Fatalf("stage candidates = %+v, want vector candidate a", got.Cases[0].StageCandidates)
+	}
+	if got.Cases[0].StageCandidates[retriever.StageRRF][0] != "b" {
+		t.Fatalf("stage candidates = %+v, want fusion candidate b", got.Cases[0].StageCandidates)
+	}
 }
 
 func TestEvaluateDoesNotDoubleCountExplicitRRFStage(t *testing.T) {

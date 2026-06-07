@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -152,6 +153,61 @@ func TestValidate_HTTPRerankRequiresEndpoint(t *testing.T) {
 	}
 }
 
+func TestValidate_InvalidPostgresPoolConfigFails(t *testing.T) {
+	cases := []struct {
+		name string
+		edit func(*Config)
+		want string
+	}{
+		{
+			name: "max conns zero",
+			edit: func(cfg *Config) {
+				cfg.Postgres.MaxConns = 0
+			},
+			want: "postgres.max_conns",
+		},
+		{
+			name: "min conns negative",
+			edit: func(cfg *Config) {
+				cfg.Postgres.MinConns = -1
+			},
+			want: "postgres.min_conns",
+		},
+		{
+			name: "min greater than max",
+			edit: func(cfg *Config) {
+				cfg.Postgres.MaxConns = 2
+				cfg.Postgres.MinConns = 3
+			},
+			want: "postgres.min_conns",
+		},
+		{
+			name: "lifetime zero",
+			edit: func(cfg *Config) {
+				cfg.Postgres.MaxConnLifetime = 0
+			},
+			want: "postgres.max_conn_lifetime",
+		},
+		{
+			name: "health check zero",
+			edit: func(cfg *Config) {
+				cfg.Postgres.HealthCheckPeriod = 0
+			},
+			want: "postgres.health_check_period",
+		},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := defaults()
+			tt.edit(cfg)
+			err := cfg.validate()
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("validate error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 // 关键测试：验证序列化 Config 不会泄漏 API key。
 // 这是吸取了原项目把 key 写进 interview.json 的教训。
 func TestSensitiveFieldsNotInYAML(t *testing.T) {
@@ -167,5 +223,37 @@ func TestSensitiveFieldsNotInYAML(t *testing.T) {
 	out := string(b)
 	if strings.Contains(out, "sk-super-secret") {
 		t.Errorf("yaml marshal leaked secret:\n%s", out)
+	}
+}
+
+func TestPostgresPoolConfigAppliesConfiguredPoolSettings(t *testing.T) {
+	cfg, err := Load("")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	cfg.PostgresDSN = "postgres://user:pass@localhost:5432/interview_agent?sslmode=disable"
+	cfg.Postgres.MaxConns = 17
+	cfg.Postgres.MinConns = 3
+	cfg.Postgres.MaxConnLifetime = 11 * time.Minute
+	cfg.Postgres.HealthCheckPeriod = 13 * time.Second
+
+	poolCfg, err := PostgresPoolConfig(cfg)
+	if err != nil {
+		t.Fatalf("PostgresPoolConfig: %v", err)
+	}
+	if poolCfg.ConnConfig.Config.Host != "localhost" {
+		t.Fatalf("host = %q, want localhost", poolCfg.ConnConfig.Config.Host)
+	}
+	if poolCfg.MaxConns != 17 {
+		t.Fatalf("max conns = %d, want 17", poolCfg.MaxConns)
+	}
+	if poolCfg.MinConns != 3 {
+		t.Fatalf("min conns = %d, want 3", poolCfg.MinConns)
+	}
+	if poolCfg.MaxConnLifetime != 11*time.Minute {
+		t.Fatalf("max conn lifetime = %v, want 11m", poolCfg.MaxConnLifetime)
+	}
+	if poolCfg.HealthCheckPeriod != 13*time.Second {
+		t.Fatalf("health check period = %v, want 13s", poolCfg.HealthCheckPeriod)
 	}
 }

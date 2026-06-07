@@ -349,6 +349,83 @@ func TestRetrieveSQLIncludesTextCandidatePath(t *testing.T) {
 	}
 }
 
+func TestRetrieveSQLExposesCandidatePathMembership(t *testing.T) {
+	for _, want := range []string{
+		"vc.id IS NOT NULL AS vector_hit",
+		"tc.id IS NOT NULL AS tag_hit",
+		"txt.id IS NOT NULL AS text_hit",
+		"COALESCE(txt.text_score, 0) AS text_score",
+		"LEFT JOIN tag_candidates tc USING (id)",
+		"LEFT JOIN text_candidates txt USING (id)",
+	} {
+		if !strings.Contains(retrieveSQL, want) {
+			t.Fatalf("retrieveSQL missing candidate evidence fragment %q", want)
+		}
+	}
+}
+
+func TestPGVectorSearchBuildsStageTraceFromCandidateEvidence(t *testing.T) {
+	query := Query{Text: "Redis AOF", Tags: []string{"redis"}, Difficulty: 3, K: 2}
+	candidates := []pgCandidate{
+		{
+			Candidate: Candidate{
+				ID:             "redis-001",
+				Content:        "Redis AOF 持久化",
+				Tags:           []string{"redis"},
+				Difficulty:     3,
+				Category:       "redis",
+				VecDist:        0.1,
+				TagOverlap:     1,
+				QueryTagCount:  1,
+				TargetDiff:     3,
+				ExpectedPoints: []string{"AOF"},
+			},
+			VectorHit: true,
+			TagHit:    true,
+			TextHit:   true,
+			TextScore: 0.8,
+		},
+		{
+			Candidate: Candidate{
+				ID:            "go-001",
+				Content:       "Go channel",
+				Tags:          []string{"go"},
+				Difficulty:    3,
+				Category:      "go",
+				VecDist:       0.2,
+				QueryTagCount: 1,
+				TargetDiff:    3,
+			},
+			VectorHit: true,
+		},
+	}
+
+	got := buildPGVectorPipelineResult(query, candidates, NewLinearFusion(0, 0, 0), 1.25)
+
+	if len(got.Results) != 2 {
+		t.Fatalf("results = %d, want 2", len(got.Results))
+	}
+	if got.Trace.Query != "Redis AOF" {
+		t.Fatalf("trace query = %q", got.Trace.Query)
+	}
+	stages := map[string]StageTrace{}
+	for _, stage := range got.Trace.Stages {
+		stages[stage.Stage] = stage
+	}
+	if stages[StageVector].Count != 2 {
+		t.Fatalf("vector stage = %+v, want 2 candidates", stages[StageVector])
+	}
+	if stages[StageBM25].Count != 1 || stages[StageBM25].Items[0].ID != "redis-001" {
+		t.Fatalf("text stage = %+v, want redis-001", stages[StageBM25])
+	}
+	if stages[StageRule].Count != 1 || stages[StageRule].Items[0].Sources["tag_overlap"] != 1 {
+		t.Fatalf("tag stage = %+v, want tag evidence", stages[StageRule])
+	}
+	if stages[StageRRF].Count != 2 || len(got.Trace.Final) != 2 || got.Trace.Final[0].Stage != StageRRF {
+		t.Fatalf("fusion/final trace = %+v final=%+v", stages[StageRRF], got.Trace.Final)
+	}
+}
+
 func TestRetrieveSQLMatchesSkillCategoryAsTagSignal(t *testing.T) {
 	for _, want := range []string{
 		"(tags || ARRAY[skill_category]) && $2::text[]",

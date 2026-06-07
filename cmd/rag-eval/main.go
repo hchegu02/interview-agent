@@ -35,21 +35,22 @@ type evalCase struct {
 }
 
 type caseResult struct {
-	ID          string   `json:"id"`
-	Tags        []string `json:"tags,omitempty"`
-	Skill       string   `json:"skill,omitempty"`
-	ReturnedIDs []string `json:"returned_ids"`
-	RelevantIDs []string `json:"relevant_ids"`
-	HitAt5      bool     `json:"hit_at_5"`
-	HitAt10     bool     `json:"hit_at_10"`
-	RecallAt5   float64  `json:"recall_at_5"`
-	RecallAt10  float64  `json:"recall_at_10"`
-	MRRAtK      float64  `json:"mrr_at_k"`
-	NDCGAtK     float64  `json:"ndcg_at_k"`
-	LatencyMS   float64  `json:"latency_ms"`
-	Empty       bool     `json:"empty"`
-	Fallback    bool     `json:"fallback"`
-	Error       string   `json:"error,omitempty"`
+	ID              string              `json:"id"`
+	Tags            []string            `json:"tags,omitempty"`
+	Skill           string              `json:"skill,omitempty"`
+	ReturnedIDs     []string            `json:"returned_ids"`
+	RelevantIDs     []string            `json:"relevant_ids"`
+	StageCandidates map[string][]string `json:"stage_candidates,omitempty"`
+	HitAt5          bool                `json:"hit_at_5"`
+	HitAt10         bool                `json:"hit_at_10"`
+	RecallAt5       float64             `json:"recall_at_5"`
+	RecallAt10      float64             `json:"recall_at_10"`
+	MRRAtK          float64             `json:"mrr_at_k"`
+	NDCGAtK         float64             `json:"ndcg_at_k"`
+	LatencyMS       float64             `json:"latency_ms"`
+	Empty           bool                `json:"empty"`
+	Fallback        bool                `json:"fallback"`
+	Error           string              `json:"error,omitempty"`
 }
 
 type summary struct {
@@ -402,6 +403,7 @@ func evaluate(ctx context.Context, cases []evalCase, k int, source string, embed
 		if searcher, ok := r.(pipelineSearcher); ok {
 			pipelineResult, searchErr := searcher.Search(ctx, query)
 			collectPipelineStageResults(stageResults, stageSeen, caseKey, res, pipelineResult, k, searchErr == nil)
+			res.StageCandidates = stageCandidatesFromPipelineResult(pipelineResult)
 			retrieved = pipelineResult.Results
 			retrieveErr = searchErr
 		} else {
@@ -425,6 +427,31 @@ func evaluate(ctx context.Context, cases []evalCase, k int, source string, embed
 			out.Stages[stage] = aggregateStageMetric(stageCases)
 		}
 		out.StageDeltas = stageDeltas(out)
+	}
+	return out
+}
+
+func stageCandidatesFromPipelineResult(result retriever.PipelineResult) map[string][]string {
+	out := map[string][]string{}
+	for _, stage := range result.Trace.Stages {
+		if stage.Stage == "" || len(stage.Items) == 0 {
+			continue
+		}
+		for _, item := range stage.Items {
+			if item.ID != "" {
+				out[stage.Stage] = append(out[stage.Stage], item.ID)
+			}
+		}
+	}
+	if len(out[retriever.StageRRF]) == 0 {
+		rrfResults := result.RRFResults
+		if len(rrfResults) == 0 {
+			rrfResults = result.Results
+		}
+		out[retriever.StageRRF] = resultIDs(rrfResults)
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }
@@ -682,7 +709,11 @@ func buildEmbedder(cfg *config.Config) (embedding.Embedder, error) {
 
 func buildRetriever(ctx context.Context, cfg *config.Config, seedPath string, embedder embedding.Embedder) (retriever.Retriever, func(), string, error) {
 	if cfg.PostgresDSN != "" {
-		pool, err := pgxpool.New(ctx, cfg.PostgresDSN)
+		poolCfg, err := config.PostgresPoolConfig(cfg)
+		if err != nil {
+			return nil, func() {}, "pgvector", err
+		}
+		pool, err := pgxpool.NewWithConfig(ctx, poolCfg)
 		if err != nil {
 			return nil, func() {}, "pgvector", err
 		}

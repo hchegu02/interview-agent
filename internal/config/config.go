@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	"gopkg.in/yaml.v3"
 )
 
@@ -277,6 +278,21 @@ func defaults() *Config {
 }
 
 func (c *Config) validate() error {
+	if c.Postgres.MaxConns <= 0 {
+		return fmt.Errorf("invalid postgres.max_conns %d (must be positive)", c.Postgres.MaxConns)
+	}
+	if c.Postgres.MinConns < 0 {
+		return fmt.Errorf("invalid postgres.min_conns %d (must be >= 0)", c.Postgres.MinConns)
+	}
+	if c.Postgres.MinConns > c.Postgres.MaxConns {
+		return fmt.Errorf("invalid postgres.min_conns %d (must be <= postgres.max_conns %d)", c.Postgres.MinConns, c.Postgres.MaxConns)
+	}
+	if c.Postgres.MaxConnLifetime <= 0 {
+		return fmt.Errorf("invalid postgres.max_conn_lifetime %v (must be > 0)", c.Postgres.MaxConnLifetime)
+	}
+	if c.Postgres.HealthCheckPeriod <= 0 {
+		return fmt.Errorf("invalid postgres.health_check_period %v (must be > 0)", c.Postgres.HealthCheckPeriod)
+	}
 	if c.LLM.Mode != "mock" && c.LLM.Mode != "real" {
 		return fmt.Errorf("invalid llm.mode %q (must be mock|real)", c.LLM.Mode)
 	}
@@ -319,4 +335,19 @@ func (c *Config) validate() error {
 		return fmt.Errorf("internal_trial.owner_header is required when internal trial is enabled")
 	}
 	return nil
+}
+
+func PostgresPoolConfig(cfg *Config) (*pgxpool.Config, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("config is nil")
+	}
+	poolCfg, err := pgxpool.ParseConfig(cfg.PostgresDSN)
+	if err != nil {
+		return nil, fmt.Errorf("parse postgres dsn: %w", err)
+	}
+	poolCfg.MaxConns = cfg.Postgres.MaxConns
+	poolCfg.MinConns = cfg.Postgres.MinConns
+	poolCfg.MaxConnLifetime = cfg.Postgres.MaxConnLifetime
+	poolCfg.HealthCheckPeriod = cfg.Postgres.HealthCheckPeriod
+	return poolCfg, nil
 }
