@@ -11,7 +11,8 @@ const (
 	qualityFlagMissingSourceRefs    = "missing_source_refs"
 	qualityFlagUnknownSourceChunk   = "unknown_source_chunk"
 	qualityFlagUngroundedQuote      = "ungrounded_quote"
-	qualityFlagDuplicateContent     = "duplicate_content"
+	qualityFlagDuplicateContent         = "duplicate_content"
+	qualityFlagDuplicateExistingContent = "duplicate_existing_content"
 	qualityFlagLowValueQuestion     = "low_value_question"
 	qualityFlagMissingFields        = "missing_required_fields"
 	qualityFlagInvalidSingleChoice  = "invalid_single_choice"
@@ -19,7 +20,7 @@ const (
 	qualityFlagDifficultyMismatch   = "difficulty_mismatch"
 )
 
-func gateQuestionCandidates(req GenerationRequest, concepts []ConceptCard, chunks []RetrievedChunk, candidates []QuestionCandidate) ([]QuestionCandidate, []QuestionCandidate) {
+func gateQuestionCandidates(req GenerationRequest, concepts []ConceptCard, chunks []RetrievedChunk, candidates []QuestionCandidate, existingContentKeys map[string]struct{}) ([]QuestionCandidate, []QuestionCandidate) {
 	conceptsByID := make(map[string]ConceptCard, len(concepts))
 	for _, concept := range concepts {
 		conceptsByID[concept.ID] = concept
@@ -33,7 +34,7 @@ func gateQuestionCandidates(req GenerationRequest, concepts []ConceptCard, chunk
 	var passed []QuestionCandidate
 	var rejected []QuestionCandidate
 	for _, candidate := range candidates {
-		flags := candidateQualityFlags(req, candidate, conceptsByID, chunksByID, seenContent)
+		flags := candidateQualityFlags(req, candidate, conceptsByID, chunksByID, seenContent, existingContentKeys)
 		key := normalizeCandidateContent(candidate.Content)
 		if key != "" {
 			seenContent[key] = struct{}{}
@@ -48,7 +49,7 @@ func gateQuestionCandidates(req GenerationRequest, concepts []ConceptCard, chunk
 	return passed, rejected
 }
 
-func candidateQualityFlags(req GenerationRequest, candidate QuestionCandidate, concepts map[string]ConceptCard, chunks map[string]RetrievedChunk, seenContent map[string]struct{}) []string {
+func candidateQualityFlags(req GenerationRequest, candidate QuestionCandidate, concepts map[string]ConceptCard, chunks map[string]RetrievedChunk, seenContent map[string]struct{}, existingContentKeys map[string]struct{}) []string {
 	var flags []string
 	if strings.TrimSpace(candidate.Content) == "" {
 		flags = append(flags, qualityFlagMissingContent)
@@ -63,6 +64,9 @@ func candidateQualityFlags(req GenerationRequest, candidate QuestionCandidate, c
 	if key != "" {
 		if _, ok := seenContent[key]; ok {
 			flags = append(flags, qualityFlagDuplicateContent)
+		}
+		if _, ok := existingContentKeys[key]; ok {
+			flags = append(flags, qualityFlagDuplicateExistingContent)
 		}
 	}
 
@@ -128,8 +132,12 @@ func isLowValueQuestion(content string) bool {
 		strings.Contains(normalized, "总结上文")
 }
 
-func normalizeCandidateContent(content string) string {
+func questionContentDedupeKey(content string) string {
 	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(content))), "")
+}
+
+func normalizeCandidateContent(content string) string {
+	return questionContentDedupeKey(content)
 }
 
 func absInt(v int) int {

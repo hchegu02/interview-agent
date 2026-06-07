@@ -1,0 +1,14 @@
+{
+  "change": "dedupe-question-generation-review-gate",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "9e28e45f7b328e0ebe02a1994e6a8821d34e4b8738ca9c44aaaf64c6b44b9e48",
+  "files": [
+    { "path": "openspec/changes/dedupe-question-generation-review-gate/proposal.md", "sha256": "2ef2c77aafd44057db3c294929e7d8017ecdb864a75b73ef71cedd30a1dc7f40" },
+    { "path": "openspec/changes/dedupe-question-generation-review-gate/design.md", "sha256": "49dcf0fc517a3c15d1c8b6030d002fa2bee349c24fa82af87b67f6f850c34ade" },
+    { "path": "openspec/changes/dedupe-question-generation-review-gate/tasks.md", "sha256": "6c0cee70321c61a50eea1f4902651e2f87791474beeb6179094af5ec70002867" },
+    { "path": "openspec/changes/dedupe-question-generation-review-gate/specs/question-bank-import-enrichment/spec.md", "sha256": "146aaca4ce18141389a3d4482c56e897d6e43a946733e42e2a2e5d0779b31e3b" }
+  ]
+}

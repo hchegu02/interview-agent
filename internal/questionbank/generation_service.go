@@ -79,7 +79,11 @@ func (s *GenerationService) Generate(ctx context.Context, req GenerationRequest)
 	job.Status = GenerationStatusGating
 	job.UpdatedAt = time.Now().UTC()
 	s.saveJob(job)
-	passed, rejected := gateQuestionCandidates(req, concepts, chunks, drafts)
+	existingContentKeys, err := activeQuestionContentKeys(ctx, s.writer)
+	if err != nil {
+		warnings = append(warnings, fmt.Sprintf("existing question dedupe skipped: %v", err))
+	}
+	passed, rejected := gateQuestionCandidates(req, concepts, chunks, drafts, existingContentKeys)
 	if len(passed) == 0 {
 		err := fmt.Errorf("no generated question candidates passed quality gates")
 		job.Concepts = concepts

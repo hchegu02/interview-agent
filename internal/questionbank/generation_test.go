@@ -276,7 +276,7 @@ func TestGateQuestionCandidatesAcceptsGroundedInterviewCandidate(t *testing.T) {
 	chunks := []RetrievedChunk{{ID: "chunk-1", Content: "goroutine 泄漏排查要看 context 取消和 pprof。"}}
 	candidate := completeGenerationCandidate("concept-001", "如何排查 goroutine 泄漏？")
 
-	passed, rejected := gateQuestionCandidates(req, concepts, chunks, []QuestionCandidate{candidate})
+	passed, rejected := gateQuestionCandidates(req, concepts, chunks, []QuestionCandidate{candidate}, nil)
 	if len(rejected) != 0 {
 		t.Fatalf("rejected = %+v, want none", rejected)
 	}
@@ -297,7 +297,7 @@ func TestGateQuestionCandidatesRejectsMissingRefsUnknownConceptAndUngroundedQuot
 	candidates[0].SourceRefs = nil
 	candidates[2].SourceRefs = []SourceRef{{ChunkID: "chunk-1", Quote: "逻辑过期"}}
 
-	passed, rejected := gateQuestionCandidates(req, concepts, chunks, candidates)
+	passed, rejected := gateQuestionCandidates(req, concepts, chunks, candidates, nil)
 	if len(passed) != 0 {
 		t.Fatalf("passed = %+v, want empty", passed)
 	}
@@ -319,12 +319,49 @@ func TestGateQuestionCandidatesRejectsDuplicatesAndLowValueSummary(t *testing.T)
 	duplicate := completeGenerationCandidate("concept-001", " Agent 效果如何评估？ ")
 	lowValue := completeGenerationCandidate("concept-001", "请总结本文")
 
-	passed, rejected := gateQuestionCandidates(req, concepts, chunks, []QuestionCandidate{first, duplicate, lowValue})
+	passed, rejected := gateQuestionCandidates(req, concepts, chunks, []QuestionCandidate{first, duplicate, lowValue}, nil)
 	if len(passed) != 1 {
 		t.Fatalf("passed = %+v, want one", passed)
 	}
 	if len(rejected) != 2 {
 		t.Fatalf("rejected = %+v, want two", rejected)
+	}
+}
+
+func TestGateQuestionCandidatesRejectsExistingActiveDuplicateContent(t *testing.T) {
+	req := GenerationRequest{QuestionType: "interview", Difficulty: 3}
+	concepts := []ConceptCard{{ID: "concept-001", Title: "Agent 评估"}}
+	chunks := []RetrievedChunk{{ID: "chunk-1", Content: "Agent 评估要看结果、过程和工程指标，也要看 context 取消等工程稳定性。"}}
+	candidate := completeGenerationCandidate("concept-001", " Agent 效果如何评估？ ")
+	existing := map[string]struct{}{
+		questionContentDedupeKey("agent 效果如何评估？"): {},
+	}
+
+	passed, rejected := gateQuestionCandidates(req, concepts, chunks, []QuestionCandidate{candidate}, existing)
+	if len(passed) != 0 {
+		t.Fatalf("passed = %+v, want empty", passed)
+	}
+	if len(rejected) != 1 {
+		t.Fatalf("rejected = %+v, want one", rejected)
+	}
+	if !contains(rejected[0].QualityFlags, qualityFlagDuplicateExistingContent) {
+		t.Fatalf("quality flags = %+v, want %q", rejected[0].QualityFlags, qualityFlagDuplicateExistingContent)
+	}
+}
+
+func TestQuestionContentDedupeKeyNormalizesWhitespaceAndCase(t *testing.T) {
+	got := questionContentDedupeKey(" Agent 效果如何评估？ ")
+	want := questionContentDedupeKey("agent 效果如何评估？")
+	if got == "" || got != want {
+		t.Fatalf("dedupe key mismatch: got %q want %q", got, want)
+	}
+}
+
+func TestQuestionContentDedupeKeyDoesNotMergeDistinctQuestions(t *testing.T) {
+	first := questionContentDedupeKey("Go 服务如何设计超时？")
+	second := questionContentDedupeKey("Go 服务如何设计熔断？")
+	if first == "" || second == "" || first == second {
+		t.Fatalf("distinct questions collapsed: first=%q second=%q", first, second)
 	}
 }
 
@@ -338,11 +375,11 @@ func TestGateQuestionCandidatesRejectsInvalidSingleChoiceAndInterviewWithoutFoll
 	interview := completeGenerationCandidate("concept-001", "缓存击穿怎么治理？")
 	interview.FollowUpHints = nil
 
-	_, rejectedChoice := gateQuestionCandidates(GenerationRequest{QuestionType: "single_choice", Difficulty: 3}, concepts, chunks, []QuestionCandidate{choice})
+	_, rejectedChoice := gateQuestionCandidates(GenerationRequest{QuestionType: "single_choice", Difficulty: 3}, concepts, chunks, []QuestionCandidate{choice}, nil)
 	if len(rejectedChoice) != 1 {
 		t.Fatalf("rejectedChoice = %+v, want one", rejectedChoice)
 	}
-	_, rejectedInterview := gateQuestionCandidates(GenerationRequest{QuestionType: "interview", Difficulty: 3}, concepts, chunks, []QuestionCandidate{interview})
+	_, rejectedInterview := gateQuestionCandidates(GenerationRequest{QuestionType: "interview", Difficulty: 3}, concepts, chunks, []QuestionCandidate{interview}, nil)
 	if len(rejectedInterview) != 1 {
 		t.Fatalf("rejectedInterview = %+v, want one", rejectedInterview)
 	}
@@ -405,6 +442,59 @@ func TestGenerationServiceGenerateProducesGroundedCandidates(t *testing.T) {
 	}
 	if !strings.HasPrefix(job.Candidates[0].ID, "gq-") {
 		t.Fatalf("candidate id not generated: %+v", job.Candidates[0])
+	}
+}
+
+func TestGenerationServiceGenerateRejectsExistingActiveDuplicateContent(t *testing.T) {
+	ctx := context.Background()
+	imports := NewMemoryImportStore()
+	if err := imports.AddChunks(ctx, []ImportChunk{{
+		ID:      "imp-001:chunk:001",
+		JobID:   "imp-001",
+		Index:   1,
+		Content: "Go 并发治理需要识别 goroutine 泄漏，并用 pprof 和 context 取消定位问题。",
+	}}); err != nil {
+		t.Fatalf("AddChunks: %v", err)
+	}
+	store := NewMemoryStore([]Item{{
+		ID:      "existing-001",
+		Content: "如何排查 goroutine 泄漏？",
+		Status:  "active",
+	}})
+	service := NewGenerationService(GenerationServiceDeps{
+		Imports: imports,
+		Writer:  store,
+		Model: &scriptedGenerationModel{
+			responses: []func([]llm.Message) string{
+				func([]llm.Message) string {
+					return `{"concepts":[{"title":"goroutine 泄漏","skill":"go","difficulty_hint":3,"keywords":["goroutine"],"question_angles":["debugging"],"evidence_refs":[{"chunk_id":"imp-001:chunk:001","quote":"context 取消"}]}]}`
+				},
+				func(messages []llm.Message) string {
+					conceptID := conceptIDFromPrompt(messages)
+					return `{"candidates":[{"concept_id":"` + conceptID + `","content":" 如何排查 goroutine 泄漏？ ","question_type":"interview","target_dimension":"debugging","answer":"看 pprof 和 context。","explanation":"题目基于原文证据。","tags":["go","concurrency"],"skill_category":"go","difficulty":3,"expected_points":["说明 goroutine 泄漏现象","使用 pprof 定位","检查 context 取消"],"rubric":{"good":"能结合 pprof 和 context 说明排查路径"},"sample_answer":"先通过 pprof goroutine 查看阻塞点，再检查 context 是否取消。","follow_up_hints":["如果是慢客户端导致堆积怎么办？"],"source_refs":[{"chunk_id":"imp-001:chunk:001","quote":"context 取消"}]}]}`
+				},
+			},
+		},
+	})
+
+	job, err := service.Generate(ctx, GenerationRequest{
+		SourceJobID:     "imp-001",
+		Topic:           "goroutine 泄漏",
+		QuestionType:    "interview",
+		Count:           1,
+		Difficulty:      3,
+		TargetDimension: "debugging",
+		SkillCategory:   "go",
+		Tags:            []string{"go"},
+	})
+	if err == nil {
+		t.Fatal("expected Generate to fail when all candidates duplicate existing active content")
+	}
+	if job.Status != GenerationStatusFailed || len(job.Candidates) != 0 || len(job.RejectedCandidates) != 1 {
+		t.Fatalf("job = %+v", job)
+	}
+	if !contains(job.RejectedCandidates[0].QualityFlags, qualityFlagDuplicateExistingContent) {
+		t.Fatalf("quality flags = %+v, want %q", job.RejectedCandidates[0].QualityFlags, qualityFlagDuplicateExistingContent)
 	}
 }
 

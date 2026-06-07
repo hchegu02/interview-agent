@@ -118,11 +118,34 @@ func (s *ImportService) commitReadyJob(ctx context.Context, jobID string) (Impor
 	if err != nil {
 		return s.failJob(ctx, job, err)
 	}
+	existingContentKeys, err := activeQuestionContentKeys(ctx, s.writer)
+	if err != nil {
+		return s.failJob(ctx, job, err)
+	}
 	var items []Item
 	var updated []ImportItem
+	seenContentKeys := map[string]struct{}{}
 	for _, item := range importItems {
 		if item.Status != ImportItemStatusValid || !importItemAccepted(item) {
 			continue
+		}
+		key := questionContentDedupeKey(item.Item.Content)
+		if key != "" {
+			if _, ok := existingContentKeys[key]; ok {
+				item.AgentReviewStatus = ImportAgentReviewRejected
+				item.AgentReviewReason = qualityFlagDuplicateExistingContent
+				item.UpdatedAt = time.Now().UTC()
+				updated = append(updated, item)
+				continue
+			}
+			if _, ok := seenContentKeys[key]; ok {
+				item.AgentReviewStatus = ImportAgentReviewRejected
+				item.AgentReviewReason = qualityFlagDuplicateContent
+				item.UpdatedAt = time.Now().UTC()
+				updated = append(updated, item)
+				continue
+			}
+			seenContentKeys[key] = struct{}{}
 		}
 		items = append(items, item.Item)
 		item.Status = ImportItemStatusImported
@@ -141,6 +164,35 @@ func (s *ImportService) commitReadyJob(ctx context.Context, jobID string) (Impor
 	job.Status = ImportStatusCommitted
 	job.ImportedItems = len(items)
 	return s.imports.UpdateJob(ctx, job)
+}
+
+func activeQuestionContentKeys(ctx context.Context, source any) (map[string]struct{}, error) {
+	store, ok := source.(Store)
+	if !ok {
+		return nil, nil
+	}
+	keys := map[string]struct{}{}
+	cursor := ""
+	for {
+		result, err := store.List(ctx, Filter{Status: "active", Limit: 100, Cursor: cursor})
+		if err != nil {
+			return nil, err
+		}
+		for _, item := range result.Items {
+			key := questionContentDedupeKey(item.Content)
+			if key != "" {
+				keys[key] = struct{}{}
+			}
+		}
+		if result.NextCursor == "" {
+			break
+		}
+		if result.NextCursor == cursor {
+			return nil, fmt.Errorf("question bank active content cursor did not advance: %s", cursor)
+		}
+		cursor = result.NextCursor
+	}
+	return keys, nil
 }
 
 func (s *ImportService) embedCommittedItems(ctx context.Context, items []Item) error {

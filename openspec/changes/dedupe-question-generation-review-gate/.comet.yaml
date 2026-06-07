@@ -1,0 +1,18 @@
+workflow: full
+phase: verify
+build_mode: subagent-driven-development
+isolation: branch
+verify_mode: null
+base_ref: 715e8e5e426295f4e91e31674500c4f222b3be10
+design_doc: docs/superpowers/specs/2026-06-07-dedupe-question-generation-review-gate-design.md
+plan: docs/superpowers/plans/2026-06-07-dedupe-question-generation-review-gate.md
+verify_result: pending
+verification_report: null
+branch_status: pending
+created_at: 2026-06-07
+verified_at: null
+archived: false
+handoff_context: openspec/changes/dedupe-question-generation-review-gate/.comet/handoff/design-context.json
+handoff_hash: 9e28e45f7b328e0ebe02a1994e6a8821d34e4b8738ca9c44aaaf64c6b44b9e48
+build_command: go test ./internal/questionbank -count=1
+verify_command: go test ./internal/questionbank -count=1

@@ -302,6 +302,196 @@ func TestCommitAllowsAgentAutoApprovedItems(t *testing.T) {
 	}
 }
 
+func TestImportCommitSkipsDuplicateContentInSameJob(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore(nil)
+	imports := NewMemoryImportStore()
+	service := NewImportService(ImportServiceDeps{
+		Imports: imports,
+		Writer:  store,
+	})
+
+	job, err := service.ImportLocalQuestionBank(ctx, ImportFile{
+		Filename: "questions.json",
+		Reader: strings.NewReader(`[{
+			"id":"dup-job-001",
+			"content":"Go channel 关闭后接收行为是什么？",
+			"skill_category":"go",
+			"difficulty":3,
+			"tags":["channel"],
+			"expected_points":["zero value","ok flag"]
+		},{
+			"id":"dup-job-002",
+			"content":" go   channel 关闭后接收行为是什么？ ",
+			"skill_category":"go",
+			"difficulty":3,
+			"tags":["channel"],
+			"expected_points":["zero value","ok flag"]
+		}]`),
+		Size: 512,
+	})
+	if err != nil {
+		t.Fatalf("ImportLocalQuestionBank: %v", err)
+	}
+	items, err := imports.ListItems(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	if len(items) != 2 {
+		t.Fatalf("items = %+v, want two items", items)
+	}
+	for i := range items {
+		items[i].AgentReviewStatus = ImportAgentReviewAutoApproved
+		items[i].AgentReviewReason = "complete and grounded"
+	}
+	if err := imports.UpdateItems(ctx, items); err != nil {
+		t.Fatalf("UpdateItems: %v", err)
+	}
+
+	committed, err := service.Commit(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if committed.ImportedItems != 1 {
+		t.Fatalf("ImportedItems = %d, want 1", committed.ImportedItems)
+	}
+	if _, err := store.Get(ctx, "dup-job-001"); err != nil {
+		t.Fatalf("first duplicate should be written to question bank: %v", err)
+	}
+	if _, err := store.Get(ctx, "dup-job-002"); err == nil {
+		t.Fatal("second duplicate should not be written to question bank")
+	}
+	committedItems, err := imports.ListItems(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("ListItems after commit: %v", err)
+	}
+	byQuestionID := map[string]ImportItem{}
+	for _, item := range committedItems {
+		byQuestionID[item.QuestionID] = item
+	}
+	if got := byQuestionID["dup-job-001"].Status; got != ImportItemStatusImported {
+		t.Fatalf("first duplicate status = %q, want imported", got)
+	}
+	second := byQuestionID["dup-job-002"]
+	if second.Status != ImportItemStatusValid {
+		t.Fatalf("second duplicate status = %q, want valid", second.Status)
+	}
+	if second.AgentReviewStatus != ImportAgentReviewRejected || second.AgentReviewReason != qualityFlagDuplicateContent {
+		t.Fatalf("second duplicate review = %q/%q, want rejected/%s", second.AgentReviewStatus, second.AgentReviewReason, qualityFlagDuplicateContent)
+	}
+}
+
+func TestImportCommitSkipsDuplicateExistingActiveContent(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore([]Item{{
+		ID:            "existing-active-001",
+		Content:       "Go channel 关闭后接收行为是什么？",
+		SkillCategory: "go",
+		Difficulty:    3,
+	}})
+	imports := NewMemoryImportStore()
+	service := NewImportService(ImportServiceDeps{
+		Imports: imports,
+		Writer:  store,
+	})
+
+	job, err := service.ImportLocalQuestionBank(ctx, ImportFile{
+		Filename: "questions.json",
+		Reader: strings.NewReader(`[{
+			"id":"dup-existing-001",
+			"content":" go   channel 关闭后接收行为是什么？ ",
+			"skill_category":"go",
+			"difficulty":3,
+			"tags":["channel"],
+			"expected_points":["zero value","ok flag"]
+		}]`),
+		Size: 256,
+	})
+	if err != nil {
+		t.Fatalf("ImportLocalQuestionBank: %v", err)
+	}
+	items, err := imports.ListItems(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %+v, want one item", items)
+	}
+	items[0].AgentReviewStatus = ImportAgentReviewAutoApproved
+	items[0].AgentReviewReason = "complete and grounded"
+	if err := imports.UpdateItems(ctx, items); err != nil {
+		t.Fatalf("UpdateItems: %v", err)
+	}
+
+	committed, err := service.Commit(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if committed.ImportedItems != 0 {
+		t.Fatalf("ImportedItems = %d, want 0", committed.ImportedItems)
+	}
+	if _, err := store.Get(ctx, "dup-existing-001"); err == nil {
+		t.Fatal("existing-content duplicate should not be written to question bank")
+	}
+	committedItems, err := imports.ListItems(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("ListItems after commit: %v", err)
+	}
+	got := committedItems[0]
+	if got.Status != ImportItemStatusValid {
+		t.Fatalf("duplicate status = %q, want valid", got.Status)
+	}
+	if got.AgentReviewStatus != ImportAgentReviewRejected || got.AgentReviewReason != qualityFlagDuplicateExistingContent {
+		t.Fatalf("duplicate review = %q/%q, want rejected/%s", got.AgentReviewStatus, got.AgentReviewReason, qualityFlagDuplicateExistingContent)
+	}
+}
+
+func TestImportCommitSkipsFailJobWhenActiveContentReadFails(t *testing.T) {
+	ctx := context.Background()
+	imports := NewMemoryImportStore()
+	service := NewImportService(ImportServiceDeps{
+		Imports: imports,
+		Writer:  failingListWriter{},
+	})
+
+	job, err := service.ImportLocalQuestionBank(ctx, ImportFile{
+		Filename: "questions.json",
+		Reader: strings.NewReader(`[{
+			"id":"active-read-fail-001",
+			"content":"Go channel 关闭后接收行为是什么？",
+			"skill_category":"go",
+			"difficulty":3,
+			"tags":["channel"],
+			"expected_points":["zero value","ok flag"]
+		}]`),
+		Size: 256,
+	})
+	if err != nil {
+		t.Fatalf("ImportLocalQuestionBank: %v", err)
+	}
+
+	committed, err := service.Commit(ctx, job.ID)
+	if err == nil {
+		t.Fatal("Commit should fail when active content key read fails")
+	}
+	if committed.Status != ImportStatusFailed {
+		t.Fatalf("job status = %q, want failed", committed.Status)
+	}
+	if committed.ImportedItems != 0 {
+		t.Fatalf("ImportedItems = %d, want 0", committed.ImportedItems)
+	}
+}
+
+func TestActiveQuestionContentKeysRejectsStuckCursor(t *testing.T) {
+	_, err := activeQuestionContentKeys(context.Background(), stuckCursorStore{})
+	if err == nil {
+		t.Fatal("activeQuestionContentKeys should fail when cursor does not advance")
+	}
+	if !strings.Contains(err.Error(), "cursor did not advance") {
+		t.Fatalf("error = %v, want cursor did not advance", err)
+	}
+}
+
 func TestReviewAcceptsDocumentGeneratedItemForCommit(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemoryStore(nil)
@@ -413,7 +603,12 @@ func TestDocumentImportStagesUniqueGeneratedIDsAcrossChunks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stageItems chunk-1: %v", err)
 	}
-	job, err = service.stageItems(ctx, job, "chunk-2", []Item{completeImportTestItem("generated-go-001")})
+	second := completeImportTestItem("generated-go-001")
+	second.Content = "Go 服务如何定位线上内存持续上涨？"
+	second.ExpectedPoints = []string{"heap profile", "allocation hot path", "release verification"}
+	second.SampleAnswer = "可以先观察 RSS 和 heap 指标，再用 pprof heap 定位分配热点，并验证修复后内存曲线。"
+	second.FollowUpHints = []string{"如何区分内存泄漏和缓存增长？"}
+	job, err = service.stageItems(ctx, job, "chunk-2", []Item{second})
 	if err != nil {
 		t.Fatalf("stageItems chunk-2: %v", err)
 	}
@@ -1289,4 +1484,39 @@ func enrichedTestItem(item Item) Item {
 	item.SampleAnswer = "示例答案"
 	item.FollowUpHints = []string{"追问一个边界场景"}
 	return item
+}
+
+type failingListWriter struct{}
+
+func (failingListWriter) List(context.Context, Filter) (ListResult, error) {
+	return ListResult{}, errors.New("list active questions failed")
+}
+
+func (failingListWriter) Get(context.Context, string) (Item, error) {
+	return Item{}, ErrNotFound
+}
+
+func (failingListWriter) Facets(context.Context) (Facets, error) {
+	return Facets{}, nil
+}
+
+func (failingListWriter) Upsert(context.Context, []Item) error {
+	return errors.New("upsert should not be called")
+}
+
+type stuckCursorStore struct{}
+
+func (stuckCursorStore) List(_ context.Context, filter Filter) (ListResult, error) {
+	if filter.Cursor == "" {
+		return ListResult{Items: []Item{{ID: "one", Content: "one", Status: "active"}}, NextCursor: "same"}, nil
+	}
+	return ListResult{Items: []Item{{ID: "two", Content: "two", Status: "active"}}, NextCursor: filter.Cursor}, nil
+}
+
+func (stuckCursorStore) Get(context.Context, string) (Item, error) {
+	return Item{}, ErrNotFound
+}
+
+func (stuckCursorStore) Facets(context.Context) (Facets, error) {
+	return Facets{}, nil
 }
