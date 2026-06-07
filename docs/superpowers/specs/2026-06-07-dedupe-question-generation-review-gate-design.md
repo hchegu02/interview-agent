@@ -2,6 +2,8 @@
 comet_change: dedupe-question-generation-review-gate
 role: technical-design
 canonical_spec: openspec
+archived-with: 2026-06-07-dedupe-question-generation-review-gate
+status: final
 ---
 
 # Dedupe Question Generation Review Gate Design

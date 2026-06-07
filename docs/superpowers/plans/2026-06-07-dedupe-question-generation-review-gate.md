@@ -2,6 +2,7 @@
 change: dedupe-question-generation-review-gate
 design-doc: docs/superpowers/specs/2026-06-07-dedupe-question-generation-review-gate-design.md
 base-ref: 715e8e5e426295f4e91e31674500c4f222b3be10
+archived-with: 2026-06-07-dedupe-question-generation-review-gate
 ---
 
 # Dedupe Question Generation Review Gate Implementation Plan
@@ -13,8 +14,6 @@ base-ref: 715e8e5e426295f4e91e31674500c4f222b3be10
 **Architecture:** Add one shared normalized content-key boundary in `internal/questionbank`, then reuse it in generation gates and import commit guards. Keep the behavior conservative, exact-normalized, schema-free, and backend-only.
 
 **Tech Stack:** Go, existing `internal/questionbank` memory/PG store abstractions, OpenSpec change `dedupe-question-generation-review-gate`.
-
----
 
 ## File Structure
 
