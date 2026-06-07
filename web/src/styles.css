@@ -172,7 +172,6 @@ textarea:focus {
 }
 
 .sidebar-collapsed .brand span,
-.sidebar-collapsed .mode-switch,
 .sidebar-collapsed .field,
 .sidebar-collapsed .side-section,
 .sidebar-collapsed .connection span:last-child {
@@ -185,6 +184,24 @@ textarea:focus {
 
 .sidebar-collapsed .sidebar-toggle {
   width: 28px;
+}
+
+.sidebar-collapsed .mode-switch {
+  grid-template-columns: 1fr;
+  padding: 4px;
+}
+
+.sidebar-collapsed .mode-switch button {
+  display: grid;
+  place-items: center;
+  min-height: 34px;
+  padding: 0;
+  font-size: 0;
+}
+
+.sidebar-collapsed .mode-switch button::after {
+  content: attr(data-short);
+  font-size: 13px;
 }
 
 .sidebar-collapsed .nav-list button {
@@ -666,6 +683,26 @@ h3 {
   font-weight: 800;
 }
 
+.mode-panel {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
+.mode-panel p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.mode-segmented {
+  width: 100%;
+}
+
 .primary,
 .send {
   color: #ffffff;
@@ -1113,6 +1150,37 @@ h3 {
   background: #e8eef6;
 }
 
+.auxiliary-section {
+  margin: 0 0 14px;
+}
+
+.auxiliary-section details {
+  background: rgba(255, 255, 255, 0.78);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-tight);
+}
+
+.auxiliary-section summary {
+  cursor: pointer;
+  padding: 11px 14px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.auxiliary-content {
+  display: grid;
+  gap: 12px;
+  padding: 0 14px 14px;
+}
+
+.auxiliary-content .agent-state,
+.auxiliary-content .retrieval-trace {
+  margin: 0;
+  box-shadow: none;
+}
+
 .conversation {
   display: grid;
   gap: 14px;
@@ -1426,7 +1494,12 @@ h3 {
 }
 
 .report-summary section {
+  min-width: 0;
   padding: 14px;
+}
+
+.report-page .auxiliary-section {
+  margin-top: 18px;
 }
 
 .review-card {
@@ -1885,8 +1958,20 @@ h3 {
   }
 
   .sidebar {
+    order: 2;
     position: static;
     height: auto;
+    padding: 14px;
+    gap: 12px;
+  }
+
+  .main {
+    order: 1;
+    padding: 16px;
+  }
+
+  .session-list {
+    max-height: 180px;
   }
 
   .progress-bar {
@@ -1902,5 +1987,18 @@ h3 {
   .question-detail,
   .control-panel {
     position: static;
+  }
+
+  .answer-dock {
+    grid-template-columns: 1fr;
+    bottom: 10px;
+  }
+
+  .send {
+    width: 100%;
+  }
+
+  .conversation {
+    padding-bottom: 220px;
   }
 }
