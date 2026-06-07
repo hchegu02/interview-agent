@@ -128,7 +128,8 @@ func (s *MemoryImportStore) UpdateItemReviews(_ context.Context, jobID string, i
 		if s.items[jobID][i].Status != ImportItemStatusValid {
 			continue
 		}
-		s.items[jobID][i].ReviewStatus = reviewStatus
+		s.items[jobID][i].ReviewStatus = normalizedImportReviewStatus(reviewStatus)
+		s.items[jobID][i].AgentReviewStatus = agentReviewStatusAfterHumanReview(s.items[jobID][i].AgentReviewStatus, reviewStatus)
 		s.items[jobID][i].UpdatedAt = time.Now().UTC()
 	}
 	return nil

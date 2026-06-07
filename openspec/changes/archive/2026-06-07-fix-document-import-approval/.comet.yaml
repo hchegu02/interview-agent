@@ -1,0 +1,14 @@
+workflow: hotfix
+phase: archive
+build_mode: direct
+isolation: branch
+verify_mode: light
+base_ref: 443ba62b3c66a04da9ac89607013cff80176ab8b
+design_doc: null
+plan: null
+verify_result: pass
+verification_report: docs/superpowers/reports/2026-06-07-fix-document-import-approval-verify.md
+branch_status: handled
+created_at: 2026-06-07
+verified_at: 2026-06-07
+archived: true

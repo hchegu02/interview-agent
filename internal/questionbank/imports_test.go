@@ -302,6 +302,113 @@ func TestCommitAllowsAgentAutoApprovedItems(t *testing.T) {
 	}
 }
 
+func TestReviewAcceptsDocumentGeneratedItemForCommit(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore(nil)
+	imports := NewMemoryImportStore()
+	service := NewImportService(ImportServiceDeps{
+		Imports: imports,
+		Writer:  store,
+	})
+	job, err := imports.CreateJob(ctx, newImportJob(ImportSourceDocument, "source.md"))
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	job, err = service.stageItems(ctx, job, "chunk-1", []Item{completeImportTestItem("doc-accept-001")})
+	if err != nil {
+		t.Fatalf("stageItems: %v", err)
+	}
+	staged, err := imports.ListItems(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	if staged[0].AgentReviewStatus != ImportAgentReviewNeedsHumanReview {
+		t.Fatalf("AgentReviewStatus = %q, want needs_human_review", staged[0].AgentReviewStatus)
+	}
+
+	if _, _, err := service.ReviewItems(ctx, job.ID, []string{staged[0].ID}, ImportReviewStatusAccepted); err != nil {
+		t.Fatalf("ReviewItems accept: %v", err)
+	}
+	reviewed, err := imports.ListItems(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("ListItems reviewed: %v", err)
+	}
+	if reviewed[0].AgentReviewStatus != ImportAgentReviewAutoApproved {
+		t.Fatalf("AgentReviewStatus after accept = %q, want auto_approved", reviewed[0].AgentReviewStatus)
+	}
+
+	committed, err := service.Commit(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if committed.ImportedItems != 1 {
+		t.Fatalf("ImportedItems = %d, want 1", committed.ImportedItems)
+	}
+	if _, err := store.Get(ctx, "doc-accept-001"); err != nil {
+		t.Fatalf("accepted document item should be written to question bank: %v", err)
+	}
+}
+
+func TestReviewRejectsDocumentGeneratedItemForCommit(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore(nil)
+	imports := NewMemoryImportStore()
+	service := NewImportService(ImportServiceDeps{
+		Imports: imports,
+		Writer:  store,
+	})
+	job, err := imports.CreateJob(ctx, newImportJob(ImportSourceDocument, "source.md"))
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	job, err = service.stageItems(ctx, job, "chunk-1", []Item{completeImportTestItem("doc-reject-001")})
+	if err != nil {
+		t.Fatalf("stageItems: %v", err)
+	}
+	staged, err := imports.ListItems(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+
+	if _, _, err := service.ReviewItems(ctx, job.ID, []string{staged[0].ID}, ImportReviewStatusRejected); err != nil {
+		t.Fatalf("ReviewItems reject: %v", err)
+	}
+	reviewed, err := imports.ListItems(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("ListItems reviewed: %v", err)
+	}
+	if reviewed[0].AgentReviewStatus != ImportAgentReviewRejected {
+		t.Fatalf("AgentReviewStatus after reject = %q, want rejected", reviewed[0].AgentReviewStatus)
+	}
+
+	committed, err := service.Commit(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if committed.ImportedItems != 0 {
+		t.Fatalf("ImportedItems = %d, want 0", committed.ImportedItems)
+	}
+	if _, err := store.Get(ctx, "doc-reject-001"); err == nil {
+		t.Fatal("rejected document item should not be written to question bank")
+	}
+}
+
+func completeImportTestItem(id string) Item {
+	return Item{
+		ID:             id,
+		Content:        "Go 服务如何排查线上 goroutine 泄漏？",
+		SkillCategory:  "go",
+		Difficulty:     3,
+		Tags:           []string{"go", "debugging"},
+		ExpectedPoints: []string{"pprof", "context cancellation", "blocked channel"},
+		Rubric: map[string]string{
+			"pass": "能说出 pprof 和阻塞排查",
+		},
+		SampleAnswer:  "可以使用 pprof goroutine 查看堆栈，结合 context 取消和 channel 阻塞点定位。",
+		FollowUpHints: []string{"如何判断 goroutine 阻塞在 channel send 还是 receive？"},
+	}
+}
+
 func TestImportService_ImportLocalQuestionOnlyUsesLLMEnrichment(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemoryStore(nil)
@@ -533,7 +640,7 @@ func TestImportDocumentStagesSourceProvenance(t *testing.T) {
 
 func TestPGImportMetadataPackingRoundTripsAgentReviewAndSource(t *testing.T) {
 	item := ImportItem{
-		FieldProvenance: map[string]string{"difficulty": "generated"},
+		FieldProvenance:   map[string]string{"difficulty": "generated"},
 		AgentReviewStatus: ImportAgentReviewAutoApproved,
 		AgentReviewReason: "complete and grounded",
 		SourceProvenance: map[string]string{

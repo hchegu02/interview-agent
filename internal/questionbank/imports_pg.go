@@ -336,11 +336,23 @@ func (s *PGImportStore) UpdateItemReviews(ctx context.Context, jobID string, ite
 	if len(itemIDs) == 0 {
 		return nil
 	}
+	reviewStatus = normalizedImportReviewStatus(reviewStatus)
 	_, err := s.Pool.Exec(ctx, `
 UPDATE question_bank_import_items
-SET review_status=$3, updated_at=now()
+SET review_status=$3,
+    field_provenance = CASE
+        WHEN $3 = 'accepted'
+             AND field_provenance ? $4
+             AND field_provenance ->> $4 <> $5
+            THEN jsonb_set(field_provenance, ARRAY[$4], to_jsonb($5::text), true)
+        WHEN $3 = 'rejected'
+             AND field_provenance ? $4
+            THEN jsonb_set(field_provenance, ARRAY[$4], to_jsonb($6::text), true)
+        ELSE field_provenance
+    END,
+    updated_at=now()
 WHERE job_id=$1 AND id=ANY($2) AND status='valid'
-`, jobID, itemIDs, normalizedImportReviewStatus(reviewStatus))
+`, jobID, itemIDs, reviewStatus, importMetaAgentReviewStatus, ImportAgentReviewAutoApproved, ImportAgentReviewRejected)
 	if err != nil {
 		return fmt.Errorf("update question bank import item reviews: %w", err)
 	}

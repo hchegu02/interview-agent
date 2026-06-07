@@ -185,6 +185,21 @@ func importItemAccepted(item ImportItem) bool {
 	return item.ReviewStatus == "" || item.ReviewStatus == ImportReviewStatusAccepted
 }
 
+func agentReviewStatusAfterHumanReview(current, reviewStatus string) string {
+	reviewStatus = normalizedImportReviewStatus(reviewStatus)
+	switch reviewStatus {
+	case ImportReviewStatusAccepted:
+		if current != "" && current != ImportAgentReviewAutoApproved {
+			return ImportAgentReviewAutoApproved
+		}
+	case ImportReviewStatusRejected:
+		if current != "" {
+			return ImportAgentReviewRejected
+		}
+	}
+	return current
+}
+
 func normalizedImportReviewStatus(status string) string {
 	if status == ImportReviewStatusRejected {
 		return ImportReviewStatusRejected
