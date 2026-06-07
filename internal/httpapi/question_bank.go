@@ -277,6 +277,15 @@ func (s *Server) createQuestionBankGenerationJob(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid generation request"})
 		return
 	}
+	if c.Query("async") == "true" {
+		job, err := s.questionGeneration.EnqueueGenerate(c.Request.Context(), req)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "job": job})
+			return
+		}
+		c.JSON(http.StatusAccepted, gin.H{"job": job})
+		return
+	}
 	job, err := s.questionGeneration.Generate(c.Request.Context(), req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "job": job})

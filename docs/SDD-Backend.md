@@ -181,7 +181,7 @@ RAG 输出应写入：
 
 ### 7.1 题库生成链路
 
-题库生成用于把本地 Markdown、PDF、DOCX、TXT 等文档导入后的切片转成可审核题目。当前实现不写新表，复用 `question_bank_import_jobs/chunks/items`：
+题库生成用于把本地 Markdown、PDF、DOCX、TXT 等文档导入后的切片转成可审核题目。生成任务状态在 PG 模式下写入 `question_bank_generation_jobs`，生成结果仍复用 `question_bank_import_jobs/chunks/items` 进入审核区：
 
 ```text
 source import job chunks
@@ -202,10 +202,13 @@ source import job chunks
 - 通过门禁的题不会直接进入正式题库，而是通过现有 import review flow 暂存。
 - 暂存 item 默认 `agent_review_status=needs_human_review`，人工 accept 后才允许 commit 到正式题库。
 - provenance 使用 `generated_question_v1`，记录 generation job、source job、candidate、concept、question type 和 source refs。
+- `POST /api/question-bank/generation-jobs?async=true` 会创建 `queued` job 并返回 HTTP 202，后台 Go worker 执行真实 LLM 生成；调用方通过 `GET /api/question-bank/generation-jobs/:id` 轮询状态。
+- `POST /api/question-bank/generation-jobs` 未带 `async=true` 时保留同步创建行为，兼容旧调用方。
+- `stage` 只允许 `created` 或已 `staged` 的 generation job，未完成或失败 job 不会写入导入审核区。
 
 MVP 限制：
 
-- `GenerationService` 的 generation job 查询状态保存在进程内内存；服务重启后不能再按 generation job id 查询，但已 stage 的 import job/items 仍在 ImportStore 中。
+- 配置 PG 时 generation job 状态可跨请求和服务重启查询；未配置 PG 时仍使用进程内内存 store。
 - 当前 scoped retrieval 是轻量词项匹配，不等同于面试出题时的 pgvector/BM25/RRF RAG pipeline。
 - 生成阶段依赖 LLM；没有 LLM model 时不会伪造候选题。
 

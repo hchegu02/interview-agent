@@ -70,8 +70,10 @@ migrate-up: ## apply DB migrations (requires docker postgres up)
 	$(PWSH) -Command 'psql $$env:INTERVIEW_POSTGRES_DSN -v ON_ERROR_STOP=1 -f migrations/010_session_row_version.up.sql'
 	$(PWSH) -Command 'psql $$env:INTERVIEW_POSTGRES_DSN -v ON_ERROR_STOP=1 -f migrations/011_user_memory.up.sql'
 	$(PWSH) -Command 'psql $$env:INTERVIEW_POSTGRES_DSN -v ON_ERROR_STOP=1 -f migrations/012_user_memory_row_version.up.sql'
+	$(PWSH) -Command 'psql $$env:INTERVIEW_POSTGRES_DSN -v ON_ERROR_STOP=1 -f migrations/013_question_bank_generation_jobs.up.sql'
 
 migrate-down: ## roll back DB migrations
+	$(PWSH) -Command 'psql $$env:INTERVIEW_POSTGRES_DSN -v ON_ERROR_STOP=1 -f migrations/013_question_bank_generation_jobs.down.sql'
 	$(PWSH) -Command 'psql $$env:INTERVIEW_POSTGRES_DSN -v ON_ERROR_STOP=1 -f migrations/012_user_memory_row_version.down.sql'
 	$(PWSH) -Command 'psql $$env:INTERVIEW_POSTGRES_DSN -v ON_ERROR_STOP=1 -f migrations/011_user_memory.down.sql'
 	$(PWSH) -Command 'psql $$env:INTERVIEW_POSTGRES_DSN -v ON_ERROR_STOP=1 -f migrations/010_session_row_version.down.sql'

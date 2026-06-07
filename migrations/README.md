@@ -21,6 +21,7 @@
 | `010_session_row_version.up.sql` | 给 sessions 增加 row_version，支持 PG 乐观锁写入 |
 | `011_user_memory.up.sql` | 创建长期用户记忆表 user_memory，按 user_id 主键保存 memory_json |
 | `012_user_memory_row_version.up.sql` | 给 user_memory 增加 row_version，支持长期记忆 CAS 写入 |
+| `013_question_bank_generation_jobs.up.sql` | 创建题库定向生成任务表，支持异步 generation job 状态持久化 |
 | `seed_question_bank.sql` | 演示种子数据（15 道题），不走版本控制，可重复执行 |
 
 ## 本地开发：用 docker-compose 跑
@@ -70,6 +71,9 @@ psql "postgres://interview:interview@localhost:5432/interview" \
 psql "postgres://interview:interview@localhost:5432/interview" \
     -v ON_ERROR_STOP=1 \
     -f migrations/012_user_memory_row_version.up.sql
+psql "postgres://interview:interview@localhost:5432/interview" \
+    -v ON_ERROR_STOP=1 \
+    -f migrations/013_question_bank_generation_jobs.up.sql
 ```
 
 PowerShell 示例：
@@ -88,11 +92,13 @@ psql $dsn -v ON_ERROR_STOP=1 -f migrations/009_question_bank_content_trgm.up.sql
 psql $dsn -v ON_ERROR_STOP=1 -f migrations/010_session_row_version.up.sql
 psql $dsn -v ON_ERROR_STOP=1 -f migrations/011_user_memory.up.sql
 psql $dsn -v ON_ERROR_STOP=1 -f migrations/012_user_memory_row_version.up.sql
+psql $dsn -v ON_ERROR_STOP=1 -f migrations/013_question_bank_generation_jobs.up.sql
 ```
 
 `010_session_row_version.down.sql` 会删除 `sessions.row_version` 并丢失版本历史；生产回滚前应停写或确认没有并发 Session mutation。
 `011_user_memory.down.sql` 会删除所有长期用户记忆；生产回滚前应先备份或确认数据可丢弃。
 `012_user_memory_row_version.down.sql` 会删除 `user_memory.row_version` 并失去长期记忆 CAS 保护；生产回滚前应停写或确认不会多实例并发写长期记忆。
+`013_question_bank_generation_jobs.down.sql` 会删除题库生成任务历史；已 stage 的导入审核项仍保留在 import staging 表中。
 
 ## CI / 生产
 

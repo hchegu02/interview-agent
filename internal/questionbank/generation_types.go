@@ -8,6 +8,7 @@ import (
 )
 
 const (
+	GenerationStatusQueued     = "queued"
 	GenerationStatusCreated    = "created"
 	GenerationStatusRetrieving = "retrieving"
 	GenerationStatusDrafting   = "drafting"

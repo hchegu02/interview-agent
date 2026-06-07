@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -12,25 +13,34 @@ import (
 )
 
 type GenerationService struct {
-	imports ImportStore
-	writer  Writer
-	model   llm.ChatModel
-	mu      sync.Mutex
-	jobs    map[string]GenerationJob
+	imports     ImportStore
+	writer      Writer
+	model       llm.ChatModel
+	jobs        GenerationJobStore
+	workers     chan struct{}
+	asyncMu     sync.Mutex
+	asyncClosed bool
+	asyncWG     sync.WaitGroup
 }
 
 type GenerationServiceDeps struct {
 	Imports ImportStore
 	Writer  Writer
 	Model   llm.ChatModel
+	Jobs    GenerationJobStore
 }
 
 func NewGenerationService(deps GenerationServiceDeps) *GenerationService {
+	jobs := deps.Jobs
+	if jobs == nil {
+		jobs = NewMemoryGenerationJobStore()
+	}
 	return &GenerationService{
 		imports: deps.Imports,
 		writer:  deps.Writer,
 		model:   deps.Model,
-		jobs:    map[string]GenerationJob{},
+		jobs:    jobs,
+		workers: make(chan struct{}, 2),
 	}
 }
 
@@ -49,36 +59,74 @@ func (s *GenerationService) Generate(ctx context.Context, req GenerationRequest)
 		CreatedAt: now,
 		UpdatedAt: now,
 	}
-	s.saveJob(job)
+	if _, err := s.createJob(ctx, job); err != nil {
+		return GenerationJob{}, err
+	}
+	return s.runGeneration(ctx, job)
+}
 
+func (s *GenerationService) EnqueueGenerate(ctx context.Context, req GenerationRequest) (GenerationJob, error) {
+	if s == nil || s.imports == nil {
+		return GenerationJob{}, errors.New("question generation store not configured")
+	}
+	if s.isShutdown() {
+		return GenerationJob{}, ErrImportServiceShutdown
+	}
+	if err := validateGenerationRequest(req); err != nil {
+		return GenerationJob{}, err
+	}
+	now := time.Now().UTC()
+	job := GenerationJob{
+		ID:        generationJobID(req, now),
+		Status:    GenerationStatusQueued,
+		Request:   req,
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
+	job, err := s.createJob(ctx, job)
+	if err != nil {
+		return GenerationJob{}, err
+	}
+	s.runAsync(func() {
+		_, _ = s.runGeneration(context.Background(), job)
+	})
+	return job, nil
+}
+
+func (s *GenerationService) runGeneration(ctx context.Context, job GenerationJob) (GenerationJob, error) {
+	req := job.Request
+	job.Status = GenerationStatusRetrieving
+	job.Error = ""
+	job.UpdatedAt = time.Now().UTC()
+	job = s.saveJob(ctx, job)
 	chunks, err := retrieveGenerationChunks(ctx, s.imports, req, generationChunkLimit(req))
 	if err != nil {
-		return s.failGenerationJob(job, err), err
+		return s.failGenerationJob(ctx, job, err), err
 	}
 	if len(chunks) == 0 {
 		err := fmt.Errorf("no source chunks matched generation request")
-		return s.failGenerationJob(job, err), err
+		return s.failGenerationJob(ctx, job, err), err
 	}
 
 	job.Status = GenerationStatusDrafting
 	job.UpdatedAt = time.Now().UTC()
-	s.saveJob(job)
+	job = s.saveJob(ctx, job)
 	concepts, warnings, err := s.extractConceptCards(ctx, req, chunks)
 	if err != nil {
-		return s.failGenerationJob(job, err), err
+		return s.failGenerationJob(ctx, job, err), err
 	}
 	if len(concepts) == 0 {
 		err := fmt.Errorf("no grounded concept cards generated")
-		return s.failGenerationJob(job, err), err
+		return s.failGenerationJob(ctx, job, err), err
 	}
 
 	drafts, err := s.generateQuestionCandidates(ctx, req, concepts, chunks)
 	if err != nil {
-		return s.failGenerationJob(job, err), err
+		return s.failGenerationJob(ctx, job, err), err
 	}
 	job.Status = GenerationStatusGating
 	job.UpdatedAt = time.Now().UTC()
-	s.saveJob(job)
+	job = s.saveJob(ctx, job)
 	existingContentKeys, err := activeQuestionContentKeys(ctx, s.writer)
 	if err != nil {
 		warnings = append(warnings, fmt.Sprintf("existing question dedupe skipped: %v", err))
@@ -89,7 +137,7 @@ func (s *GenerationService) Generate(ctx context.Context, req GenerationRequest)
 		job.Concepts = concepts
 		job.RejectedCandidates = rejected
 		job.Warnings = warnings
-		return s.failGenerationJob(job, err), err
+		return s.failGenerationJob(ctx, job, err), err
 	}
 	for i := range passed {
 		passed[i].ID = questionCandidateID(job.ID, i, passed[i])
@@ -105,19 +153,74 @@ func (s *GenerationService) Generate(ctx context.Context, req GenerationRequest)
 	job.RejectedCandidates = rejected
 	job.Warnings = warnings
 	job.UpdatedAt = time.Now().UTC()
-	s.saveJob(job)
+	job = s.saveJob(ctx, job)
 	return job, nil
 }
 
 func (s *GenerationService) Get(ctx context.Context, id string) (GenerationJob, error) {
-	_ = ctx
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	job, ok := s.jobs[id]
-	if !ok {
-		return GenerationJob{}, ErrImportNotFound
+	if s == nil || s.jobs == nil {
+		return GenerationJob{}, errors.New("question generation store not configured")
 	}
-	return cloneGenerationJob(job), nil
+	return s.jobs.Get(ctx, id)
+}
+
+func (s *GenerationService) runAsync(fn func()) bool {
+	if s == nil {
+		return false
+	}
+	s.asyncMu.Lock()
+	if s.asyncClosed {
+		s.asyncMu.Unlock()
+		return false
+	}
+	s.asyncWG.Add(1)
+	s.asyncMu.Unlock()
+
+	go func() {
+		defer s.asyncWG.Done()
+		s.workers <- struct{}{}
+		defer func() { <-s.workers }()
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				log.Printf("question bank generation background task panicked: %v", recovered)
+			}
+		}()
+		fn()
+	}()
+	return true
+}
+
+func (s *GenerationService) isShutdown() bool {
+	if s == nil {
+		return true
+	}
+	s.asyncMu.Lock()
+	defer s.asyncMu.Unlock()
+	return s.asyncClosed
+}
+
+func (s *GenerationService) Shutdown(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.asyncMu.Lock()
+	s.asyncClosed = true
+	s.asyncMu.Unlock()
+
+	done := make(chan struct{})
+	go func() {
+		s.asyncWG.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 func (s *GenerationService) Stage(ctx context.Context, id string) (GenerationJob, ImportJob, []ImportItem, error) {
@@ -127,6 +230,9 @@ func (s *GenerationService) Stage(ctx context.Context, id string) (GenerationJob
 	job, err := s.Get(ctx, id)
 	if err != nil {
 		return GenerationJob{}, ImportJob{}, nil, err
+	}
+	if job.Status != GenerationStatusCreated && job.Status != GenerationStatusStaged {
+		return job, ImportJob{}, nil, fmt.Errorf("generation job %s is %s, not created", job.ID, job.Status)
 	}
 	if len(job.Candidates) == 0 {
 		return job, ImportJob{}, nil, errors.New("generation job has no accepted candidates")
@@ -180,7 +286,7 @@ func (s *GenerationService) Stage(ctx context.Context, id string) (GenerationJob
 	job.Status = GenerationStatusStaged
 	job.StagedImportJobID = importJob.ID
 	job.UpdatedAt = time.Now().UTC()
-	s.saveJob(job)
+	job = s.saveJob(ctx, job)
 	return job, importJob, staged, nil
 }
 
@@ -203,24 +309,31 @@ func questionCandidateID(jobID string, index int, candidate QuestionCandidate) s
 	return importGeneratedID("gq", fmt.Sprintf("%s:%03d:%s:%s", jobID, index, candidate.ConceptID, candidate.Content))
 }
 
-func (s *GenerationService) failGenerationJob(job GenerationJob, err error) GenerationJob {
+func (s *GenerationService) failGenerationJob(ctx context.Context, job GenerationJob, err error) GenerationJob {
 	job.Status = GenerationStatusFailed
 	job.Error = err.Error()
 	job.UpdatedAt = time.Now().UTC()
-	s.saveJob(job)
+	job = s.saveJob(ctx, job)
 	return job
 }
 
-func (s *GenerationService) saveJob(job GenerationJob) {
-	if s == nil {
-		return
+func (s *GenerationService) createJob(ctx context.Context, job GenerationJob) (GenerationJob, error) {
+	if s == nil || s.jobs == nil {
+		return GenerationJob{}, errors.New("question generation store not configured")
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.jobs == nil {
-		s.jobs = map[string]GenerationJob{}
+	return s.jobs.Create(ctx, cloneGenerationJob(job))
+}
+
+func (s *GenerationService) saveJob(ctx context.Context, job GenerationJob) GenerationJob {
+	if s == nil || s.jobs == nil {
+		return job
 	}
-	s.jobs[job.ID] = cloneGenerationJob(job)
+	updated, err := s.jobs.Update(ctx, cloneGenerationJob(job))
+	if err != nil {
+		log.Printf("question bank generation job update failed: %v", err)
+		return job
+	}
+	return updated
 }
 
 func cloneGenerationJob(job GenerationJob) GenerationJob {

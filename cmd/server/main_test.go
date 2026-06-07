@@ -696,7 +696,11 @@ func TestShutdownServerClosesQuestionBankImportService(t *testing.T) {
 	})
 	srv := &http.Server{Handler: http.NewServeMux()}
 
-	if err := shutdownServer(context.Background(), srv, imports); err != nil {
+	generation := questionbank.NewGenerationService(questionbank.GenerationServiceDeps{
+		Imports: questionbank.NewMemoryImportStore(),
+		Writer:  questionbank.NewMemoryStore(nil),
+	})
+	if err := shutdownServer(context.Background(), srv, imports, generation); err != nil {
 		t.Fatalf("shutdownServer: %v", err)
 	}
 	_, err := imports.EnqueueImport(context.Background(), questionbank.ImportSourceQuestionBank, questionbank.ImportFile{
@@ -705,5 +709,15 @@ func TestShutdownServerClosesQuestionBankImportService(t *testing.T) {
 	})
 	if !errors.Is(err, questionbank.ErrImportServiceShutdown) {
 		t.Fatalf("EnqueueImport error = %v, want ErrImportServiceShutdown", err)
+	}
+	_, err = generation.EnqueueGenerate(context.Background(), questionbank.GenerationRequest{
+		SourceJobID:  "imp-001",
+		Topic:        "Go",
+		QuestionType: "interview",
+		Count:        1,
+		Difficulty:   3,
+	})
+	if !errors.Is(err, questionbank.ErrImportServiceShutdown) {
+		t.Fatalf("EnqueueGenerate error = %v, want ErrImportServiceShutdown", err)
 	}
 }

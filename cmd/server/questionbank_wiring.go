@@ -49,7 +49,7 @@ func buildQuestionBankImportService(cfg *config.Config, deps appDeps, store ques
 	}), nil
 }
 
-func buildQuestionBankGenerationService(cfg *config.Config, imports *questionbank.ImportService, store questionbank.Store) (*questionbank.GenerationService, error) {
+func buildQuestionBankGenerationService(cfg *config.Config, deps appDeps, imports *questionbank.ImportService, store questionbank.Store) (*questionbank.GenerationService, error) {
 	if imports == nil || imports.Store() == nil {
 		return nil, fmt.Errorf("question bank import store not configured")
 	}
@@ -61,9 +61,14 @@ func buildQuestionBankGenerationService(cfg *config.Config, imports *questionban
 	if err != nil {
 		return nil, err
 	}
+	var jobStore questionbank.GenerationJobStore
+	if deps.PGPool != nil {
+		jobStore = questionbank.NewPGGenerationJobStore(deps.PGPool)
+	}
 	return questionbank.NewGenerationService(questionbank.GenerationServiceDeps{
 		Imports: imports.Store(),
 		Writer:  writer,
 		Model:   model,
+		Jobs:    jobStore,
 	}), nil
 }

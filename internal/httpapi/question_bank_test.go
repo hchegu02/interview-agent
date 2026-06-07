@@ -328,6 +328,44 @@ func TestQuestionBankGeneration_CreateGetAndStage(t *testing.T) {
 	}
 }
 
+func TestQuestionBankGeneration_AsyncCreateReturnsQueuedJob(t *testing.T) {
+	importStore := questionbank.NewMemoryImportStore()
+	if err := importStore.AddChunks(context.Background(), []questionbank.ImportChunk{{
+		ID:      "imp-async:chunk:001",
+		JobID:   "imp-async",
+		Index:   1,
+		Content: "Go 并发治理需要识别 goroutine 泄漏，并用 pprof 和 context 取消定位问题。",
+	}}); err != nil {
+		t.Fatalf("AddChunks: %v", err)
+	}
+	server := NewServer(&config.Config{})
+	server.SetQuestionBankGenerationService(questionbank.NewGenerationService(questionbank.GenerationServiceDeps{
+		Imports: importStore,
+		Writer:  questionbank.NewMemoryStore(nil),
+		Model: &httpQuestionGenerationModel{responses: []func([]llm.Message) string{
+			func([]llm.Message) string {
+				return `{"concepts":[{"title":"goroutine 泄漏","skill":"go","difficulty_hint":3,"keywords":["goroutine"],"question_angles":["debugging"],"evidence_refs":[{"chunk_id":"imp-async:chunk:001","quote":"context 取消"}]}]}`
+			},
+			func(messages []llm.Message) string {
+				conceptID := httpConceptIDFromPrompt(messages)
+				return `{"candidates":[{"concept_id":"` + conceptID + `","content":"如何排查 goroutine 泄漏？","question_type":"interview","target_dimension":"debugging","answer":"看 pprof 和 context。","explanation":"题目基于原文证据。","tags":["go"],"skill_category":"go","difficulty":3,"expected_points":["说明 goroutine 泄漏现象"],"rubric":{"good":"能说明 pprof 和 context"},"sample_answer":"通过 pprof 定位阻塞点，并检查 context 取消。","follow_up_hints":["如何避免再次泄漏？"],"source_refs":[{"chunk_id":"imp-async:chunk:001","quote":"context 取消"}]}]}`
+			},
+		}},
+	}))
+
+	body := strings.NewReader(`{"source_job_id":"imp-async","topic":"goroutine 泄漏","question_type":"interview","count":1,"difficulty":3,"target_dimension":"debugging","skill_category":"go"}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/question-bank/generation-jobs?async=true", body)
+	req.Header.Set("Content-Type", "application/json")
+	server.Router().ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("async create status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"status":"queued"`) {
+		t.Fatalf("async response should return queued job: %s", rec.Body.String())
+	}
+}
+
 type httpQuestionGenerationModel struct {
 	responses []func([]llm.Message) string
 	calls     int

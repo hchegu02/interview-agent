@@ -100,7 +100,7 @@ func main() {
 		os.Exit(1)
 	}
 	server.SetQuestionBankImportService(questionImportService)
-	questionGenerationService, err := buildQuestionBankGenerationService(cfg, questionImportService, questionBankStore)
+	questionGenerationService, err := buildQuestionBankGenerationService(cfg, deps, questionImportService, questionBankStore)
 	if err != nil {
 		logger.Error("question bank generation setup failed", "err", err)
 		os.Exit(1)
@@ -169,7 +169,7 @@ func main() {
 	// drain：停止接受新请求，等 in-flight 请求完成（阶段 7 完善）
 	ctx, cancel := context.WithTimeout(context.Background(), cfg.Server.ShutdownGrace)
 	defer cancel()
-	if err := shutdownServer(ctx, srv, questionImportService); err != nil {
+	if err := shutdownServer(ctx, srv, questionImportService, questionGenerationService); err != nil {
 		logger.Error("graceful shutdown failed", "err", err)
 	}
 
@@ -180,11 +180,16 @@ func main() {
 
 func shutdownServer(ctx context.Context, srv *http.Server, questionImports interface {
 	Shutdown(context.Context) error
+}, questionGeneration interface {
+	Shutdown(context.Context) error
 }) error {
 	var shutdownErr error
 	shutdownErr = errors.Join(shutdownErr, srv.Shutdown(ctx))
 	if questionImports != nil {
 		shutdownErr = errors.Join(shutdownErr, questionImports.Shutdown(ctx))
+	}
+	if questionGeneration != nil {
+		shutdownErr = errors.Join(shutdownErr, questionGeneration.Shutdown(ctx))
 	}
 	return shutdownErr
 }

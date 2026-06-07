@@ -1,7 +1,7 @@
 server:
   addr: ":8080"
   read_timeout: 15s
-  write_timeout: 60s        # SSE 长连接需要较大
+  write_timeout: 300s       # 真实 LLM 题库导入/生成可能超过 60s
   shutdown_grace: 30s
   max_in_flight: 200        # 入口背压阈值
   max_streams: 100          # SSE 长连接背压阈值
@@ -24,7 +24,7 @@ llm:
   base_url: "http://localhost:7853/v1"
   model: "gpt-5.5"
   fallback_model: "qwen-turbo"
-  timeout: 30s
+  timeout: 180s
   max_tokens: 1200
   max_retries: 2
   max_concurrency: 4        # 单进程 LLM 并发上限，保护上游 provider

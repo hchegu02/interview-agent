@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"interview-agent/internal/llm"
 )
@@ -575,6 +576,97 @@ func TestGenerationServiceStageRequiresHumanReviewBeforeCommit(t *testing.T) {
 	if _, err := store.Get(ctx, items[0].QuestionID); err != nil {
 		t.Fatalf("accepted generated item should be committed: %v", err)
 	}
+}
+
+func TestGenerationServiceEnqueueGenerateRunsInBackground(t *testing.T) {
+	ctx := context.Background()
+	imports := NewMemoryImportStore()
+	if err := imports.AddChunks(ctx, []ImportChunk{{
+		ID:      "imp-001:chunk:001",
+		JobID:   "imp-001",
+		Index:   1,
+		Content: "Go 并发治理需要识别 goroutine 泄漏，并用 pprof 和 context 取消定位问题。",
+	}}); err != nil {
+		t.Fatalf("AddChunks: %v", err)
+	}
+	service := NewGenerationService(GenerationServiceDeps{
+		Imports: imports,
+		Model: &scriptedGenerationModel{
+			responses: []func([]llm.Message) string{
+				func([]llm.Message) string {
+					return `{"concepts":[{"title":"goroutine 泄漏","skill":"go","difficulty_hint":3,"keywords":["goroutine"],"question_angles":["debugging"],"evidence_refs":[{"chunk_id":"imp-001:chunk:001","quote":"context 取消"}]}]}`
+				},
+				func(messages []llm.Message) string {
+					conceptID := conceptIDFromPrompt(messages)
+					return `{"candidates":[{"concept_id":"` + conceptID + `","content":"如何排查 goroutine 泄漏？","question_type":"interview","target_dimension":"debugging","answer":"看 pprof 和 context。","explanation":"题目基于原文证据。","tags":["go"],"skill_category":"go","difficulty":3,"expected_points":["说明 goroutine 泄漏现象"],"rubric":{"good":"能说明 pprof 和 context"},"sample_answer":"通过 pprof 定位阻塞点，并检查 context 取消。","follow_up_hints":["如何避免再次泄漏？"],"source_refs":[{"chunk_id":"imp-001:chunk:001","quote":"context 取消"}]}]}`
+				},
+			},
+		},
+	})
+
+	job, err := service.EnqueueGenerate(ctx, GenerationRequest{
+		SourceJobID:     "imp-001",
+		Topic:           "goroutine 泄漏",
+		QuestionType:    "interview",
+		Count:           1,
+		Difficulty:      3,
+		TargetDimension: "debugging",
+		SkillCategory:   "go",
+	})
+	if err != nil {
+		t.Fatalf("EnqueueGenerate: %v", err)
+	}
+	if job.Status != GenerationStatusQueued {
+		t.Fatalf("queued job = %+v", job)
+	}
+
+	var got GenerationJob
+	waitForGenerationJob(t, func() bool {
+		var getErr error
+		got, getErr = service.Get(ctx, job.ID)
+		return getErr == nil && got.Status == GenerationStatusCreated
+	})
+	if len(got.Candidates) != 1 {
+		t.Fatalf("generated job = %+v", got)
+	}
+}
+
+func TestGenerationServiceStageRejectsQueuedJob(t *testing.T) {
+	ctx := context.Background()
+	jobs := NewMemoryGenerationJobStore()
+	job := GenerationJob{
+		ID:     "gen-queued",
+		Status: GenerationStatusQueued,
+		Request: GenerationRequest{
+			SourceJobID:  "imp-001",
+			Topic:        "Go",
+			QuestionType: "interview",
+			Count:        1,
+			Difficulty:   3,
+		},
+	}
+	if _, err := jobs.Create(ctx, job); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	service := NewGenerationService(GenerationServiceDeps{
+		Imports: NewMemoryImportStore(),
+		Jobs:    jobs,
+	})
+	if _, _, _, err := service.Stage(ctx, job.ID); err == nil {
+		t.Fatal("stage should reject queued generation job")
+	}
+}
+
+func waitForGenerationJob(t *testing.T, done func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if done() {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("condition not reached before timeout")
 }
 
 func completeGenerationCandidate(conceptID, content string) QuestionCandidate {
