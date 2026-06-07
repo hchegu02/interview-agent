@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"mime/multipart"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"interview-agent/internal/config"
+	"interview-agent/internal/llm"
 	"interview-agent/internal/questionbank"
 )
 
@@ -262,4 +264,104 @@ func TestQuestionBankImport_AsyncLocalJSON(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `"status":"queued"`) {
 		t.Fatalf("async response should return queued job: %s", rec.Body.String())
 	}
+}
+
+func TestQuestionBankGeneration_CreateGetAndStage(t *testing.T) {
+	importStore := questionbank.NewMemoryImportStore()
+	if err := importStore.AddChunks(context.Background(), []questionbank.ImportChunk{{
+		ID:      "imp-001:chunk:001",
+		JobID:   "imp-001",
+		Index:   1,
+		Content: "Go 并发治理需要识别 goroutine 泄漏，并用 pprof 和 context 取消定位问题。",
+	}}); err != nil {
+		t.Fatalf("AddChunks: %v", err)
+	}
+	store := questionbank.NewMemoryStore(nil)
+	server := NewServer(&config.Config{})
+	server.SetQuestionBankGenerationService(questionbank.NewGenerationService(questionbank.GenerationServiceDeps{
+		Imports: importStore,
+		Writer:  store,
+		Model: &httpQuestionGenerationModel{responses: []func([]llm.Message) string{
+			func([]llm.Message) string {
+				return `{"concepts":[{"title":"goroutine 泄漏","skill":"go","difficulty_hint":3,"keywords":["goroutine"],"question_angles":["debugging"],"evidence_refs":[{"chunk_id":"imp-001:chunk:001","quote":"context 取消"}]}]}`
+			},
+			func(messages []llm.Message) string {
+				conceptID := httpConceptIDFromPrompt(messages)
+				return `{"candidates":[{"concept_id":"` + conceptID + `","content":"如何排查 goroutine 泄漏？","question_type":"interview","target_dimension":"debugging","answer":"看 pprof 和 context。","explanation":"题目基于原文证据。","tags":["go"],"skill_category":"go","difficulty":3,"expected_points":["说明 goroutine 泄漏现象"],"rubric":{"good":"能说明 pprof 和 context"},"sample_answer":"通过 pprof 定位阻塞点，并检查 context 取消。","follow_up_hints":["如何避免再次泄漏？"],"source_refs":[{"chunk_id":"imp-001:chunk:001","quote":"context 取消"}]}]}`
+			},
+		}},
+	}))
+
+	body := strings.NewReader(`{"source_job_id":"imp-001","topic":"goroutine 泄漏","question_type":"interview","count":1,"difficulty":3,"target_dimension":"debugging","skill_category":"go"}`)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/question-bank/generation-jobs", body)
+	req.Header.Set("Content-Type", "application/json")
+	server.Router().ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	var created struct {
+		Job questionbank.GenerationJob `json:"job"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create: %v", err)
+	}
+	if created.Job.ID == "" || len(created.Job.Candidates) != 1 {
+		t.Fatalf("created job = %+v", created.Job)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/question-bank/generation-jobs/"+created.Job.ID, nil)
+	server.Router().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/question-bank/generation-jobs/"+created.Job.ID+"/stage", nil)
+	server.Router().ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("stage status = %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"agent_review_status":"needs_human_review"`) {
+		t.Fatalf("stage response should require human review: %s", rec.Body.String())
+	}
+}
+
+type httpQuestionGenerationModel struct {
+	responses []func([]llm.Message) string
+	calls     int
+}
+
+func (m *httpQuestionGenerationModel) Generate(_ context.Context, messages []llm.Message, _ llm.Options) (*llm.Response, error) {
+	if m.calls >= len(m.responses) {
+		return &llm.Response{Content: `{"candidates":[]}`}, nil
+	}
+	content := m.responses[m.calls](messages)
+	m.calls++
+	return &llm.Response{Content: content}, nil
+}
+
+func (m *httpQuestionGenerationModel) Stream(context.Context, []llm.Message, llm.Options) (<-chan llm.Chunk, error) {
+	ch := make(chan llm.Chunk)
+	close(ch)
+	return ch, nil
+}
+
+func (m *httpQuestionGenerationModel) Name() string { return "http-question-generation-model" }
+
+func httpConceptIDFromPrompt(messages []llm.Message) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		content := messages[i].Content
+		idx := strings.Index(content, `"concept_id":"concept-`)
+		if idx < 0 {
+			continue
+		}
+		start := idx + len(`"concept_id":"`)
+		end := strings.Index(content[start:], `"`)
+		if end > 0 {
+			return content[start : start+end]
+		}
+	}
+	return "concept-missing"
 }

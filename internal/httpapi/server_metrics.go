@@ -21,6 +21,10 @@ func (s *Server) SetQuestionBankStore(store questionbank.Store) {
 	s.questionBank = store
 }
 
+func (s *Server) SetQuestionBankGenerationService(service *questionbank.GenerationService) {
+	s.questionGeneration = service
+}
+
 func (s *Server) GraphMetricsCallback() graph.Callback {
 	return NewMetricsGraphCallback(s.metricsRecorder)
 }

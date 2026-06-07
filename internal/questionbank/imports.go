@@ -156,3 +156,10 @@ func (s *ImportService) List(ctx context.Context) ([]ImportJob, error) {
 	}
 	return s.imports.ListJobs(ctx)
 }
+
+func (s *ImportService) Store() ImportStore {
+	if s == nil {
+		return nil
+	}
+	return s.imports
+}

@@ -21,6 +21,7 @@ type Server struct {
 	documentParser          parser.DocumentParser
 	questionBank            questionbank.Store
 	questionImports         *questionbank.ImportService
+	questionGeneration      *questionbank.GenerationService
 	profileAnalyzer         ProfileAnalyzer
 	metricsRecorder         *metricsRecorder
 	eventHubMetrics         func() EventHubMetrics
@@ -89,6 +90,9 @@ func (s *Server) Router() *gin.Engine {
 		api.GET("/question-bank/imports/:id", s.getQuestionBankImport)
 		api.POST("/question-bank/imports/:id/items/review", s.reviewQuestionBankImportItems)
 		api.POST("/question-bank/imports/:id/commit", s.commitQuestionBankImport)
+		api.POST("/question-bank/generation-jobs", s.createQuestionBankGenerationJob)
+		api.GET("/question-bank/generation-jobs/:id", s.getQuestionBankGenerationJob)
+		api.POST("/question-bank/generation-jobs/:id/stage", s.stageQuestionBankGenerationJob)
 		api.GET("/question-bank", s.listQuestionBank)
 		api.GET("/question-bank/facets", s.questionBankFacets)
 		api.GET("/question-bank/:id", s.getQuestionBankItem)

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 const (
@@ -29,12 +30,17 @@ type GenerationRequest struct {
 }
 
 type GenerationJob struct {
-	ID         string              `json:"id"`
-	Status     string              `json:"status"`
-	Request    GenerationRequest   `json:"request"`
-	Concepts   []ConceptCard       `json:"concepts,omitempty"`
-	Candidates []QuestionCandidate `json:"candidates,omitempty"`
-	Error      string              `json:"error,omitempty"`
+	ID                 string              `json:"id"`
+	Status             string              `json:"status"`
+	Request            GenerationRequest   `json:"request"`
+	Concepts           []ConceptCard       `json:"concepts,omitempty"`
+	Candidates         []QuestionCandidate `json:"candidates,omitempty"`
+	RejectedCandidates []QuestionCandidate `json:"rejected_candidates,omitempty"`
+	Warnings           []string            `json:"warnings,omitempty"`
+	StagedImportJobID  string              `json:"staged_import_job_id,omitempty"`
+	Error              string              `json:"error,omitempty"`
+	CreatedAt          time.Time           `json:"created_at,omitempty"`
+	UpdatedAt          time.Time           `json:"updated_at,omitempty"`
 }
 
 type SourceRef struct {

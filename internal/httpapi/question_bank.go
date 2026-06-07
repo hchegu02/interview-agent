@@ -46,6 +46,12 @@ type questionBankImportListResponse struct {
 	Jobs []questionbank.ImportJob `json:"jobs"`
 }
 
+type questionBankGenerationStageResponse struct {
+	Job       questionbank.GenerationJob `json:"job"`
+	ImportJob questionbank.ImportJob     `json:"import_job"`
+	Items     []questionbank.ImportItem  `json:"items,omitempty"`
+}
+
 type questionBankImportReviewRequest struct {
 	Action  string   `json:"action"`
 	ItemIDs []string `json:"item_ids"`
@@ -259,6 +265,62 @@ func (s *Server) commitQuestionBankImport(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, questionBankImportResponse{Job: job})
+}
+
+func (s *Server) createQuestionBankGenerationJob(c *gin.Context) {
+	if s.questionGeneration == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "question bank generation service not configured"})
+		return
+	}
+	var req questionbank.GenerationRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid generation request"})
+		return
+	}
+	job, err := s.questionGeneration.Generate(c.Request.Context(), req)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "job": job})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"job": job})
+}
+
+func (s *Server) getQuestionBankGenerationJob(c *gin.Context) {
+	if s.questionGeneration == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "question bank generation service not configured"})
+		return
+	}
+	job, err := s.questionGeneration.Get(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		if errors.Is(err, questionbank.ErrImportNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "question bank generation job not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "get question bank generation job failed"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"job": job})
+}
+
+func (s *Server) stageQuestionBankGenerationJob(c *gin.Context) {
+	if s.questionGeneration == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "question bank generation service not configured"})
+		return
+	}
+	job, importJob, items, err := s.questionGeneration.Stage(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		if errors.Is(err, questionbank.ErrImportNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "question bank generation job not found"})
+			return
+		}
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error(), "job": job})
+		return
+	}
+	c.JSON(http.StatusOK, questionBankGenerationStageResponse{
+		Job:       job,
+		ImportJob: importJob,
+		Items:     items,
+	})
 }
 
 func questionBankFilterFromQuery(c *gin.Context) (questionbank.Filter, error) {

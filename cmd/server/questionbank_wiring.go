@@ -48,3 +48,22 @@ func buildQuestionBankImportService(cfg *config.Config, deps appDeps, store ques
 		OwnerID:  hostnameOwnerID(),
 	}), nil
 }
+
+func buildQuestionBankGenerationService(cfg *config.Config, imports *questionbank.ImportService, store questionbank.Store) (*questionbank.GenerationService, error) {
+	if imports == nil || imports.Store() == nil {
+		return nil, fmt.Errorf("question bank import store not configured")
+	}
+	writer, ok := store.(questionbank.Writer)
+	if !ok {
+		return nil, fmt.Errorf("question bank store does not support writes")
+	}
+	model, _, err := buildChatModel(cfg)
+	if err != nil {
+		return nil, err
+	}
+	return questionbank.NewGenerationService(questionbank.GenerationServiceDeps{
+		Imports: imports.Store(),
+		Writer:  writer,
+		Model:   model,
+	}), nil
+}

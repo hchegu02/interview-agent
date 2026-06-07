@@ -100,6 +100,12 @@ func main() {
 		os.Exit(1)
 	}
 	server.SetQuestionBankImportService(questionImportService)
+	questionGenerationService, err := buildQuestionBankGenerationService(cfg, questionImportService, questionBankStore)
+	if err != nil {
+		logger.Error("question bank generation setup failed", "err", err)
+		os.Exit(1)
+	}
+	server.SetQuestionBankGenerationService(questionGenerationService)
 	// 导入任务可能在服务重启时停在 queued/committing 状态，这里异步恢复，避免启动路径被长任务阻塞。
 	go func() {
 		n, err := questionImportService.RecoverPendingJobs(context.Background())

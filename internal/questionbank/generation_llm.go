@@ -68,6 +68,57 @@ func validateConceptCardsJSON(raw []byte) error {
 	return nil
 }
 
+func parseQuestionCandidatesJSON(raw []byte) ([]QuestionCandidate, error) {
+	if err := validateQuestionCandidatesJSON(raw); err != nil {
+		return nil, err
+	}
+	var parsed struct {
+		Candidates []QuestionCandidate `json:"candidates"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil, err
+	}
+	return parsed.Candidates, nil
+}
+
+func validateQuestionCandidatesJSON(raw []byte) error {
+	if err := llm.ValidateJSON(raw); err != nil {
+		return err
+	}
+	var parsed struct {
+		Candidates []QuestionCandidate `json:"candidates"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return err
+	}
+	if len(parsed.Candidates) == 0 {
+		return fmt.Errorf("candidates must not be empty")
+	}
+	return nil
+}
+
+func (s *GenerationService) generateQuestionCandidates(ctx context.Context, req GenerationRequest, concepts []ConceptCard, chunks []RetrievedChunk) ([]QuestionCandidate, error) {
+	if s == nil || s.model == nil {
+		return nil, fmt.Errorf("question candidate generation requires llm model")
+	}
+	raw, err := json.Marshal(struct {
+		Request  GenerationRequest `json:"request"`
+		Concepts []ConceptCard     `json:"concepts"`
+		Chunks   []RetrievedChunk  `json:"chunks"`
+	}{Request: req, Concepts: concepts, Chunks: chunks})
+	if err != nil {
+		return nil, err
+	}
+	resp, err := llm.CallWithSchema(ctx, s.model, []llm.Message{
+		{Role: "system", Content: "你是证据约束的面试题生成助手。只输出 JSON，不要输出 markdown。"},
+		{Role: "user", Content: "基于 concept cards 和 evidence chunks 生成候选题。要求每题必须引用 concept_id 和 source_refs，source_refs.quote 必须是 chunks 原文子串。返回 JSON: {\"candidates\":[{\"concept_id\":\"\",\"content\":\"\",\"question_type\":\"interview|single_choice|short_answer\",\"target_dimension\":\"\",\"options\":[],\"answer\":\"\",\"explanation\":\"\",\"tags\":[],\"skill_category\":\"\",\"difficulty\":3,\"expected_points\":[],\"rubric\":{\"good\":\"\"},\"sample_answer\":\"\",\"follow_up_hints\":[],\"source_refs\":[{\"chunk_id\":\"\",\"quote\":\"\"}]}]}。\n\n" + string(raw)},
+	}, llm.Options{MaxTokens: 1800, Temperature: 0.2}, validateQuestionCandidatesJSON, 1)
+	if err != nil {
+		return nil, err
+	}
+	return parseQuestionCandidatesJSON([]byte(resp.Content))
+}
+
 func fallbackConceptCards(req GenerationRequest, chunks []RetrievedChunk) []ConceptCard {
 	if len(chunks) == 0 {
 		return nil

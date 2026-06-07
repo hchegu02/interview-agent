@@ -68,6 +68,9 @@ REST 请求
 | `GET` | `/api/question-bank` | 题库查询 |
 | `GET` | `/api/question-bank/:id` | 题目详情 |
 | `GET` | `/api/question-bank/facets` | 题库筛选项 |
+| `POST` | `/api/question-bank/generation-jobs` | 基于已导入文档切片生成候选题 |
+| `GET` | `/api/question-bank/generation-jobs/:id` | 查询生成任务 |
+| `POST` | `/api/question-bank/generation-jobs/:id/stage` | 将候选题放入现有导入审核区 |
 | `GET` | `/api/users/:user_id/memory` | 只读长期用户画像 |
 | `POST` | `/api/agent/message` | Intent Router + Skill 消息入口 |
 
@@ -175,6 +178,36 @@ RAG 输出应写入：
 - `WorkingMemory.DegradedReasons`
 
 如果 RAG 为空、错误或 rerank 失败，系统应降级到 fallback 题，不应直接中断面试。
+
+### 7.1 题库生成链路
+
+题库生成用于把本地 Markdown、PDF、DOCX、TXT 等文档导入后的切片转成可审核题目。当前实现不写新表，复用 `question_bank_import_jobs/chunks/items`：
+
+```text
+source import job chunks
+  -> generation scoped retrieval
+  -> LLM concept cards
+  -> LLM QuestionCandidate
+  -> quality gates
+  -> import review staging
+  -> human review
+  -> import commit
+```
+
+边界规则：
+
+- `GenerationRequest.SourceJobID` 必须指向已有文档导入 job 的 chunks。
+- 候选题必须引用 `concept_id` 和 `source_refs`，且 quote 必须是源 chunk 原文子串。
+- 质量门禁会拒绝空内容、未知 concept、未知 chunk、未落地引用、重复题、低价值总结题、单选项不完整、面试题缺少追问提示等候选。
+- 通过门禁的题不会直接进入正式题库，而是通过现有 import review flow 暂存。
+- 暂存 item 默认 `agent_review_status=needs_human_review`，人工 accept 后才允许 commit 到正式题库。
+- provenance 使用 `generated_question_v1`，记录 generation job、source job、candidate、concept、question type 和 source refs。
+
+MVP 限制：
+
+- `GenerationService` 的 generation job 查询状态保存在进程内内存；服务重启后不能再按 generation job id 查询，但已 stage 的 import job/items 仍在 ImportStore 中。
+- 当前 scoped retrieval 是轻量词项匹配，不等同于面试出题时的 pgvector/BM25/RRF RAG pipeline。
+- 生成阶段依赖 LLM；没有 LLM model 时不会伪造候选题。
 
 ## 8. LLM 与 rerank 边界
 
