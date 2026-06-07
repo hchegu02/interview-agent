@@ -1,6 +1,9 @@
 package questionbank
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 func TestValidateGenerationRequestRejectsMissingRequiredFields(t *testing.T) {
 	req := GenerationRequest{Topic: "Go 并发", Count: 5, Difficulty: 3, QuestionType: "interview"}
@@ -79,5 +82,73 @@ func TestValidateGenerationRequestAcceptsConceptFirstMVPFields(t *testing.T) {
 	}
 	if err := validateGenerationRequest(req); err != nil {
 		t.Fatalf("validateGenerationRequest: %v", err)
+	}
+}
+
+func TestGenerationRetrievalScopesChunksToSourceJob(t *testing.T) {
+	ctx := context.Background()
+	imports := NewMemoryImportStore()
+	if err := imports.AddChunks(ctx, []ImportChunk{
+		{
+			ID:      "imp-001:chunk:001",
+			JobID:   "imp-001",
+			Index:   1,
+			Content: "Go 并发排查 goroutine 泄漏，需要 pprof goroutine 和 context 取消。",
+		},
+		{
+			ID:      "imp-002:chunk:001",
+			JobID:   "imp-002",
+			Index:   1,
+			Content: "Go 并发排查 goroutine 泄漏，但这是另一个来源作业。",
+		},
+	}); err != nil {
+		t.Fatalf("AddChunks: %v", err)
+	}
+
+	chunks, err := retrieveGenerationChunks(ctx, imports, GenerationRequest{
+		SourceJobID:     "imp-001",
+		Topic:           "goroutine 泄漏",
+		QuestionType:    "interview",
+		Count:           3,
+		Difficulty:      3,
+		TargetDimension: "debugging",
+	}, 10)
+	if err != nil {
+		t.Fatalf("retrieveGenerationChunks: %v", err)
+	}
+	if len(chunks) != 1 {
+		t.Fatalf("chunks = %d, want 1: %+v", len(chunks), chunks)
+	}
+	if chunks[0].ID != "imp-001:chunk:001" || chunks[0].JobID != "imp-001" {
+		t.Fatalf("retrieved wrong chunk: %+v", chunks[0])
+	}
+}
+
+func TestGenerationRetrievalReturnsEmptyWhenNoTermsMatch(t *testing.T) {
+	ctx := context.Background()
+	imports := NewMemoryImportStore()
+	if err := imports.AddChunks(ctx, []ImportChunk{
+		{
+			ID:      "imp-001:chunk:001",
+			JobID:   "imp-001",
+			Index:   1,
+			Content: "Redis 缓存击穿需要互斥锁或逻辑过期。",
+		},
+	}); err != nil {
+		t.Fatalf("AddChunks: %v", err)
+	}
+
+	chunks, err := retrieveGenerationChunks(ctx, imports, GenerationRequest{
+		SourceJobID:  "imp-001",
+		Topic:        "Kubernetes 调度器",
+		QuestionType: "interview",
+		Count:        3,
+		Difficulty:   3,
+	}, 10)
+	if err != nil {
+		t.Fatalf("retrieveGenerationChunks: %v", err)
+	}
+	if len(chunks) != 0 {
+		t.Fatalf("chunks = %+v, want empty", chunks)
 	}
 }
