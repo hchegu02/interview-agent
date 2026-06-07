@@ -12,6 +12,7 @@ import type {
   InterviewFeedback,
   InterviewQuestion,
   InterviewRound,
+  Mode,
   ProfileAnalysis,
   ReportFollowUpReview,
   ReportRoundReview,
@@ -98,8 +99,9 @@ export function ResumePage({ draft, busy, updateDraft, resetDraft, goNext, setNo
   );
 }
 
-export function JDPage({ draft, busy, updateDraft, analyze, startInterview }: {
+export function JDPage({ draft, mode, busy, updateDraft, analyze, startInterview }: {
   draft: Draft;
+  mode: Mode;
   busy: boolean;
   updateDraft: (patch: Partial<Draft>) => void;
   analyze: () => Promise<void>;
@@ -126,15 +128,17 @@ export function JDPage({ draft, busy, updateDraft, analyze, startInterview }: {
         <aside className="control-panel">
           <h2>准备检查</h2>
           <p>{analysisSummary(draft.analysis)}</p>
-          <div className="scope-panel">
-            <h3>题库范围</h3>
-            <p>{draftScopeSummary(scope)}</p>
-            <Select value={scope?.skill_categories?.[0] || ""} onChange={(value) => setScope({ skill_categories: value ? [value] : [] })} label="全部技能" values={facets.skill_categories} />
-            <Select value={scope?.scenarios?.[0] || ""} onChange={(value) => setScope({ scenarios: value ? [value] : [] })} label="全部场景" values={facets.scenarios} />
-            <Select value={difficulty} onChange={(value) => setScope({ difficulty_min: value ? Number(value) : undefined, difficulty_max: value ? Number(value) : undefined })} label="全部难度" values={facets.difficulties} format={(v) => `难度 ${v}`} />
-            <input value={(scope?.tags || []).join(", ")} onChange={(evt) => setScope({ tags: evt.target.value.split(",") })} placeholder="标签，用逗号分隔" />
-            {facetError && <span className="scope-error">{facetError}</span>}
-          </div>
+          {mode === "practice" && (
+            <div className="scope-panel">
+              <h3>题库范围</h3>
+              <p>{draftScopeSummary(scope)}</p>
+              <Select value={scope?.skill_categories?.[0] || ""} onChange={(value) => setScope({ skill_categories: value ? [value] : [] })} label="全部技能" values={facets.skill_categories} />
+              <Select value={scope?.scenarios?.[0] || ""} onChange={(value) => setScope({ scenarios: value ? [value] : [] })} label="全部场景" values={facets.scenarios} />
+              <Select value={difficulty} onChange={(value) => setScope({ difficulty_min: value ? Number(value) : undefined, difficulty_max: value ? Number(value) : undefined })} label="全部难度" values={facets.difficulties} format={(v) => `难度 ${v}`} />
+              <input value={(scope?.tags || []).join(", ")} onChange={(evt) => setScope({ tags: evt.target.value.split(",") })} placeholder="标签，用逗号分隔" />
+              {facetError && <span className="scope-error">{facetError}</span>}
+            </div>
+          )}
           <button className="secondary" disabled={busy || !draft.jd_text.trim() || !draft.resume_text.trim()} onClick={analyze}>
             {busy ? "分析中" : "分析 JD / 简历"}
           </button>

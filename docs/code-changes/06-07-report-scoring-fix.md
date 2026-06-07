@@ -23,6 +23,7 @@
 - `testdata/agent_verify/pass_session.json`：补 `report.round_reviews`。
 - `testdata/agent_verify/fail_report_scoring_missing_review.json`：新增缺失逐题复盘失败夹具。
 - `web/src/types.ts`：新增前端报告复盘类型。
+- `web/src/main.tsx`：考试模式启动面试时不发送题库过滤条件，并向 JD 页传入当前模式。
 - `web/src/candidatePages.tsx`：报告页渲染 `report.round_reviews`，fallback 渲染旧 rounds，考试隐藏诊断。
 - `web/src/candidatePages.test.tsx`：新增报告复盘、fallback、考试诊断隐藏测试。
 - `web/src/styles.css`：新增追问复盘子项样式。
@@ -111,6 +112,10 @@
 
 ### `web/src/candidatePages.tsx`
 
+- `JDPage(...)`
+  - 行为变化：接收当前 `mode`；仅 `practice` 模式展示题库范围筛选控件。
+  - 兼容性：模拟模式保留题库范围控制；考试模式不向候选人暴露题库选择入口。
+
 - `InterviewPage(...)`
   - 行为变化：题目/对话优先展示；`AgentStatePanel` 和 `EventTimeline` 只在 `practice` 模式、且位于对话之后展示。
   - 兼容性：practice 保留训练诊断；exam 候选人侧隐藏内部状态。
@@ -137,6 +142,15 @@
 
 - `RoundReview({ round })`
   - 行为变化：旧 session fallback 时也渲染 `round.follow_ups`，避免追问复盘丢失。
+
+### `web/src/main.tsx`
+
+- `startInterview()`
+  - 行为变化：`practice` 模式继续发送 `question_bank_filter`；`exam` 模式发送 `undefined`，避免考试链路带入候选人侧题库选择。
+  - 数据流：侧栏 `mode` 状态 -> `startInterview` payload -> `/api/interview/start`。
+
+- `App()` 路由渲染
+  - 行为变化：渲染 `JDPage` 时传入当前 `mode`。
 
 ### `web/src/types.ts`
 
@@ -168,6 +182,10 @@
 命令行执行 `go run ./cmd/agent-verify ...` -> `cmd/agent-verify.run` 读取 session fixture -> `ReportCompletenessVerifier.VerifyReport` -> `ReportScoringVerifier.VerifyReportScoring` -> `verifyFollowUpReviews` / `verifyScoringEvidence` -> 汇总 JSON failure 输出和进程退出码。
 
 ### 前端展示链路
+
+用户进入 JD 页 -> `main.tsx` 将当前 `mode` 传入 `JDPage` -> `JDPage` 在 practice 模式展示题库范围，在 exam 模式隐藏题库范围。
+
+用户开始面试 -> `main.tsx` 的 `startInterview` 构造 payload -> practice 模式携带 `question_bank_filter`，exam 模式不携带 -> `/api/interview/start`。
 
 用户进入报告页 -> `main.tsx` 根据路由渲染 `ReportPage` -> `ReportRoundReviews` -> 优先 `ReportRoundReviewCard` / `ReportFollowUpReviewCard`；无 `round_reviews` 时进入 `RoundReview` fallback。
 
@@ -204,6 +222,9 @@ go run ./cmd/agent-verify -session testdata/agent_verify/fail_report_scoring_mis
 npm --prefix web run test -- --run src/candidatePages.test.tsx
 npm --prefix web run test
 npm --prefix web run build
+go test ./... -count=1
+go run ./cmd/internal-trial-smoke
+openspec validate internal-trial-report-scoring-fix --strict
 ```
 
 结果：
@@ -211,16 +232,16 @@ npm --prefix web run build
 - Go 相关单测通过。
 - pass fixture 输出 `pass: true`、`failure_count: 0`。
 - fail fixture 按预期非零退出，包含 `report_round_review_missing`。
-- 前端单文件测试 11 passed。
-- 前端全量测试 35 passed。
+- 前端单文件测试 13 passed。
+- 前端全量测试 37 passed。
 - 前端 build 通过。
+- `go test ./... -count=1` 通过。
+- `go run ./cmd/internal-trial-smoke` 输出 `business_trial: feedback evidence verified` 等通过信息。
+- `openspec validate internal-trial-report-scoring-fix --strict` 通过；首次沙箱内因 `EPERM lstat C:\Users\hchegu` 失败，提升权限重跑通过。
 
 未完成：
 
 - 浏览器可视检查未完成。尝试访问 `http://127.0.0.1:5174/` 和 `/report` 返回 502，未将其计为通过验证。
-- `go test ./... -count=1` 尚未在最终全量阶段执行。
-- `go run ./cmd/internal-trial-smoke` 尚未在最终全量阶段执行。
-- `openspec validate internal-trial-report-scoring-fix --strict` 尚未在最终全量阶段执行。
 
 ## 8. 风险
 

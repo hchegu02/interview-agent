@@ -1,7 +1,7 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { AgentToolTracePanel, InterviewPage, ReportPage, UserMemoryPanel } from "./candidatePages";
+import { AgentToolTracePanel, InterviewPage, JDPage, ReportPage, UserMemoryPanel } from "./candidatePages";
 import type { Session, UserMemory } from "./types";
 
 describe("user memory panel", () => {
@@ -35,6 +35,33 @@ describe("user memory panel", () => {
     expect(html).toContain("长期用户画像");
     expect(html).toContain("暂无长期画像数据");
     expect(html).toContain("完成更多面试后再展示稳定弱项和建议");
+  });
+});
+
+describe("candidate jd page", () => {
+  const draft = {
+    resume_text: "Go 后端候选人",
+    jd_text: "Go 后端岗位",
+    updated_at: "2026-01-01T00:00:00Z",
+  };
+
+  it("shows question bank scope controls in practice mode", () => {
+    const html = renderToStaticMarkup(
+      <JDPage draft={draft} mode="practice" busy={false} updateDraft={() => undefined} analyze={() => Promise.resolve()} startInterview={() => Promise.resolve()} />,
+    );
+
+    expect(html).toContain("题库范围");
+    expect(html).toContain("全部技能");
+  });
+
+  it("hides question bank scope controls in exam mode", () => {
+    const html = renderToStaticMarkup(
+      <JDPage draft={draft} mode="exam" busy={false} updateDraft={() => undefined} analyze={() => Promise.resolve()} startInterview={() => Promise.resolve()} />,
+    );
+
+    expect(html).toContain("岗位 JD");
+    expect(html).not.toContain("题库范围");
+    expect(html).not.toContain("全部技能");
   });
 });
 

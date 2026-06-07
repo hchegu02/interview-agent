@@ -171,7 +171,7 @@ function App() {
         mode,
         jd_text: draft.jd_text.trim(),
         resume_text: draft.resume_text.trim(),
-        question_bank_filter: normalizeQuestionBankFilter(draft.question_bank_filter),
+        question_bank_filter: mode === "practice" ? normalizeQuestionBankFilter(draft.question_bank_filter) : undefined,
       });
       setSession(next);
       setNotice("");
@@ -323,7 +323,7 @@ function App() {
           <ResumePage draft={draft} busy={busy} updateDraft={updateDraft} resetDraft={resetDraft} goNext={() => navigate(routes.jd)} setNotice={setNotice} />
         )}
         {route === routes.jd && (
-          <JDPage draft={draft} busy={busy} updateDraft={updateDraft} analyze={analyze} startInterview={startInterview} />
+          <JDPage draft={draft} mode={mode} busy={busy} updateDraft={updateDraft} analyze={analyze} startInterview={startInterview} />
         )}
         {route === routes.interview && (
           <InterviewPage session={session} events={events} busy={busy} pendingAnswer={pendingAnswer} submitAnswer={submitAnswer} goJD={() => navigate(routes.jd)} />
