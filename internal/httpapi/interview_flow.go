@@ -14,6 +14,11 @@ func (s *InterviewService) Start(ctx context.Context, req startInterviewRequest)
 	if s.runner == nil {
 		return nil, fmt.Errorf("%w: interview runner not configured", graph.ErrInvalidConfig)
 	}
+	cleanedReq, err := cleanStartInterviewRequest(req)
+	if err != nil {
+		return nil, err
+	}
+	req = cleanedReq
 	// Start 只负责创建会话和推进首轮 Graph。真正的面试状态都写进 domain.Session，
 	// 这样内存存储、PG 存储和事件快照看到的是同一份数据结构。
 	id := req.SessionID

@@ -487,6 +487,32 @@ func TestInterviewService_StartStoresQuestionBankFilter(t *testing.T) {
 	}
 }
 
+func TestInterviewService_StartStoresCleanedInputText(t *testing.T) {
+	svc := NewInterviewService(fakeInterviewRunner{})
+
+	sess, err := svc.Start(context.Background(), startInterviewRequest{
+		SessionID:  "clean-start",
+		UserID:     "u-clean",
+		JDText:     "岗位职责\r\n• 负责 Go 服务\n福利待遇\n五险一金\nHR 联系 hr@example.com",
+		ResumeText: "项目经历\r\n● PostgreSQL 慢查询优化\n手机号 13800138000\n兴趣爱好\n篮球",
+	})
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if strings.Contains(sess.JobProfile.JDRawText, "\r") || strings.Contains(sess.JobProfile.JDRawText, "福利待遇") {
+		t.Fatalf("jd raw text should be cleaned, got %q", sess.JobProfile.JDRawText)
+	}
+	if !strings.Contains(sess.JobProfile.JDRawText, "- 负责 Go 服务") {
+		t.Fatalf("jd bullet should be normalized, got %q", sess.JobProfile.JDRawText)
+	}
+	if strings.Contains(sess.CandProfile.ResumeRawText, "13800138000") || strings.Contains(sess.CandProfile.ResumeRawText, "兴趣爱好") {
+		t.Fatalf("resume raw text should be redacted and filtered, got %q", sess.CandProfile.ResumeRawText)
+	}
+	if !strings.Contains(sess.CandProfile.ResumeRawText, "[REDACTED_PHONE]") {
+		t.Fatalf("resume should keep redaction marker, got %q", sess.CandProfile.ResumeRawText)
+	}
+}
+
 func TestInterviewResponse_DoesNotExposeInternalRuntimeNames(t *testing.T) {
 	svc := NewInterviewService(fakeInterviewRunner{})
 	server := NewServerWithInterview(&config.Config{}, svc)

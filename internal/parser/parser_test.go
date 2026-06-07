@@ -66,6 +66,37 @@ func TestPlainTextParser_ParsesResumeText(t *testing.T) {
 	}
 }
 
+func TestPlainTextParser_PostProcessesDocumentText(t *testing.T) {
+	raw := []byte("简历标题\nPage 1 of 2\n• Go 后端开发\n- 2 -\n● Redis 缓存优化")
+	doc, err := NewPlainTextParser().Parse(context.Background(),
+		Source{Data: bytes.NewReader(raw), Size: int64(len(raw))},
+		Hint{Filename: "resume.txt"},
+		LimitResume)
+	if err != nil {
+		t.Fatalf("parse text: %v", err)
+	}
+	if strings.Contains(doc.Text, "Page 1 of 2") || strings.Contains(doc.Text, "- 2 -") {
+		t.Fatalf("page artifacts should be removed: %q", doc.Text)
+	}
+	if !strings.Contains(doc.Text, "- Go 后端开发") || !strings.Contains(doc.Text, "- Redis 缓存优化") {
+		t.Fatalf("bullet normalization missing: %q", doc.Text)
+	}
+}
+
+func TestDOCXParser_PostProcessesDocumentText(t *testing.T) {
+	docxBytes := buildMinimalDOCX(t, "项目经历\n负责 Go 微服务\n高并发接口开发。")
+	doc, err := NewDOCXParser().Parse(context.Background(),
+		Source{Data: bytes.NewReader(docxBytes), Size: int64(len(docxBytes))},
+		Hint{Filename: "resume.docx"},
+		LimitResume)
+	if err != nil {
+		t.Fatalf("parse docx: %v", err)
+	}
+	if !strings.Contains(doc.Text, "负责 Go 微服务 高并发接口开发。") {
+		t.Fatalf("docx text should be postprocessed, got %q", doc.Text)
+	}
+}
+
 // TestDispatcher_InjectMock 验证可以注入 mock，
 // 这是上层节点单测的入口模式。
 func TestDispatcher_InjectMock(t *testing.T) {

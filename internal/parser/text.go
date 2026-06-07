@@ -30,7 +30,7 @@ func (p *PlainTextParser) Parse(ctx context.Context, src Source, hint Hint, limi
 		return nil, err
 	}
 
-	body := normalizeWhitespace(string(data))
+	body := PostProcessText(string(data), PostProcessOptions{Kind: "resume"}).Text
 	if body == "" {
 		return nil, ErrEmptyDocument
 	}

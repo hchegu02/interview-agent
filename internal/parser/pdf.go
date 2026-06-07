@@ -67,7 +67,7 @@ func (p *PDFParser) Parse(ctx context.Context, src Source, hint Hint, limit Pars
 		sb.WriteByte('\n')
 	}
 
-	body := normalizeWhitespace(sb.String())
+	body := PostProcessText(sb.String(), PostProcessOptions{Kind: "resume"}).Text
 	if body == "" {
 		return nil, ErrEmptyDocument
 	}
@@ -84,29 +84,7 @@ func (p *PDFParser) Parse(ctx context.Context, src Source, hint Hint, limit Pars
 // normalizeWhitespace 把多个空白合并成单空格、去掉行首尾空白。
 // PDF 提取出的文本经常一堆 \r、\t、连续空格，先归一化便于 LLM 处理。
 func normalizeWhitespace(s string) string {
-	var sb strings.Builder
-	sb.Grow(len(s))
-	prevSpace := true // 首字符若是空白则丢弃
-	for _, r := range s {
-		if r == '\n' {
-			// 保留换行（段落语义），但塌缩连续空行
-			if !strings.HasSuffix(sb.String(), "\n") {
-				sb.WriteRune('\n')
-			}
-			prevSpace = true
-			continue
-		}
-		if r == ' ' || r == '\t' || r == '\r' {
-			if !prevSpace {
-				sb.WriteRune(' ')
-			}
-			prevSpace = true
-			continue
-		}
-		sb.WriteRune(r)
-		prevSpace = false
-	}
-	return strings.TrimSpace(sb.String())
+	return PostProcessText(s, PostProcessOptions{Kind: "generic"}).Text
 }
 
 // 保留 errors 引用，防止 lint 抱怨

@@ -67,7 +67,7 @@ func (p *DOCXParser) Parse(ctx context.Context, src Source, hint Hint, limit Par
 		return nil, fmt.Errorf("%w: estimated %d pages, max %d", ErrTooManyPages, estimatedPages, limit.MaxPages)
 	}
 
-	body := normalizeWhitespace(text)
+	body := PostProcessText(text, PostProcessOptions{Kind: "resume"}).Text
 	if body == "" {
 		return nil, ErrEmptyDocument
 	}
