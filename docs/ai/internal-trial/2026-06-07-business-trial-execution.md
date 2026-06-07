@@ -50,6 +50,12 @@ business_trial: feedback evidence verified
 6. 填写产品反馈。
 7. 如果遇到阻塞，额外填写问题记录。
 
+本轮报告评分修复后的复测优先使用本地 JD 样例：
+
+- `testdata/internal_trial/yunzhi_backend_jd.md`
+
+该样例只保留岗位描述和岗位要求，不包含申请表字段、候选人个人信息或投递记录。复测时重点检查逐题评分、原答案、追问评分证据、模拟/考试展示差异。
+
 ## 5. 反馈收集
 
 反馈使用 `docs/ai/internal-trial/trial-feedback-template.md`。
