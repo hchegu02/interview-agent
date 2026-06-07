@@ -160,9 +160,35 @@ export type Report = {
   skill_breakdown: Record<string, number>;
   transcript_analysis?: TranscriptAnalysis;
   drill_plan?: DrillPlanItem[];
+  round_reviews?: ReportRoundReview[];
   highlights: string[];
   improvements: string[];
   next_steps: string[];
+};
+
+export type ReportRoundReview = {
+  round_id?: string;
+  number?: number;
+  type?: string;
+  question_id?: string;
+  question?: string;
+  answer?: string;
+  score?: number;
+  hit_points?: string[];
+  missed_points?: string[];
+  suggestion?: string;
+  expected_points?: string[];
+  counts_toward_overall?: boolean;
+  follow_ups?: ReportFollowUpReview[];
+};
+
+export type ReportFollowUpReview = {
+  question?: string;
+  answer?: string;
+  score?: number;
+  hit_points?: string[];
+  missed_points?: string[];
+  suggestion?: string;
 };
 
 export type RetrievalTrace = {

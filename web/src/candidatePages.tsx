@@ -13,6 +13,8 @@ import type {
   InterviewQuestion,
   InterviewRound,
   ProfileAnalysis,
+  ReportFollowUpReview,
+  ReportRoundReview,
   RetrievalTrace,
   Session,
   TranscriptAnalysis,
@@ -176,14 +178,18 @@ export function InterviewPage({ session, events, busy, pendingAnswer, submitAnsw
         <span className="status-pill">{session.phase || session.status}</span>
       </div>
       <ProfileAnalysisPanel analysis={session.profile_analysis} compact />
-      <AgentStatePanel memory={session.working_memory} />
-      <EventTimeline events={events} />
       <div className="conversation">
         {rounds.map((round) => <RoundView key={round.round_id} round={round} />)}
         {shouldShowCurrent(session.question, rounds) && <QuestionBubble number={(rounds.length || 0) + 1} question={session.question} />}
         {pendingAnswer && <article className="bubble answer pending"><div className="bubble-meta">已提交，等待评分</div><p>{pendingAnswer}</p></article>}
         {busy && <div className="system-line">正在评估回答，准备下一题...</div>}
       </div>
+      {session.mode === "practice" && (
+        <>
+          <AgentStatePanel memory={session.working_memory} />
+          <EventTimeline events={events} />
+        </>
+      )}
       <form className="answer-dock" onSubmit={send}>
         <label className="answer-box">
           <span>候选人回答 · Ctrl/⌘ + Enter 发送</span>
@@ -219,19 +225,20 @@ export function ReportPage({ session, startDrill, jumpQuestion }: {
         </div>
       </div>
       <ProfileAnalysisPanel analysis={session.profile_analysis} />
-      <AgentStatePanel memory={session.working_memory} />
+      <ReportRoundReviews session={session} />
       <TranscriptPanel analysis={report.transcript_analysis} />
-      <RetrievalTracePanel trace={session.retrieval_trace} />
       <DrillPlanPanel plan={report.drill_plan || []} startDrill={startDrill} jumpQuestion={jumpQuestion} />
       <div className="report-summary">
         <ListSection title="亮点" items={report.highlights} />
         <ListSection title="改进项" items={report.improvements} />
         <ListSection title="下一步" items={report.next_steps} />
       </div>
-      <section className="round-review">
-        <h2>逐题评分</h2>
-        {(session.rounds || []).map((round) => <RoundReview key={round.round_id} round={round} />)}
-      </section>
+      {session.mode === "practice" && (
+        <>
+          <AgentStatePanel memory={session.working_memory} />
+          <RetrievalTracePanel trace={session.retrieval_trace} />
+        </>
+      )}
     </section>
   );
 }
@@ -642,8 +649,89 @@ function ListSection({ title, items }: { title: string; items?: string[] }) {
   return <section><h2>{title}</h2><ul>{items?.length ? items.map((item) => <li key={item}>{item}</li>) : <li>暂无</li>}</ul></section>;
 }
 
+function ReportRoundReviews({ session }: { session: Session }) {
+  const reviews = session.report?.round_reviews || [];
+  return (
+    <section className="round-review">
+      <h2>逐题评分</h2>
+      {reviews.length
+        ? reviews.map((review, index) => <ReportRoundReviewCard key={review.round_id || `${review.question_id || "review"}-${index}`} review={review} fallbackNumber={index + 1} />)
+        : (session.rounds || []).map((round) => <RoundReview key={round.round_id} round={round} />)}
+    </section>
+  );
+}
+
+function ReportRoundReviewCard({ review, fallbackNumber }: { review: ReportRoundReview; fallbackNumber: number }) {
+  return (
+    <article className="review-card">
+      <div className="review-head">
+        <strong>第 {review.number || fallbackNumber} 题</strong>
+        {typeof review.score === "number" && <span>{review.score} 分</span>}
+      </div>
+      {review.question && <p className="review-question">{review.question}</p>}
+      {review.answer && <p className="review-answer">{review.answer}</p>}
+      <ReviewEvidence review={review} />
+      {!!review.follow_ups?.length && (
+        <div className="follow-review-list">
+          {review.follow_ups.map((follow, index) => <ReportFollowUpReviewCard key={`${follow.question || "follow"}-${index}`} follow={follow} index={index} />)}
+        </div>
+      )}
+    </article>
+  );
+}
+
+function ReportFollowUpReviewCard({ follow, index }: { follow: ReportFollowUpReview; index: number }) {
+  return (
+    <section className="follow-review">
+      <div className="review-head">
+        <strong>追问 {index + 1}</strong>
+        {typeof follow.score === "number" && <span>{follow.score} 分</span>}
+      </div>
+      {follow.question && <p className="review-question">{follow.question}</p>}
+      {follow.answer && <p className="review-answer">{follow.answer}</p>}
+      <ReviewEvidence review={follow} />
+    </section>
+  );
+}
+
+function ReviewEvidence({ review }: { review: ReportRoundReview | ReportFollowUpReview }) {
+  return (
+    <div className="report-review-evidence">
+      <Pills title="命中要点" items={review.hit_points} tone="hit" />
+      <Pills title="遗漏要点" items={review.missed_points} tone="miss" />
+      {"expected_points" in review && <Pills title="参考要点" items={review.expected_points} tone="neutral" />}
+      {review.suggestion && <p className="suggestion">{review.suggestion}</p>}
+    </div>
+  );
+}
+
 function RoundReview({ round }: { round: InterviewRound }) {
-  return <article className="review-card"><div className="review-head"><strong>第 {round.number} 题</strong>{round.feedback && <span>{round.feedback.score} 分</span>}</div><p className="review-question">{round.question?.content}</p>{round.answer && <p className="review-answer">{round.answer}</p>}{round.feedback && <FeedbackCard feedback={round.feedback} />}</article>;
+  return (
+    <article className="review-card">
+      <div className="review-head">
+        <strong>第 {round.number} 题</strong>
+        {round.feedback && <span>{round.feedback.score} 分</span>}
+      </div>
+      <p className="review-question">{round.question?.content}</p>
+      {round.answer && <p className="review-answer">{round.answer}</p>}
+      {round.feedback && <FeedbackCard feedback={round.feedback} />}
+      {!!round.follow_ups?.length && (
+        <div className="follow-review-list">
+          {round.follow_ups.map((follow, index) => (
+            <section className="follow-review" key={`${follow.question}-${index}`}>
+              <div className="review-head">
+                <strong>追问 {index + 1}</strong>
+                {follow.feedback && <span>{follow.feedback.score} 分</span>}
+              </div>
+              <p className="review-question">{follow.question}</p>
+              {follow.answer && <p className="review-answer">{follow.answer}</p>}
+              {follow.feedback && <FeedbackCard feedback={follow.feedback} />}
+            </section>
+          ))}
+        </div>
+      )}
+    </article>
+  );
 }
 
 function errorMessage(err: unknown): string {

@@ -1434,6 +1434,19 @@ h3 {
   margin-top: 10px;
 }
 
+.follow-review-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.follow-review {
+  padding: 12px;
+  background: #f8fafc;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+
 .review-question {
   font-weight: 800;
 }

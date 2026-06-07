@@ -39,6 +39,132 @@ describe("user memory panel", () => {
 });
 
 describe("candidate report page", () => {
+  it("renders report-owned round reviews with original answers and follow-ups", () => {
+    const session: Session = {
+      session_id: "s-round-review",
+      mode: "practice",
+      status: "completed",
+      phase: "completed",
+      report: {
+        session_id: "s-round-review",
+        overall_score: 82,
+        skill_breakdown: { Go: 82 },
+        round_reviews: [{
+          round_id: "r1",
+          number: 1,
+          type: "main",
+          question_id: "go-001",
+          question: "讲一下 Go 的 GMP 调度模型。",
+          answer: "原始回答：G/M/P 和 work stealing。",
+          score: 82,
+          hit_points: ["覆盖 G/M/P"],
+          missed_points: ["缺少排障案例"],
+          suggestion: "补充线上调度延迟案例",
+          expected_points: ["G/M/P 定义", "本地队列"],
+          counts_toward_overall: true,
+          follow_ups: [{
+            question: "work stealing 什么时候发生？",
+            answer: "追问原始回答：本地队列为空时。",
+            score: 80,
+            hit_points: ["回答了触发条件"],
+            missed_points: ["缺少边界条件"],
+            suggestion: "补充全局队列场景",
+          }],
+        }],
+        highlights: [],
+        improvements: [],
+        next_steps: [],
+      },
+      rounds: [{
+        round_id: "r1",
+        number: 1,
+        question: { id: "go-001", content: "旧 rounds 问题" },
+        answer: "旧 rounds 回答不应作为优先来源",
+        completed: true,
+      }],
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    };
+
+    const html = renderToStaticMarkup(<ReportPage session={session} startDrill={() => undefined} jumpQuestion={() => undefined} />);
+
+    expect(html).toContain("逐题评分");
+    expect(html).toContain("讲一下 Go 的 GMP 调度模型。");
+    expect(html).toContain("原始回答：G/M/P 和 work stealing。");
+    expect(html).toContain("82 分");
+    expect(html).toContain("覆盖 G/M/P");
+    expect(html).toContain("缺少排障案例");
+    expect(html).toContain("补充线上调度延迟案例");
+    expect(html).toContain("work stealing 什么时候发生？");
+    expect(html).toContain("追问原始回答：本地队列为空时。");
+    expect(html).not.toContain("旧 rounds 回答不应作为优先来源");
+  });
+
+  it("falls back to session rounds when report round reviews are missing", () => {
+    const session: Session = {
+      session_id: "s-round-fallback",
+      mode: "practice",
+      status: "completed",
+      phase: "completed",
+      report: { session_id: "s-round-fallback", overall_score: 70, skill_breakdown: {}, highlights: [], improvements: [], next_steps: [] },
+      rounds: [{
+        round_id: "r1",
+        number: 1,
+        question: { id: "redis-001", content: "Redis AOF 和 RDB 怎么取舍？" },
+        answer: "AOF 更偏实时恢复，RDB 更适合快照备份。",
+        feedback: { score: 70, hit_points: ["区分恢复和快照"], missed_points: ["缺少 fsync 策略"], suggestion: "补充 appendfsync 策略" },
+        follow_ups: [{
+          question: "AOF everysec 最坏丢多久数据？",
+          answer: "最多大约 1 秒。",
+          feedback: { score: 80, hit_points: ["回答了时间窗口"], missed_points: ["缺少 fsync 机制"], suggestion: "补充后台刷盘细节" },
+        }],
+        completed: true,
+      }],
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    };
+
+    const html = renderToStaticMarkup(<ReportPage session={session} startDrill={() => undefined} jumpQuestion={() => undefined} />);
+
+    expect(html).toContain("Redis AOF 和 RDB 怎么取舍？");
+    expect(html).toContain("AOF 更偏实时恢复，RDB 更适合快照备份。");
+    expect(html).toContain("70 分");
+    expect(html).toContain("AOF everysec 最坏丢多久数据？");
+    expect(html).toContain("最多大约 1 秒。");
+    expect(html).toContain("80 分");
+    expect(html).toContain("回答了时间窗口");
+  });
+
+  it("hides internal diagnostics on exam reports", () => {
+    const session: Session = {
+      session_id: "s-exam-report",
+      mode: "exam",
+      status: "completed",
+      phase: "completed",
+      report: {
+        session_id: "s-exam-report",
+        overall_score: 82,
+        skill_breakdown: {},
+        round_reviews: [{ round_id: "r1", number: 1, question: "Go 问题", answer: "Go 回答", score: 82 }],
+        highlights: [],
+        improvements: [],
+        next_steps: [],
+      },
+      working_memory: { weak_skills: ["redis"], difficulty: { current: 3 } },
+      retrieval_trace: { query: "internal query", final: [{ id: "q-1", rank: 1, score: 0.9 }] },
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    };
+
+    const html = renderToStaticMarkup(<ReportPage session={session} startDrill={() => undefined} jumpQuestion={() => undefined} />);
+
+    expect(html).toContain("逐题评分");
+    expect(html).toContain("Go 回答");
+    expect(html).not.toContain("Agent 状态");
+    expect(html).not.toContain("检索链路");
+    expect(html).not.toContain("internal query");
+  });
+
   it("renders retrieval trace evidence on the report page", () => {
     const session: Session = {
       session_id: "s-1",
@@ -126,6 +252,40 @@ describe("candidate interview page", () => {
     expect(html).toContain("Agent 状态");
     expect(html).toContain("基础难度");
     expect(html).toContain("暂无降级记录");
+  });
+
+  it("hides internal diagnostics during an exam interview", () => {
+    const session: Session = {
+      session_id: "s-exam-interview",
+      mode: "exam",
+      status: "running",
+      phase: "answering",
+      question: { id: "go-001", content: "讲一下 Go 的 GMP 调度模型。" },
+      working_memory: {
+        difficulty: { current: 3 },
+        rounds_asked: 1,
+        max_rounds: 8,
+      },
+      created_at: "2026-01-01T00:00:00Z",
+      updated_at: "2026-01-01T00:00:00Z",
+    };
+
+    const html = renderToStaticMarkup(
+      <InterviewPage
+        session={session}
+        events={[{ type: "graph.node", label: "Graph 节点", detail: "score_answer", at: "2026-01-01T00:00:00Z" }]}
+        busy={false}
+        pendingAnswer=""
+        submitAnswer={() => Promise.resolve()}
+        goJD={() => undefined}
+      />,
+    );
+
+    expect(html).toContain("正式考试");
+    expect(html).toContain("讲一下 Go 的 GMP 调度模型。");
+    expect(html).not.toContain("Agent 状态");
+    expect(html).not.toContain("Graph 节点");
+    expect(html).not.toContain("score_answer");
   });
 });
 
