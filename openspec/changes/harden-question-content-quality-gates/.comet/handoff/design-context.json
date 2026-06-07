@@ -1,0 +1,14 @@
+{
+  "change": "harden-question-content-quality-gates",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "02e7fca50f56c615e01c7d27583db3eea02176a0ded4663c67a4426c189145f1",
+  "files": [
+    { "path": "openspec/changes/harden-question-content-quality-gates/proposal.md", "sha256": "5bdbc03b9d9a4106a68cab2332b6d507de3f33a9e7fbd6545d8899a149e3be59" },
+    { "path": "openspec/changes/harden-question-content-quality-gates/design.md", "sha256": "92f744e23cf84b20bf63a3939288cd4e9d80b04d4ee25b0a9498773393192538" },
+    { "path": "openspec/changes/harden-question-content-quality-gates/tasks.md", "sha256": "0dfa461d88cf064c0d0adada419277649761dbec03e993963379bced56cc25cd" },
+    { "path": "openspec/changes/harden-question-content-quality-gates/specs/question-bank-import-enrichment/spec.md", "sha256": "c79f3d06edd712fdb21f720e5ca5e3bf6eda3660fd1222aebc5687a8db0ad536" }
+  ]
+}

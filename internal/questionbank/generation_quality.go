@@ -5,19 +5,19 @@ import (
 )
 
 const (
-	qualityFlagMissingContent       = "missing_content"
-	qualityFlagMissingConcept       = "missing_concept"
-	qualityFlagUnknownConcept       = "unknown_concept"
-	qualityFlagMissingSourceRefs    = "missing_source_refs"
-	qualityFlagUnknownSourceChunk   = "unknown_source_chunk"
-	qualityFlagUngroundedQuote      = "ungrounded_quote"
+	qualityFlagMissingContent           = "missing_content"
+	qualityFlagMissingConcept           = "missing_concept"
+	qualityFlagUnknownConcept           = "unknown_concept"
+	qualityFlagMissingSourceRefs        = "missing_source_refs"
+	qualityFlagUnknownSourceChunk       = "unknown_source_chunk"
+	qualityFlagUngroundedQuote          = "ungrounded_quote"
 	qualityFlagDuplicateContent         = "duplicate_content"
 	qualityFlagDuplicateExistingContent = "duplicate_existing_content"
-	qualityFlagLowValueQuestion     = "low_value_question"
-	qualityFlagMissingFields        = "missing_required_fields"
-	qualityFlagInvalidSingleChoice  = "invalid_single_choice"
-	qualityFlagMissingFollowupHints = "missing_follow_up_hints"
-	qualityFlagDifficultyMismatch   = "difficulty_mismatch"
+	qualityFlagLowValueQuestion         = "low_value_question"
+	qualityFlagMissingFields            = "missing_required_fields"
+	qualityFlagInvalidSingleChoice      = "invalid_single_choice"
+	qualityFlagMissingFollowupHints     = "missing_follow_up_hints"
+	qualityFlagDifficultyMismatch       = "difficulty_mismatch"
 )
 
 func gateQuestionCandidates(req GenerationRequest, concepts []ConceptCard, chunks []RetrievedChunk, candidates []QuestionCandidate, existingContentKeys map[string]struct{}) ([]QuestionCandidate, []QuestionCandidate) {
@@ -35,14 +35,14 @@ func gateQuestionCandidates(req GenerationRequest, concepts []ConceptCard, chunk
 	var rejected []QuestionCandidate
 	for _, candidate := range candidates {
 		flags := candidateQualityFlags(req, candidate, conceptsByID, chunksByID, seenContent, existingContentKeys)
-		key := normalizeCandidateContent(candidate.Content)
-		if key != "" {
-			seenContent[key] = struct{}{}
-		}
 		if len(flags) > 0 {
 			candidate.QualityFlags = append(candidate.QualityFlags, flags...)
 			rejected = append(rejected, candidate)
 			continue
+		}
+		key := normalizeCandidateContent(candidate.Content)
+		if key != "" {
+			seenContent[key] = struct{}{}
 		}
 		passed = append(passed, candidate)
 	}
@@ -59,6 +59,9 @@ func candidateQualityFlags(req GenerationRequest, candidate QuestionCandidate, c
 	}
 	if isLowValueQuestion(candidate.Content) {
 		flags = append(flags, qualityFlagLowValueQuestion)
+	}
+	if quality := EvaluateQuestionContentQuality(candidate.Content); quality.HighRisk {
+		flags = append(flags, quality.Flags...)
 	}
 	key := normalizeCandidateContent(candidate.Content)
 	if key != "" {

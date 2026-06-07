@@ -128,6 +128,47 @@ func TestPickNext_OverridesLowRankLLMPickWhenTopCandidateIsSameSkill(t *testing.
 	}
 }
 
+func TestPickNext_SkipsDirtyCandidateWhenCleanCandidateRemains(t *testing.T) {
+	stub := &stubChatModel{responses: []string{
+		`{"next_question_id":"clean-agent","reasoning":"选择干净题干"}`,
+	}}
+	pool := []domain.Question{
+		{ID: "dirty-agent", Content: "有使用过吗你这个agent项目就是四个智能体 用langchain也可以实现啊 你用了langGraph 有哪些是用langchain不能实现的吗--（无法反驳..", Tags: []string{"agent"}, Difficulty: 4, SkillCategory: "ai_agent"},
+		{ID: "clean-agent", Content: "你的 Agent 项目为什么选择 Graph 流程编排？请说明状态管理和可恢复性的差异。", Tags: []string{"agent"}, Difficulty: 4, SkillCategory: "ai_agent"},
+	}
+	sess := buildPickSession(0, 8, pool)
+	node := NewPickNextNode(stub, PickNextOptions{})
+
+	err := node(context.Background(), sess)
+	if !errors.Is(err, graph.ErrSuspended) {
+		t.Fatalf("expected ErrSuspended, got %v", err)
+	}
+	if got := sess.PendingDecision.NextQuestionID; got != "clean-agent" {
+		t.Fatalf("picked %s, want clean-agent", got)
+	}
+	if strings.Contains(stub.lastConv[0].Content, "无法反驳") {
+		t.Fatalf("dirty candidate should not be sent to LLM prompt:\n%s", stub.lastConv[0].Content)
+	}
+}
+
+func TestPickNext_AllDirtyCandidatesDegradesButContinues(t *testing.T) {
+	sess := buildPickSession(0, 8, []domain.Question{
+		{ID: "dirty-agent", Content: "有使用过吗你这个agent项目就是四个智能体 用langchain也可以实现啊 你用了langGraph 有哪些是用langchain不能实现的吗--（无法反驳..", Tags: []string{"agent"}, Difficulty: 4, SkillCategory: "ai_agent"},
+	})
+	node := NewPickNextNode(nil, PickNextOptions{})
+
+	err := node(context.Background(), sess)
+	if !errors.Is(err, graph.ErrSuspended) {
+		t.Fatalf("expected ErrSuspended, got %v", err)
+	}
+	if got := sess.PendingDecision.NextQuestionID; got != "dirty-agent" {
+		t.Fatalf("picked %s, want dirty fallback when all candidates dirty", got)
+	}
+	if sess.WorkingMemory.DegradedReasons["pick"] == "" {
+		t.Fatalf("expected degraded pick reason, got %+v", sess.WorkingMemory.DegradedReasons)
+	}
+}
+
 func TestPickNextPrompt_IncludesDynamicDifficultyGuidance(t *testing.T) {
 	stub := &stubChatModel{responses: []string{
 		`{"next_question_id":"redis-001","reasoning":"动态难度匹配"}`,

@@ -199,12 +199,14 @@ source import job chunks
 - `GenerationRequest.SourceJobID` 必须指向已有文档导入 job 的 chunks。
 - 候选题必须引用 `concept_id` 和 `source_refs`，且 quote 必须是源 chunk 原文子串。
 - 质量门禁会拒绝空内容、未知 concept、未知 chunk、未落地引用、重复题、低价值总结题、单选项不完整、面试题缺少追问提示等候选。
+- 题干内容质量门禁会识别明显笔记残留、追问串、答案/备注泄漏、过长题干和低价值总结题；高风险题不会自动进入正式题库。
 - 通过门禁的题不会直接进入正式题库，而是通过现有 import review flow 暂存。
 - 暂存 item 默认 `agent_review_status=needs_human_review`，人工 accept 后才允许 commit 到正式题库。
 - provenance 使用 `generated_question_v1`，记录 generation job、source job、candidate、concept、question type 和 source refs。
 - `POST /api/question-bank/generation-jobs?async=true` 会创建 `queued` job 并返回 HTTP 202，后台 Go worker 执行真实 LLM 生成；调用方通过 `GET /api/question-bank/generation-jobs/:id` 轮询状态。
 - `POST /api/question-bank/generation-jobs` 未带 `async=true` 时保留同步创建行为，兼容旧调用方。
 - `stage` 只允许 `created` 或已 `staged` 的 generation job，未完成或失败 job 不会写入导入审核区。
+- `commit` 会在正式写入 `question_bank` 前重新执行重复题和题干质量检查，防止旧流程、并发或脚本绕过生成阶段门禁。
 
 MVP 限制：
 
@@ -745,6 +747,7 @@ evaluate
 
 - 不让 LLM 单独决定难度。
 - 后续轮次暂不自动重跑 `retrieve_rag`，当前优先复用已有候选池并通过 `pick_next` 消费动态难度。
+- `pick_next` 在 LLM/rule 选题前会优先过滤高风险脏题干；如果候选池全是高风险题，为避免面试直接中断，会继续降级选题并在 `WorkingMemory.DegradedReasons["pick"]` 记录原因。
 - 不暴露 `WorkingMemory.AppliedNodes`、原始 `Notes`、Graph 节点内部状态或 prompt。
 
 ### 13.5 第四阶段：MCP Adapter

@@ -150,6 +150,13 @@ func (s *ImportService) commitReadyJob(ctx context.Context, jobID string) (Impor
 			}
 			seenContentKeys[key] = struct{}{}
 		}
+		if quality := EvaluateQuestionContentQuality(item.Item.Content); quality.HighRisk {
+			item.AgentReviewStatus = ImportAgentReviewRejected
+			item.AgentReviewReason = strings.Join(quality.Flags, ",")
+			item.UpdatedAt = time.Now().UTC()
+			updated = append(updated, item)
+			continue
+		}
 		items = append(items, item.Item)
 		item.Status = ImportItemStatusImported
 		item.UpdatedAt = time.Now().UTC()

@@ -11,6 +11,7 @@ import (
 	"interview-agent/internal/domain"
 	"interview-agent/internal/graph"
 	"interview-agent/internal/llm"
+	"interview-agent/internal/questionbank"
 )
 
 // pick_next 节点设计要点:
@@ -134,15 +135,19 @@ func NewPickNextPatchNode(model llm.ChatModel, opts PickNextOptions) graph.Patch
 				pool = reflected
 			}
 		}
+		if cleanPool, dirtyCount := filterDirtyQuestionContent(pool); len(cleanPool) > 0 && dirtyCount > 0 {
+			pool = cleanPool
+		} else if dirtyCount > 0 && len(cleanPool) == 0 {
+			markDegradedReason(mem, "pick", "only_dirty_question_candidates_available")
+		}
 
 		// 4. 选题:LLM 主导,失败降级到规则
 		picked, reasoning, err := pickByLLM(ctx, model, &viewSess, pool, opts)
 		if err != nil {
 			markDegradedReason(mem, "pick", err.Error())
 			picked, reasoning = pickByRule(pool, mem)
-		} else {
-			picked, reasoning = enforceRetrievalRankGuard(pool, picked, reasoning)
 		}
+		picked, reasoning = enforceRetrievalRankGuard(pool, picked, reasoning)
 
 		// 5. 写 PendingDecision + 新建 round
 		now := time.Now()
@@ -169,6 +174,19 @@ func NewPickNextPatchNode(model llm.ChatModel, opts PickNextOptions) graph.Patch
 		return patch, graph.SuspendWithPatch(fmt.Errorf("pick_next: waiting for candidate answer (round=%d): %w",
 			mem.RoundsAsked, graph.ErrSuspended))
 	}
+}
+
+func filterDirtyQuestionContent(pool []domain.Question) ([]domain.Question, int) {
+	clean := make([]domain.Question, 0, len(pool))
+	dirty := 0
+	for _, q := range pool {
+		if questionbank.HasHighRiskQuestionContent(q.Content) {
+			dirty++
+			continue
+		}
+		clean = append(clean, q)
+	}
+	return clean, dirty
 }
 
 func enforceRetrievalRankGuard(pool []domain.Question, picked domain.Question, reasoning string) (domain.Question, string) {

@@ -350,6 +350,44 @@ func TestGateQuestionCandidatesRejectsExistingActiveDuplicateContent(t *testing.
 	}
 }
 
+func TestGateQuestionCandidatesRejectsDirtyQuestionContent(t *testing.T) {
+	req := GenerationRequest{QuestionType: "interview", Difficulty: 4}
+	concepts := []ConceptCard{{ID: "concept-001", Title: "Agent 编排"}}
+	chunks := []RetrievedChunk{{ID: "chunk-1", Content: "Graph 流程编排可以让状态管理和恢复边界更清晰。"}}
+	candidate := completeGenerationCandidate("concept-001", "有使用过吗你这个agent项目就是四个智能体 用langchain也可以实现啊 你用了langGraph 有哪些是用langchain不能实现的吗--（无法反驳..")
+	candidate.Difficulty = 4
+	candidate.SkillCategory = "ai_agent"
+	candidate.Tags = []string{"agent"}
+	candidate.SourceRefs = []SourceRef{{ChunkID: "chunk-1", Quote: "Graph 流程编排"}}
+
+	passed, rejected := gateQuestionCandidates(req, concepts, chunks, []QuestionCandidate{candidate}, nil)
+
+	if len(passed) != 0 || len(rejected) != 1 {
+		t.Fatalf("passed=%d rejected=%d, want dirty candidate rejected", len(passed), len(rejected))
+	}
+	if !contains(rejected[0].QualityFlags, QualityFlagDirtyNoteMarker) {
+		t.Fatalf("quality flags = %v, want dirty marker", rejected[0].QualityFlags)
+	}
+}
+
+func TestGateQuestionCandidatesRejectedDuplicateDoesNotBlockLaterCompleteCandidate(t *testing.T) {
+	req := GenerationRequest{QuestionType: "interview", Difficulty: 3}
+	concepts := []ConceptCard{{ID: "concept-001", Title: "Agent 评估"}}
+	chunks := []RetrievedChunk{{ID: "chunk-1", Content: "Agent 评估要看结果、过程和工程指标，也要看 context 取消等工程稳定性。"}}
+	incomplete := completeGenerationCandidate("concept-001", "Agent 效果如何评估？")
+	incomplete.ExpectedPoints = nil
+	complete := completeGenerationCandidate("concept-001", "Agent 效果如何评估？")
+
+	passed, rejected := gateQuestionCandidates(req, concepts, chunks, []QuestionCandidate{incomplete, complete}, nil)
+
+	if len(rejected) != 1 {
+		t.Fatalf("rejected = %+v, want one incomplete candidate", rejected)
+	}
+	if len(passed) != 1 || passed[0].Content != complete.Content {
+		t.Fatalf("passed = %+v, want later complete duplicate to pass", passed)
+	}
+}
+
 func TestQuestionContentDedupeKeyNormalizesWhitespaceAndCase(t *testing.T) {
 	got := questionContentDedupeKey(" Agent 效果如何评估？ ")
 	want := questionContentDedupeKey("agent 效果如何评估？")

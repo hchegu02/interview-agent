@@ -388,6 +388,50 @@ func TestImportCommitSkipsDuplicateContentInSameJob(t *testing.T) {
 	}
 }
 
+func TestImportServiceCommitBlocksDirtyAcceptedQuestionContent(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore(nil)
+	imports := NewMemoryImportStore()
+	service := NewImportService(ImportServiceDeps{
+		Imports: imports,
+		Writer:  store,
+	})
+	job, err := imports.CreateJob(ctx, newImportJob(ImportSourceQuestionBank, "dirty.json"))
+	if err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+	dirty := completeImportTestItem("dirty-agent-001")
+	dirty.Content = "有使用过吗你这个agent项目就是四个智能体 用langchain也可以实现啊 你用了langGraph 有哪些是用langchain不能实现的吗--（无法反驳.."
+	if _, err := service.stageItems(ctx, job, "", []Item{dirty}); err != nil {
+		t.Fatalf("stageItems: %v", err)
+	}
+	markImportJobReady(t, ctx, imports, job.ID)
+	if _, _, err := service.ReviewAllValidItems(ctx, job.ID, ImportReviewStatusAccepted, true); err != nil {
+		t.Fatalf("ReviewAllValidItems: %v", err)
+	}
+
+	committed, err := service.Commit(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if committed.ImportedItems != 0 {
+		t.Fatalf("ImportedItems = %d, want 0", committed.ImportedItems)
+	}
+	if _, err := store.Get(ctx, dirty.ID); err == nil {
+		t.Fatalf("dirty question %s should not be committed", dirty.ID)
+	}
+	items, err := imports.ListItems(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	if len(items) != 1 || items[0].AgentReviewStatus != ImportAgentReviewRejected {
+		t.Fatalf("staged item = %+v, want rejected", items)
+	}
+	if !strings.Contains(items[0].AgentReviewReason, QualityFlagDirtyNoteMarker) {
+		t.Fatalf("AgentReviewReason = %q, want dirty flag", items[0].AgentReviewReason)
+	}
+}
+
 func TestImportCommitSkipsDuplicateExistingActiveContent(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemoryStore([]Item{{
