@@ -305,9 +305,54 @@ type Report struct {
 	SkillBreakdown     map[string]int      `json:"skill_breakdown"` // skill -> 0..100
 	TranscriptAnalysis *TranscriptAnalysis `json:"transcript_analysis,omitempty"`
 	DrillPlan          []DrillPlanItem     `json:"drill_plan,omitempty"`
+	RoundReviews       []RoundReview       `json:"round_reviews,omitempty"`
 	Highlights         []string            `json:"highlights"`
 	Improvements       []string            `json:"improvements"`
 	NextSteps          []string            `json:"next_steps"`
+}
+
+// RoundReview 是报告中一道主问题的逐题评分证据。
+type RoundReview struct {
+	RoundID             string           `json:"round_id,omitempty"`
+	Number              int              `json:"number,omitempty"`
+	Type                string           `json:"type,omitempty"`
+	QuestionID          string           `json:"question_id,omitempty"`
+	Question            string           `json:"question,omitempty"`
+	Answer              string           `json:"answer,omitempty"`
+	Score               *int             `json:"score,omitempty"`
+	HitPoints           []string         `json:"hit_points,omitempty"`
+	MissedPoints        []string         `json:"missed_points,omitempty"`
+	Suggestion          string           `json:"suggestion,omitempty"`
+	ExpectedPoints      []string         `json:"expected_points,omitempty"`
+	CountsTowardOverall bool             `json:"counts_toward_overall"`
+	FollowUps           []FollowUpReview `json:"follow_ups,omitempty"`
+}
+
+// FollowUpReview 是报告中一道追问的评分证据。追问不参与 overall_score。
+type FollowUpReview struct {
+	Question     string   `json:"question,omitempty"`
+	Answer       string   `json:"answer,omitempty"`
+	Score        *int     `json:"score,omitempty"`
+	HitPoints    []string `json:"hit_points,omitempty"`
+	MissedPoints []string `json:"missed_points,omitempty"`
+	Suggestion   string   `json:"suggestion,omitempty"`
+}
+
+// OverallScoreFromRoundReviews 按报告中声明参与总分的主问题评分计算总分。
+func OverallScoreFromRoundReviews(reviews []RoundReview) int {
+	var sum, n int
+	for i := range reviews {
+		review := reviews[i]
+		if !review.CountsTowardOverall || review.Score == nil || *review.Score < 0 {
+			continue
+		}
+		sum += *review.Score
+		n++
+	}
+	if n == 0 {
+		return 0
+	}
+	return (sum + n/2) / n
 }
 
 // TranscriptAnalysis 是对整场问答文本的可解释诊断。

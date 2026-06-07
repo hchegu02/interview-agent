@@ -80,13 +80,15 @@ func NewReportPatchNodeWithHook(hook agentkit.Hook) graph.PatchNodeFunc {
 		}
 		reportSess := *sess
 		reportSess.WorkingMemory = workingMemory
+		reviews := roundReviews(reportSess.Rounds)
 
 		report = &domain.Report{
 			SessionID:          sess.ID,
-			OverallScore:       overallScore(sess.Rounds),
+			OverallScore:       domain.OverallScoreFromRoundReviews(reviews),
 			SkillBreakdown:     skillBreakdown(workingMemory.SkillCoverage),
 			TranscriptAnalysis: transcriptAnalysis(reportSess.Rounds),
 			DrillPlan:          drillPlan(&reportSess),
+			RoundReviews:       reviews,
 			Highlights:         reportHighlights(&reportSess),
 			Improvements:       reportImprovements(&reportSess),
 			NextSteps:          reportNextSteps(&reportSess),
@@ -102,6 +104,62 @@ func NewReportPatchNodeWithHook(hook agentkit.Hook) graph.PatchNodeFunc {
 		}
 		return statePatch, nil
 	}
+}
+
+func roundReviews(rounds []domain.AnswerRound) []domain.RoundReview {
+	reviews := make([]domain.RoundReview, 0, len(rounds))
+	for i := range rounds {
+		round := &rounds[i]
+		if strings.TrimSpace(round.Answer) == "" {
+			continue
+		}
+		eval := round.FinalEvaluation()
+		review := domain.RoundReview{
+			RoundID:        round.RoundID,
+			Number:         len(reviews) + 1,
+			Type:           "main",
+			QuestionID:     round.Question.ID,
+			Question:       round.Question.Content,
+			Answer:         round.Answer,
+			ExpectedPoints: append([]string(nil), round.Question.ExpectedPoints...),
+			FollowUps:      followUpReviews(round.FollowUps),
+		}
+		if eval != nil {
+			review.Score = intPtr(eval.Score)
+			review.HitPoints = append([]string(nil), eval.Strengths...)
+			review.MissedPoints = append([]string(nil), eval.Weaknesses...)
+			review.Suggestion = eval.Suggestion
+			review.CountsTowardOverall = eval.Score >= 0
+		}
+		reviews = append(reviews, review)
+	}
+	return reviews
+}
+
+func followUpReviews(followUps []domain.FollowUp) []domain.FollowUpReview {
+	out := make([]domain.FollowUpReview, 0, len(followUps))
+	for i := range followUps {
+		follow := followUps[i]
+		if strings.TrimSpace(follow.Answer) == "" {
+			continue
+		}
+		review := domain.FollowUpReview{
+			Question: follow.Question,
+			Answer:   follow.Answer,
+		}
+		if follow.Evaluation != nil {
+			review.Score = intPtr(follow.Evaluation.Score)
+			review.HitPoints = append([]string(nil), follow.Evaluation.Strengths...)
+			review.MissedPoints = append([]string(nil), follow.Evaluation.Weaknesses...)
+			review.Suggestion = follow.Evaluation.Suggestion
+		}
+		out = append(out, review)
+	}
+	return out
+}
+
+func intPtr(v int) *int {
+	return &v
 }
 
 func transcriptAnalysis(rounds []domain.AnswerRound) *domain.TranscriptAnalysis {
@@ -238,22 +296,6 @@ func drillPlan(sess *domain.Session) []domain.DrillPlanItem {
 		}
 	}
 	return out
-}
-
-func overallScore(rounds []domain.AnswerRound) int {
-	var sum, n int
-	for i := range rounds {
-		ev := rounds[i].FinalEvaluation()
-		if ev == nil || ev.Score < 0 {
-			continue
-		}
-		sum += ev.Score
-		n++
-	}
-	if n == 0 {
-		return 0
-	}
-	return (sum + n/2) / n
 }
 
 func skillBreakdown(coverage map[string]float64) map[string]int {

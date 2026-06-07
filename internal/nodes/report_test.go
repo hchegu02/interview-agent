@@ -3,6 +3,7 @@ package nodes
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"interview-agent/internal/agentkit"
@@ -164,6 +165,94 @@ func TestReportNode_AggregatesSessionReport(t *testing.T) {
 	}
 }
 
+func TestReportNode_BuildsRoundReviewsWithOriginalAnswers(t *testing.T) {
+	sess := buildReportSession()
+	sess.Rounds = append(sess.Rounds,
+		domain.AnswerRound{
+			RoundID: "r4",
+			Question: domain.Question{
+				ID:             "redis-aof-rdb",
+				Content:        "Redis AOF 和 RDB 怎么取舍？",
+				SkillCategory:  "redis",
+				ExpectedPoints: []string{"aof", "rdb"},
+			},
+			Answer: "AOF 更偏实时恢复，RDB 更适合快照备份。",
+			Evaluation: &domain.Evaluation{
+				QuestionID: "redis-aof-rdb",
+				Score:      70,
+				Strengths:  []string{"区分了恢复和快照"},
+				Weaknesses: []string{"缺少 fsync 策略"},
+				Suggestion: "补充 appendfsync always/everysec/no 的取舍。",
+			},
+			FollowUps: []domain.FollowUp{
+				{
+					Question: "AOF everysec 丢数据窗口是多少？",
+					Answer:   "最多大约 1 秒。",
+					Evaluation: &domain.Evaluation{
+						QuestionID: "redis-aof-rdb-followup",
+						Score:      80,
+						Strengths:  []string{"回答了窗口"},
+					},
+				},
+				{
+					Question: "RDB 触发方式有哪些？",
+				},
+			},
+		},
+		domain.AnswerRound{
+			RoundID: "r5",
+			Question: domain.Question{
+				ID:            "mq-001",
+				Content:       "消息队列如何处理重复消费？",
+				SkillCategory: "mq",
+			},
+			Evaluation: &domain.Evaluation{
+				QuestionID: "mq-001",
+				Score:      99,
+			},
+		},
+	)
+
+	err := NewReportNode()(context.Background(), sess)
+	if err != nil {
+		t.Fatalf("report node: %v", err)
+	}
+	if got := len(sess.Report.RoundReviews); got != answeredMainRounds(sess.Rounds) {
+		t.Fatalf("round_reviews = %d, want answered main rounds", got)
+	}
+	review := findRoundReview(sess.Report.RoundReviews, "redis-aof-rdb")
+	if review == nil {
+		t.Fatal("missing redis review")
+	}
+	if review.Answer != "AOF 更偏实时恢复，RDB 更适合快照备份。" {
+		t.Fatalf("answer = %q", review.Answer)
+	}
+	if review.Score == nil || *review.Score != 70 {
+		t.Fatalf("score = %+v", review.Score)
+	}
+	if len(review.HitPoints) != 1 || review.HitPoints[0] != "区分了恢复和快照" {
+		t.Fatalf("hit_points = %+v", review.HitPoints)
+	}
+	if len(review.MissedPoints) != 1 || review.MissedPoints[0] != "缺少 fsync 策略" {
+		t.Fatalf("missed_points = %+v", review.MissedPoints)
+	}
+	if len(review.ExpectedPoints) != 2 || review.ExpectedPoints[0] != "aof" || review.ExpectedPoints[1] != "rdb" {
+		t.Fatalf("expected_points = %+v", review.ExpectedPoints)
+	}
+	if len(review.FollowUps) != 1 || review.FollowUps[0].Answer != "最多大约 1 秒。" {
+		t.Fatalf("followups = %+v", review.FollowUps)
+	}
+	if review.FollowUps[0].Score == nil || *review.FollowUps[0].Score != 80 {
+		t.Fatalf("followup score = %+v", review.FollowUps[0].Score)
+	}
+	if missing := findRoundReview(sess.Report.RoundReviews, "mq-001"); missing != nil {
+		t.Fatalf("unanswered round should not be reviewed: %+v", missing)
+	}
+	if want := domain.OverallScoreFromRoundReviews(sess.Report.RoundReviews); sess.Report.OverallScore != want {
+		t.Fatalf("overall_score = %d, want %d from round reviews", sess.Report.OverallScore, want)
+	}
+}
+
 func TestReportNode_EmitsSkillHookEvents(t *testing.T) {
 	sess := buildReportSession()
 	hook := agentkit.NewRecorderHook()
@@ -258,4 +347,23 @@ func TestReportNode_InvalidStatus_Permanent(t *testing.T) {
 	if !errors.Is(err, graph.ErrPermanent) {
 		t.Errorf("expected ErrPermanent, got %v", err)
 	}
+}
+
+func answeredMainRounds(rounds []domain.AnswerRound) int {
+	n := 0
+	for i := range rounds {
+		if strings.TrimSpace(rounds[i].Answer) != "" {
+			n++
+		}
+	}
+	return n
+}
+
+func findRoundReview(reviews []domain.RoundReview, questionID string) *domain.RoundReview {
+	for i := range reviews {
+		if reviews[i].QuestionID == questionID {
+			return &reviews[i]
+		}
+	}
+	return nil
 }
