@@ -1,0 +1,14 @@
+{
+  "change": "add-rag-question-generation",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "4ec4ca9e2cf7644a859e0eedd97bc1c31901d1ff05c1b20f0e1e8bc995dc0126",
+  "files": [
+    { "path": "openspec/changes/add-rag-question-generation/proposal.md", "sha256": "ea4af03514c2e155f70d563bcbab488f57e93e1fe60f3d7c44e505f43f3bd81f" },
+    { "path": "openspec/changes/add-rag-question-generation/design.md", "sha256": "a4487b16268af73fdbd9ead14ae020412a73be0156900a0678d785ed89b34439" },
+    { "path": "openspec/changes/add-rag-question-generation/tasks.md", "sha256": "f704ec0b4b4a94dd8f2ef81ec9a803b019c8f0b685c7bc8a135e941d249024f3" },
+    { "path": "openspec/changes/add-rag-question-generation/specs/question-bank-import-enrichment/spec.md", "sha256": "050d3f789af8eec89cf391c90ac4201cc65d888e8a087e6f14df2d8e40b30222" }
+  ]
+}
