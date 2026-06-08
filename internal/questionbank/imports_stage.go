@@ -33,9 +33,12 @@ func (s *ImportService) stageItemsWithOriginalsAndProvenance(ctx context.Context
 		var sourceProvenance map[string]string
 		if i < len(provenances) {
 			for field, source := range provenances[i] {
+				if isImportSourceProvenanceKey(field) {
+					continue
+				}
 				fieldProvenance[field] = source
 			}
-			if job.SourceType == ImportSourceDocument {
+			if len(provenances[i]) > 0 {
 				sourceProvenance = cloneStringMap(provenances[i])
 			}
 		}
@@ -76,6 +79,16 @@ func (s *ImportService) stageItemsWithOriginalsAndProvenance(ctx context.Context
 		job.Status = ImportStatusReady
 	}
 	return s.imports.UpdateJob(ctx, job)
+}
+
+func isImportSourceProvenanceKey(key string) bool {
+	switch key {
+	case "source_type", "filename", "content_type", "source_hash", "chunk_id", "chunk_hash",
+		"schema_version", "source_ref", "validation_report", "review_policy":
+		return true
+	default:
+		return false
+	}
 }
 
 func defaultAgentReviewStatus(sourceType string) string {

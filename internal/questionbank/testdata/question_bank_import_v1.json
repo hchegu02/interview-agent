@@ -1,0 +1,27 @@
+{
+  "schema_version": "question_bank_import.v1",
+  "source_ref": "obsidian/go.md",
+  "validation_report": {
+    "producer": "local-llm",
+    "valid_items": 1
+  },
+  "review_policy": {
+    "default_status": "needs_human_review",
+    "require_complete_fields": true
+  },
+  "items": [
+    {
+      "id": "go-contract-001",
+      "content": "Go map 并发读写为什么不安全？",
+      "skill_category": "go",
+      "difficulty": "4",
+      "tags": "go；map；concurrency",
+      "expected_points": "运行时检测；fatal error；sync.Map 或锁",
+      "rubric": [
+        "说明 fatal error",
+        "说明工程规避方式"
+      ],
+      "follow_up_hints": "如何定位线上 map 并发写？"
+    }
+  ]
+}

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -839,6 +840,117 @@ func TestParseQuestionBankItemsToleratesLLMScalarDrift(t *testing.T) {
 	}
 }
 
+func TestParseQuestionBankItemsAcceptsVersionedImportPackage(t *testing.T) {
+	raw, err := os.ReadFile("testdata/question_bank_import_v1.json")
+	if err != nil {
+		t.Fatalf("ReadFile contract fixture: %v", err)
+	}
+	items, err := parseQuestionBankItems("contract.json", raw)
+	if err != nil {
+		t.Fatalf("parseQuestionBankItems: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != "go-contract-001" {
+		t.Fatalf("items = %+v", items)
+	}
+	if items[0].Difficulty != 4 {
+		t.Fatalf("Difficulty = %d, want 4", items[0].Difficulty)
+	}
+	if got := items[0].Rubric["point_1"]; got != "说明 fatal error" {
+		t.Fatalf("rubric point_1 = %q", got)
+	}
+	if got := items[0].Tags; len(got) != 3 || got[1] != "map" {
+		t.Fatalf("Tags = %+v", got)
+	}
+	if got := items[0].ExpectedPoints; len(got) != 3 || got[2] != "sync.Map 或锁" {
+		t.Fatalf("ExpectedPoints = %+v", got)
+	}
+}
+
+func TestParseQuestionBankItemsRejectsUnsupportedSchemaVersion(t *testing.T) {
+	raw := []byte(`{
+		"schema_version":"question_bank_import.v9",
+		"items":[{"id":"bad-schema","content":"Go map 并发读写为什么不安全？"}]
+	}`)
+	_, err := parseQuestionBankItems("contract.json", raw)
+	if err == nil {
+		t.Fatal("parseQuestionBankItems should reject unsupported schema_version")
+	}
+	if !strings.Contains(err.Error(), "schema_version") {
+		t.Fatalf("error = %v, want schema_version context", err)
+	}
+}
+
+func TestParseQuestionBankItemsReportsTopLevelContractFieldPath(t *testing.T) {
+	raw := []byte(`{
+		"schema_version":{"version":"question_bank_import.v1"},
+		"items":[{"id":"bad-schema-type","content":"Go map 并发读写为什么不安全？"}]
+	}`)
+	_, err := parseQuestionBankItems("contract.json", raw)
+	if err == nil {
+		t.Fatal("parseQuestionBankItems should reject bad schema_version shape")
+	}
+	if !strings.Contains(err.Error(), "$.schema_version") {
+		t.Fatalf("error = %v, want top-level schema_version path", err)
+	}
+	if strings.Contains(err.Error(), "$.items[].schema_version") {
+		t.Fatalf("error = %v, should not report schema_version as item field", err)
+	}
+}
+
+func TestParseQuestionBankItemsAcceptsLegacyJSONArray(t *testing.T) {
+	raw := []byte(`[{
+		"id":"legacy-array-001",
+		"content":"Go channel 关闭后读会发生什么？",
+		"skill_category":"go",
+		"difficulty":3
+	}]`)
+	items, err := parseQuestionBankItems("legacy.json", raw)
+	if err != nil {
+		t.Fatalf("parseQuestionBankItems: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != "legacy-array-001" {
+		t.Fatalf("items = %+v", items)
+	}
+}
+
+func TestParseQuestionBankItemsAcceptsLegacyWrappedItemsWithExtraMetadata(t *testing.T) {
+	raw := []byte(`{
+		"source_ref":{"legacy":"ignored"},
+		"review_policy":{"legacy":"ignored"},
+		"items":[{
+			"id":"legacy-wrapped-001",
+			"content":"Redis 缓存穿透怎么处理？",
+			"skill_category":"redis",
+			"difficulty":3
+		}]
+	}`)
+	items, err := parseQuestionBankItems("legacy.json", raw)
+	if err != nil {
+		t.Fatalf("parseQuestionBankItems should keep legacy wrapper lenient: %v", err)
+	}
+	if len(items) != 1 || items[0].ID != "legacy-wrapped-001" {
+		t.Fatalf("items = %+v", items)
+	}
+}
+
+func TestParseQuestionBankItemsAcceptsLegacyCSVAndMarkdown(t *testing.T) {
+	csvItems, err := parseQuestionBankItems("legacy.csv", []byte("id,content,tags,skill_category,difficulty,expected_points\ncsv-001,Go defer 顺序是什么,go；defer,go,3,LIFO；参数立即求值\n"))
+	if err != nil {
+		t.Fatalf("parse csv: %v", err)
+	}
+	if len(csvItems) != 1 || csvItems[0].ID != "csv-001" || len(csvItems[0].ExpectedPoints) != 2 {
+		t.Fatalf("csv items = %+v", csvItems)
+	}
+
+	mdItems, err := parseQuestionBankItems("legacy.md", []byte("## Go map 并发读写为什么不安全？\n需要说明 runtime fatal error 和锁保护。\n"))
+	if err != nil {
+		t.Fatalf("parse markdown: %v", err)
+	}
+	if len(mdItems) != 1 || !strings.Contains(mdItems[0].Content, "runtime fatal error") {
+		t.Fatalf("markdown items = %+v", mdItems)
+	}
+}
+
 func TestParseQuestionBankItemsToleratesRubricArray(t *testing.T) {
 	raw := []byte(`{"items":[{
 		"id":"go-rubric-array-001",
@@ -873,6 +985,82 @@ func TestParseQuestionBankItemsRejectsUnsupportedFlexibleStringList(t *testing.T
 	}
 	if !strings.Contains(err.Error(), "tags") {
 		t.Fatalf("error = %v, want tags context", err)
+	}
+}
+
+func TestParseQuestionBankItemsReportsFlexibleFieldNameOnBadType(t *testing.T) {
+	raw := []byte(`{"items":[{
+		"id":"bad-expected-points",
+		"content":"Redis 热 key 如何治理？",
+		"skill_category":"redis",
+		"difficulty":3,
+		"expected_points":{"primary":"发现热 key"}
+	}]}`)
+	_, err := parseQuestionBankItems("generated.json", raw)
+	if err == nil {
+		t.Fatal("parseQuestionBankItems should reject bad expected_points shape")
+	}
+	if !strings.Contains(err.Error(), "expected_points") {
+		t.Fatalf("error = %v, want expected_points context", err)
+	}
+	if !strings.Contains(err.Error(), "$.items[].expected_points") {
+		t.Fatalf("error = %v, want field path context", err)
+	}
+	if !strings.Contains(err.Error(), `raw={"primary":"发现热 key"}`) {
+		t.Fatalf("error = %v, want raw value summary", err)
+	}
+}
+
+func TestImportService_ImportLocalQuestionBankPreservesVersionedPackageMetadata(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore(nil)
+	imports := NewMemoryImportStore()
+	service := NewImportService(ImportServiceDeps{
+		Imports: imports,
+		Writer:  store,
+	})
+	raw, err := os.ReadFile("testdata/question_bank_import_v1.json")
+	if err != nil {
+		t.Fatalf("ReadFile contract fixture: %v", err)
+	}
+
+	job, err := service.ImportLocalQuestionBank(ctx, ImportFile{
+		Filename:    "contract.json",
+		ContentType: "application/json",
+		Reader:      bytes.NewReader(raw),
+		Size:        int64(len(raw)),
+	})
+	if err != nil {
+		t.Fatalf("ImportLocalQuestionBank: %v", err)
+	}
+	if job.Metadata["schema_version"] != questionBankImportSchemaV1 {
+		t.Fatalf("job metadata = %+v, want schema_version", job.Metadata)
+	}
+	if job.Metadata["source_ref"] != "obsidian/go.md" {
+		t.Fatalf("job metadata = %+v, want source_ref", job.Metadata)
+	}
+	if !strings.Contains(job.Metadata["review_policy"], "needs_human_review") {
+		t.Fatalf("job metadata = %+v, want compact review_policy", job.Metadata)
+	}
+	items, err := imports.ListItems(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("ListItems: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items = %+v, want one staged item", items)
+	}
+	provenance := items[0].SourceProvenance
+	if provenance["source_type"] != ImportSourceQuestionBank || provenance["schema_version"] != questionBankImportSchemaV1 {
+		t.Fatalf("source provenance = %+v, want question bank schema facts", provenance)
+	}
+	if provenance["source_ref"] != "obsidian/go.md" || provenance["source_hash"] == "" {
+		t.Fatalf("source provenance = %+v, want source_ref and source_hash", provenance)
+	}
+	if _, ok := items[0].FieldProvenance["schema_version"]; ok {
+		t.Fatalf("field provenance should not contain package metadata: %+v", items[0].FieldProvenance)
+	}
+	if _, ok := items[0].FieldProvenance["source_hash"]; ok {
+		t.Fatalf("field provenance should not contain source metadata: %+v", items[0].FieldProvenance)
 	}
 }
 

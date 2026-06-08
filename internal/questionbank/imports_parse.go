@@ -11,15 +11,80 @@ import (
 	"strings"
 )
 
+const questionBankImportSchemaV1 = "question_bank_import.v1"
+
+type questionBankImportMetadata struct {
+	SchemaVersion    string
+	SourceRef        string
+	ValidationReport string
+	ReviewPolicy     string
+}
+
 func parseQuestionBankItems(filename string, raw []byte) ([]Item, error) {
+	items, _, err := parseQuestionBankImportPayload(filename, raw)
+	return items, err
+}
+
+func parseQuestionBankImportPayload(filename string, raw []byte) ([]Item, questionBankImportMetadata, error) {
 	switch strings.ToLower(filepath.Ext(filename)) {
 	case ".csv":
-		return parseCSVItems(raw)
+		items, err := parseCSVItems(raw)
+		return items, questionBankImportMetadata{}, err
 	case ".md", ".markdown":
-		return parseMarkdownItems(raw), nil
+		return parseMarkdownItems(raw), questionBankImportMetadata{}, nil
 	default:
-		return parseJSONItems(raw)
+		meta, err := parseQuestionBankImportMetadata(raw)
+		if err != nil {
+			return nil, questionBankImportMetadata{}, err
+		}
+		items, err := parseJSONItems(raw)
+		return items, meta, err
 	}
+}
+
+func parseQuestionBankImportMetadata(raw []byte) (questionBankImportMetadata, error) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return questionBankImportMetadata{}, nil
+	}
+	if len(obj) == 0 {
+		return questionBankImportMetadata{}, nil
+	}
+	var meta questionBankImportMetadata
+	schemaRaw, versioned := obj["schema_version"]
+	if !versioned {
+		return meta, nil
+	}
+	var schema string
+	if err := json.Unmarshal(schemaRaw, &schema); err != nil {
+		return meta, jsonFieldError("schema_version", "$.schema_version", schemaRaw, err)
+	}
+	schema = strings.TrimSpace(schema)
+	if schema != questionBankImportSchemaV1 {
+		return meta, fmt.Errorf("unsupported question bank import schema_version %q", schema)
+	}
+	meta.SchemaVersion = schema
+	if sourceRaw, ok := obj["source_ref"]; ok {
+		var sourceRef string
+		if err := json.Unmarshal(sourceRaw, &sourceRef); err != nil {
+			return meta, jsonFieldError("source_ref", "$.source_ref", sourceRaw, err)
+		}
+		meta.SourceRef = strings.TrimSpace(sourceRef)
+	}
+	meta.ValidationReport = compactRawJSON(obj["validation_report"])
+	meta.ReviewPolicy = compactRawJSON(obj["review_policy"])
+	return meta, nil
+}
+
+func compactRawJSON(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, raw); err != nil {
+		return summarizeRawJSON(raw)
+	}
+	return buf.String()
 }
 
 func parseJSONItems(raw []byte) ([]Item, error) {
@@ -91,46 +156,63 @@ func parseFlexibleJSONItem(raw json.RawMessage) (Item, error) {
 	if len(difficultyRaw) > 0 {
 		difficulty, err := parseFlexibleDifficulty(difficultyRaw)
 		if err != nil {
-			return Item{}, err
+			return Item{}, flexibleFieldError("difficulty", difficultyRaw, err)
 		}
 		item.Difficulty = difficulty
 	}
 	if len(rubricRaw) > 0 {
 		rubric, err := parseFlexibleRubric(rubricRaw)
 		if err != nil {
-			return Item{}, err
+			return Item{}, flexibleFieldError("rubric", rubricRaw, err)
 		}
 		item.Rubric = rubric
 	}
 	if len(tagsRaw) > 0 {
 		tags, err := parseFlexibleStringList(tagsRaw)
 		if err != nil {
-			return Item{}, fmt.Errorf("parse tags: %w", err)
+			return Item{}, flexibleFieldError("tags", tagsRaw, err)
 		}
 		item.Tags = tags
 	}
 	if len(expectedPointsRaw) > 0 {
 		expectedPoints, err := parseFlexibleStringList(expectedPointsRaw)
 		if err != nil {
-			return Item{}, fmt.Errorf("parse expected_points: %w", err)
+			return Item{}, flexibleFieldError("expected_points", expectedPointsRaw, err)
 		}
 		item.ExpectedPoints = expectedPoints
 	}
 	if len(roleTagsRaw) > 0 {
 		roleTags, err := parseFlexibleStringList(roleTagsRaw)
 		if err != nil {
-			return Item{}, fmt.Errorf("parse role_tags: %w", err)
+			return Item{}, flexibleFieldError("role_tags", roleTagsRaw, err)
 		}
 		item.RoleTags = roleTags
 	}
 	if len(followUpHintsRaw) > 0 {
 		followUpHints, err := parseFlexibleStringList(followUpHintsRaw)
 		if err != nil {
-			return Item{}, fmt.Errorf("parse follow_up_hints: %w", err)
+			return Item{}, flexibleFieldError("follow_up_hints", followUpHintsRaw, err)
 		}
 		item.FollowUpHints = followUpHints
 	}
 	return item, nil
+}
+
+func flexibleFieldError(field string, raw json.RawMessage, err error) error {
+	return jsonFieldError(field, "$.items[]."+field, raw, err)
+}
+
+func jsonFieldError(field, path string, raw json.RawMessage, err error) error {
+	return fmt.Errorf("parse %s at %s raw=%s: %w", field, path, summarizeRawJSON(raw), err)
+}
+
+func summarizeRawJSON(raw json.RawMessage) string {
+	summary := strings.Join(strings.Fields(string(raw)), " ")
+	const maxRawSummary = 120
+	if len(summary) > maxRawSummary {
+		return summary[:maxRawSummary] + "..."
+	}
+	return summary
 }
 
 func parseFlexibleDifficulty(raw json.RawMessage) (int, error) {

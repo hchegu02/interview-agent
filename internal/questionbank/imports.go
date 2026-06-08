@@ -61,14 +61,35 @@ func (s *ImportService) processLocalQuestionBank(ctx context.Context, job Import
 	if err != nil {
 		return s.failJob(ctx, job, fmt.Errorf("read import file: %w", err))
 	}
-	items, err := parseQuestionBankItems(file.Filename, raw)
+	items, packageMeta, err := parseQuestionBankImportPayload(file.Filename, raw)
 	if err != nil {
 		return s.failJob(ctx, job, err)
+	}
+	if meta := importJobMetadataForQuestionBankPackage(file, raw, packageMeta); len(meta) > 0 {
+		if job.Metadata == nil {
+			job.Metadata = map[string]string{}
+		}
+		for key, value := range meta {
+			job.Metadata[key] = value
+		}
+		job, err = s.imports.UpdateJob(ctx, job)
+		if err != nil {
+			return s.failJob(ctx, job, err)
+		}
 	}
 	originals := cloneImportItems(items)
 	items, provenances, err := s.enrichLocalItems(ctx, items)
 	if err != nil {
 		return s.failJob(ctx, job, err)
+	}
+	sourceProvenance := sourceProvenanceForQuestionBankPackage(file, raw, packageMeta)
+	for i := range provenances {
+		if provenances[i] == nil {
+			provenances[i] = map[string]string{}
+		}
+		for key, value := range sourceProvenance {
+			provenances[i][key] = value
+		}
 	}
 	return s.stageItemsWithOriginalsAndProvenance(ctx, job, "", items, originals, provenances)
 }
@@ -134,6 +155,39 @@ func sourceProvenanceForChunk(file ImportFile, raw []byte, chunk ImportChunk) ma
 		"chunk_id":     chunk.ID,
 		"chunk_hash":   "sha256:" + sha256Hex([]byte(chunk.Content)),
 	}
+}
+
+func importJobMetadataForQuestionBankPackage(file ImportFile, raw []byte, meta questionBankImportMetadata) map[string]string {
+	out := sourceProvenanceForQuestionBankPackage(file, raw, meta)
+	delete(out, "source_type")
+	delete(out, "filename")
+	delete(out, "content_type")
+	delete(out, "source_hash")
+	return out
+}
+
+func sourceProvenanceForQuestionBankPackage(file ImportFile, raw []byte, meta questionBankImportMetadata) map[string]string {
+	out := map[string]string{
+		"source_type": ImportSourceQuestionBank,
+		"filename":    file.Filename,
+		"source_hash": "sha256:" + sha256Hex(raw),
+	}
+	if strings.TrimSpace(file.ContentType) != "" {
+		out["content_type"] = file.ContentType
+	}
+	if meta.SchemaVersion != "" {
+		out["schema_version"] = meta.SchemaVersion
+	}
+	if meta.SourceRef != "" {
+		out["source_ref"] = meta.SourceRef
+	}
+	if meta.ValidationReport != "" {
+		out["validation_report"] = meta.ValidationReport
+	}
+	if meta.ReviewPolicy != "" {
+		out["review_policy"] = meta.ReviewPolicy
+	}
+	return out
 }
 
 func sha256Hex(raw []byte) string {
