@@ -532,6 +532,74 @@ func TestImportCommitSkipsFailJobWhenActiveContentReadFails(t *testing.T) {
 	if committed.ImportedItems != 0 {
 		t.Fatalf("ImportedItems = %d, want 0", committed.ImportedItems)
 	}
+	summary := requireCommitSummary(t, committed)
+	if summary.Matched != 1 || summary.Imported != 0 || summary.FailureReasons["active_content_read_failed"] != 1 {
+		t.Fatalf("commit summary = %+v, want active_content_read_failed without imports", summary)
+	}
+}
+
+func TestImportCommitKeepsJobRecoverableWhenImportItemUpdateFailsAfterPublish(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore(nil)
+	baseImports := NewMemoryImportStore()
+	imports := &failingUpdateItemsImportStore{MemoryImportStore: baseImports, failUpdateItems: true}
+	service := NewImportService(ImportServiceDeps{
+		Imports: imports,
+		Writer:  store,
+	})
+
+	job, err := service.ImportLocalQuestionBank(ctx, ImportFile{
+		Filename: "questions.json",
+		Reader: strings.NewReader(`[{
+			"id":"published-before-item-update-fails",
+			"content":"Go channel 关闭后接收行为是什么？",
+			"skill_category":"go",
+			"difficulty":3,
+			"tags":["channel"],
+			"expected_points":["zero value","ok flag"]
+		}]`),
+		Size: 256,
+	})
+	if err != nil {
+		t.Fatalf("ImportLocalQuestionBank: %v", err)
+	}
+
+	committed, err := service.Commit(ctx, job.ID)
+	if err == nil {
+		t.Fatal("Commit should report import item update failure")
+	}
+	if committed.Status != ImportStatusCommitting {
+		t.Fatalf("job status = %q, want committing for recoverable post-publish failure", committed.Status)
+	}
+	if _, getErr := store.Get(ctx, "published-before-item-update-fails"); getErr != nil {
+		t.Fatalf("question should remain published after post-publish diagnostic failure: %v", getErr)
+	}
+	summary := requireCommitSummary(t, committed)
+	if summary.Imported != 1 || summary.FailureReasons["import_item_update_failed"] != 1 {
+		t.Fatalf("commit summary = %+v, want imported with import_item_update_failed", summary)
+	}
+
+	imports.failUpdateItems = false
+	recovered, err := service.commitReadyJob(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("commitReadyJob recovery: %v", err)
+	}
+	if recovered.Status != ImportStatusCommitted || recovered.ImportedItems != 1 {
+		t.Fatalf("recovered job = %+v, want committed with one imported item", recovered)
+	}
+	if recovered.Error != "" {
+		t.Fatalf("recovered job error = %q, want empty", recovered.Error)
+	}
+	staged, err := baseImports.ListItems(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("ListItems after recovery: %v", err)
+	}
+	if len(staged) != 1 || staged[0].Status != ImportItemStatusImported {
+		t.Fatalf("staged items after recovery = %+v, want imported", staged)
+	}
+	if staged[0].AgentReviewStatus == ImportAgentReviewRejected || staged[0].AgentReviewReason == qualityFlagDuplicateExistingContent {
+		t.Fatalf("recovery should not mark self-published item as duplicate: %+v", staged[0])
+	}
 }
 
 func TestActiveQuestionContentKeysRejectsStuckCursor(t *testing.T) {
@@ -1694,7 +1762,8 @@ func TestImportService_CommitEmbedsImportedItems(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ImportLocalQuestionBank: %v", err)
 	}
-	if _, err := service.Commit(ctx, job.ID); err != nil {
+	committed, err := service.Commit(ctx, job.ID)
+	if err != nil {
 		t.Fatalf("Commit: %v", err)
 	}
 
@@ -1707,6 +1776,119 @@ func TestImportService_CommitEmbedsImportedItems(t *testing.T) {
 	}
 	if model != "mock" {
 		t.Fatalf("embedding model = %q, want mock", model)
+	}
+	summary := requireCommitSummary(t, committed)
+	if summary.EmbeddingSynced != 1 || summary.EmbeddingFailed != 0 {
+		t.Fatalf("embedding summary = %+v, want synced=1 failed=0", summary)
+	}
+}
+
+func TestImportService_CommitRecordsPublishSummary(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore(nil)
+	imports := NewMemoryImportStore()
+	service := NewImportService(ImportServiceDeps{Imports: imports, Writer: store})
+
+	job, err := service.ImportLocalQuestionBank(ctx, ImportFile{
+		Filename: "summary.json",
+		Reader: bytes.NewBufferString(`[
+			{"id":"summary-import-001","content":"Go channel 泄漏如何排查？","skill_category":"go","difficulty":3},
+			{"id":"summary-reject-001","content":"Go mutex 饥饿模式是什么？","skill_category":"go","difficulty":4},
+			{"id":"summary-invalid-001","content":"","skill_category":"go","difficulty":2},
+			{"id":"summary-dup-a","content":"Redis 热 key 如何发现和治理？","skill_category":"redis","difficulty":4},
+			{"id":"summary-dup-b","content":"Redis 热 key 如何发现和治理？","skill_category":"redis","difficulty":4},
+			{"id":"summary-dirty-001","content":"有使用过吗你这个agent项目就是四个智能体 用langchain也可以实现啊 你用了langGraph 有哪些是用langchain不能实现的吗--（无法反驳..","skill_category":"agent","difficulty":3}
+		]`),
+		Size: 512,
+	})
+	if err != nil {
+		t.Fatalf("ImportLocalQuestionBank: %v", err)
+	}
+	if _, _, err := service.ReviewItems(ctx, job.ID, []string{job.ID + ":summary-reject-001"}, ImportReviewStatusRejected); err != nil {
+		t.Fatalf("ReviewItems reject: %v", err)
+	}
+
+	committed, err := service.Commit(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	summary := requireCommitSummary(t, committed)
+	if summary.Matched != 6 || summary.Imported != 2 || summary.Skipped != 4 {
+		t.Fatalf("summary counts = %+v, want matched=6 imported=2 skipped=4", summary)
+	}
+	if summary.EmbeddingSynced != 0 || summary.EmbeddingFailed != 0 {
+		t.Fatalf("embedding counts = %+v, want no embedding work", summary)
+	}
+	for _, reason := range []string{
+		"invalid",
+		"review_rejected",
+		qualityFlagDuplicateContent,
+		QualityFlagDirtyNoteMarker,
+	} {
+		if summary.FailureReasons[reason] == 0 {
+			t.Fatalf("failure reasons = %+v, want %q", summary.FailureReasons, reason)
+		}
+	}
+}
+
+func TestImportService_CommitMarksEmbeddingFailureDiagnostics(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore([]Item{{
+		ID:            "embedding-fail-001",
+		Content:       "PostgreSQL 旧题内容",
+		SkillCategory: "postgresql",
+		Difficulty:    3,
+	}})
+	if err := store.UpsertEmbeddings(ctx, []ItemEmbedding{{
+		ID:     "embedding-fail-001",
+		Vector: []float32{1, 2, 3, 4, 5, 6, 7, 8},
+		Model:  "old-model",
+	}}); err != nil {
+		t.Fatalf("seed old embedding: %v", err)
+	}
+	imports := NewMemoryImportStore()
+	service := NewImportService(ImportServiceDeps{
+		Imports:  imports,
+		Writer:   store,
+		Embedder: failingEmbedder{err: errors.New("embedding backend unavailable")},
+	})
+
+	job, err := service.ImportLocalQuestionBank(ctx, ImportFile{
+		Filename: "embedding-fail.json",
+		Reader: bytes.NewBufferString(`[
+			{"id":"embedding-fail-001","content":"PostgreSQL 慢查询应该如何定位？","skill_category":"postgresql","difficulty":4}
+		]`),
+		Size: 128,
+	})
+	if err != nil {
+		t.Fatalf("ImportLocalQuestionBank: %v", err)
+	}
+	committed, err := service.Commit(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+	if committed.Status != ImportStatusCommitted || committed.ImportedItems != 1 {
+		t.Fatalf("committed job = %+v, want committed with one imported item", committed)
+	}
+	item, err := store.Get(ctx, "embedding-fail-001")
+	if err != nil {
+		t.Fatalf("committed item should stay in question bank: %v", err)
+	}
+	if item.EmbeddingStatus != "failed" {
+		t.Fatalf("embedding_status = %q, want failed", item.EmbeddingStatus)
+	}
+	if !strings.Contains(item.EmbeddingError, "embedding backend unavailable") {
+		t.Fatalf("embedding_error = %q, want backend error", item.EmbeddingError)
+	}
+	if _, _, ok := store.Embedding("embedding-fail-001"); ok {
+		t.Fatal("failed embedding should clear stale in-memory vector")
+	}
+	summary := requireCommitSummary(t, committed)
+	if summary.EmbeddingSynced != 0 || summary.EmbeddingFailed != 1 {
+		t.Fatalf("embedding summary = %+v, want synced=0 failed=1", summary)
+	}
+	if summary.FailureReasons["embedding_failed"] != 1 {
+		t.Fatalf("failure reasons = %+v, want embedding_failed", summary.FailureReasons)
 	}
 }
 
@@ -1822,4 +2004,53 @@ func (stuckCursorStore) Get(context.Context, string) (Item, error) {
 
 func (stuckCursorStore) Facets(context.Context) (Facets, error) {
 	return Facets{}, nil
+}
+
+type failingEmbedder struct {
+	err error
+}
+
+func (f failingEmbedder) Embed(context.Context, []string) ([][]float32, error) {
+	return nil, f.err
+}
+
+func (f failingEmbedder) Dimension() int { return 8 }
+func (f failingEmbedder) Name() string   { return "failing" }
+
+type failingUpdateItemsImportStore struct {
+	*MemoryImportStore
+	failUpdateItems bool
+}
+
+func (s *failingUpdateItemsImportStore) UpdateItems(ctx context.Context, items []ImportItem) error {
+	if s.failUpdateItems {
+		return errors.New("update import items failed")
+	}
+	return s.MemoryImportStore.UpdateItems(ctx, items)
+}
+
+type commitSummaryForTest struct {
+	Matched         int            `json:"matched"`
+	Imported        int            `json:"imported"`
+	Skipped         int            `json:"skipped"`
+	EmbeddingSynced int            `json:"embedding_synced"`
+	EmbeddingFailed int            `json:"embedding_failed"`
+	FailureReasons  map[string]int `json:"failure_reasons"`
+	EmbeddingErrors []string       `json:"embedding_errors"`
+}
+
+func requireCommitSummary(t *testing.T, job ImportJob) commitSummaryForTest {
+	t.Helper()
+	raw := job.Metadata["commit_summary"]
+	if raw == "" {
+		t.Fatalf("job metadata = %+v, want commit_summary", job.Metadata)
+	}
+	var summary commitSummaryForTest
+	if err := json.Unmarshal([]byte(raw), &summary); err != nil {
+		t.Fatalf("unmarshal commit_summary %q: %v", raw, err)
+	}
+	if summary.FailureReasons == nil {
+		t.Fatal("commit_summary failure_reasons is nil")
+	}
+	return summary
 }

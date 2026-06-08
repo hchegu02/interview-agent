@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -247,6 +248,30 @@ WHERE id = $1
 	return nil
 }
 
+func (s *PGStore) MarkEmbeddingsFailed(ctx context.Context, ids []string, err error) error {
+	if s == nil || s.Pool == nil || len(ids) == 0 {
+		return nil
+	}
+	message := ""
+	if err != nil {
+		message = err.Error()
+	}
+	_, execErr := s.Pool.Exec(ctx, `
+UPDATE question_bank
+SET embedding = NULL,
+    embedding_status = 'failed',
+    embedding_model = '',
+    embedded_at = NULL,
+    embedding_error = $2,
+    updated_at = now()
+WHERE id = ANY($1::text[])
+`, ids, message)
+	if execErr != nil {
+		return fmt.Errorf("question bank embedding failure mark: %w", execErr)
+	}
+	return nil
+}
+
 func buildWhere(filter Filter) (string, []any) {
 	var clauses []string
 	var args []any
@@ -303,14 +328,18 @@ func scanItems(rows pgx.Rows) ([]Item, error) {
 func scanItem(row itemScanner) (Item, error) {
 	var item Item
 	var rubricRaw []byte
+	var embeddedAt pgtype.Timestamptz
 	if err := row.Scan(
 		&item.ID, &item.Content, &item.Tags, &item.SkillCategory, &item.Difficulty,
 		&item.ExpectedPoints, &item.Source, &item.Scenario, &item.RoleTags, &rubricRaw,
 		&item.SampleAnswer, &item.FollowUpHints, &item.Locale, &item.Status,
-		&item.EmbeddingStatus, &item.EmbeddingModel, &item.EmbeddedAt, &item.EmbeddingError,
+		&item.EmbeddingStatus, &item.EmbeddingModel, &embeddedAt, &item.EmbeddingError,
 		&item.CreatedAt, &item.UpdatedAt,
 	); err != nil {
 		return Item{}, err
+	}
+	if embeddedAt.Valid {
+		item.EmbeddedAt = embeddedAt.Time
 	}
 	if len(rubricRaw) > 0 {
 		_ = json.Unmarshal(rubricRaw, &item.Rubric)

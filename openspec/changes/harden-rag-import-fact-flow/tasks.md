@@ -2,8 +2,8 @@
 
 - [x] 1.1 梳理并补充 `internal/questionbank` JSON 导入 contract 测试，覆盖版本化导入包、legacy 数组、wrapped items、字段兼容、中文分隔符和坏类型报错。
 - [x] 1.2 增加题库导入 contract 文档或测试 fixture，明确 schema version、source ref、review policy、允许字段形态、归一化结果、字段路径错误和原始值摘要。
-- [ ] 1.3 将 commit 明确为发布事务，复核或补齐 matched/imported/skipped/embedding synced/embedding failed/failure reasons 的 summary 测试。
-- [ ] 1.4 复核 review/commit 门禁测试，确认解析、暂存、人工 review、Agent review、重复/脏题阻止、embedding/reindex retry 边界不被绕过。
+- [x] 1.3 将 commit 明确为发布事务，复核或补齐 matched/imported/skipped/embedding synced/embedding failed/failure reasons 的 summary 测试。
+- [x] 1.4 复核 review/commit 门禁测试，确认解析、暂存、人工 review、Agent review、重复/脏题阻止、embedding/reindex retry 边界不被绕过。
 
 ## 2. RAG Eval 真实 Query 和 Candidate Pool
 

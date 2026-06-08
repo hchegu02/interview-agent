@@ -131,7 +131,7 @@ func (s *GenerationService) runGeneration(ctx context.Context, job GenerationJob
 	if err != nil {
 		warnings = append(warnings, fmt.Sprintf("existing question dedupe skipped: %v", err))
 	}
-	passed, rejected := gateQuestionCandidates(req, concepts, chunks, drafts, existingContentKeys)
+	passed, rejected := gateQuestionCandidates(req, concepts, chunks, drafts, contentKeySet(existingContentKeys))
 	if len(passed) == 0 {
 		err := fmt.Errorf("no generated question candidates passed quality gates")
 		job.Concepts = concepts

@@ -2,6 +2,7 @@ package questionbank
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 )
@@ -107,7 +108,7 @@ func (s *ImportService) failJob(ctx context.Context, job ImportJob, err error) (
 	job.Error = err.Error()
 	updated, updateErr := s.imports.UpdateJob(ctx, job)
 	if updateErr != nil {
-		return updated, updateErr
+		return updated, errors.Join(err, updateErr)
 	}
 	return updated, err
 }

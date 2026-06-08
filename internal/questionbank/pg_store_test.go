@@ -3,6 +3,9 @@ package questionbank
 import (
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestBuildListExplainQueryUsesListQueryShape(t *testing.T) {
@@ -39,4 +42,64 @@ func TestBuildListExplainQueryRejectsInvalidCursor(t *testing.T) {
 	if _, _, err := BuildListExplainQuery(Filter{Cursor: "bad"}); err == nil {
 		t.Fatal("BuildListExplainQuery returned nil error for invalid cursor")
 	}
+}
+
+func TestScanItemAcceptsNullEmbeddedAt(t *testing.T) {
+	now := time.Now().UTC()
+	row := fakeItemScanner{values: []any{
+		"scan-null-embedded-at",
+		"PostgreSQL 慢查询如何定位？",
+		[]string{"postgresql"},
+		"postgresql",
+		4,
+		[]string{"EXPLAIN", "pg_stat_statements"},
+		"manual",
+		"",
+		[]string(nil),
+		[]byte(`{"pass":"能说明执行计划"}`),
+		"",
+		[]string(nil),
+		"zh-CN",
+		"active",
+		"failed",
+		"",
+		pgtype.Timestamptz{},
+		"embedding backend unavailable",
+		now,
+		now,
+	}}
+
+	item, err := scanItem(row)
+	if err != nil {
+		t.Fatalf("scanItem: %v", err)
+	}
+	if item.EmbeddingStatus != "failed" || !item.EmbeddedAt.IsZero() {
+		t.Fatalf("item = %+v, want failed with zero EmbeddedAt", item)
+	}
+}
+
+type fakeItemScanner struct {
+	values []any
+}
+
+func (r fakeItemScanner) Scan(dest ...any) error {
+	for i := range dest {
+		switch d := dest[i].(type) {
+		case *string:
+			*d = r.values[i].(string)
+		case *int:
+			*d = r.values[i].(int)
+		case *[]string:
+			if v, ok := r.values[i].([]string); ok {
+				*d = v
+			}
+		case *[]byte:
+			*d = r.values[i].([]byte)
+		case *time.Time:
+			*d = r.values[i].(time.Time)
+		case *pgtype.Timestamptz:
+			*d = r.values[i].(pgtype.Timestamptz)
+		}
+	}
+	return nil
 }

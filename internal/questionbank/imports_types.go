@@ -39,6 +39,8 @@ const (
 	ImportAgentReviewNeedsHumanReview = "needs_human_review"
 	ImportAgentReviewRejected         = "rejected"
 
+	ImportMetadataCommitSummary = "commit_summary"
+
 	localEnrichmentBatchSize = 2
 )
 

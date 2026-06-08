@@ -72,6 +72,10 @@ type EmbeddingWriter interface {
 	UpsertEmbeddings(ctx context.Context, vectors []ItemEmbedding) error
 }
 
+type EmbeddingFailureWriter interface {
+	MarkEmbeddingsFailed(ctx context.Context, ids []string, err error) error
+}
+
 type ItemEmbedding struct {
 	ID     string
 	Vector []float32
@@ -227,6 +231,42 @@ func (s *MemoryStore) UpsertEmbeddings(_ context.Context, vectors []ItemEmbeddin
 			s.items[i].EmbeddingModel = vector.Model
 			s.items[i].EmbeddedAt = time.Now().UTC()
 			s.items[i].EmbeddingError = ""
+		}
+	}
+	return nil
+}
+
+func (s *MemoryStore) MarkEmbeddingsFailed(_ context.Context, ids []string, err error) error {
+	if s == nil || len(ids) == 0 {
+		return nil
+	}
+	message := ""
+	if err != nil {
+		message = err.Error()
+	}
+	now := time.Now().UTC()
+	for _, id := range ids {
+		delete(s.embeddings, id)
+		if item, ok := s.byID[id]; ok {
+			item.EmbeddingStatus = "failed"
+			item.EmbeddingModel = ""
+			item.EmbeddedAt = time.Time{}
+			item.EmbeddingError = message
+			item.UpdatedAt = now
+			s.byID[id] = item
+		}
+	}
+	for i := range s.items {
+		for _, id := range ids {
+			if s.items[i].ID != id {
+				continue
+			}
+			s.items[i].EmbeddingStatus = "failed"
+			s.items[i].EmbeddingModel = ""
+			s.items[i].EmbeddedAt = time.Time{}
+			s.items[i].EmbeddingError = message
+			s.items[i].UpdatedAt = now
+			break
 		}
 	}
 	return nil

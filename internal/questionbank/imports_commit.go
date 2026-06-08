@@ -2,6 +2,7 @@ package questionbank
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -9,6 +10,16 @@ import (
 
 	"interview-agent/internal/embedding"
 )
+
+type importCommitSummary struct {
+	Matched         int            `json:"matched"`
+	Imported        int            `json:"imported"`
+	Skipped         int            `json:"skipped"`
+	EmbeddingSynced int            `json:"embedding_synced"`
+	EmbeddingFailed int            `json:"embedding_failed"`
+	FailureReasons  map[string]int `json:"failure_reasons"`
+	EmbeddingErrors []string       `json:"embedding_errors,omitempty"`
+}
 
 func (s *ImportService) Commit(ctx context.Context, jobID string) (ImportJob, error) {
 	if s == nil || s.imports == nil || s.writer == nil {
@@ -114,31 +125,39 @@ func (s *ImportService) commitReadyJob(ctx context.Context, jobID string) (Impor
 	}
 	job.Status = ImportStatusCommitting
 	job, _ = s.imports.UpdateJob(ctx, job)
+	summary := newImportCommitSummary(0)
 
 	// 只导入“有效且发布策略允许”的 item。无 Agent 审核状态的旧导入保持兼容；
 	// Agent 标记为 needs_human_review/rejected 的题不能静默进入正式题库。
 	importItems, err := s.imports.ListItems(ctx, job.ID)
 	if err != nil {
-		return s.failJob(ctx, job, err)
+		return s.failCommitJob(ctx, job, summary, "list_items_failed", err)
 	}
+	summary.Matched = len(importItems)
 	existingContentKeys, err := activeQuestionContentKeys(ctx, s.writer)
 	if err != nil {
-		return s.failJob(ctx, job, err)
+		return s.failCommitJob(ctx, job, summary, "active_content_read_failed", err)
 	}
 	var items []Item
 	var updated []ImportItem
 	seenContentKeys := map[string]struct{}{}
 	for _, item := range importItems {
-		if item.Status != ImportItemStatusValid || !importItemAccepted(item) {
+		if item.Status != ImportItemStatusValid {
+			summary.recordSkip(importItemStatusSkipReason(item.Status))
+			continue
+		}
+		if !importItemAccepted(item) {
+			summary.recordSkip(importItemReviewSkipReason(item))
 			continue
 		}
 		key := questionContentDedupeKey(item.Item.Content)
 		if key != "" {
-			if _, ok := existingContentKeys[key]; ok {
+			if existingID, ok := existingContentKeys[key]; ok && existingID != item.Item.ID {
 				item.AgentReviewStatus = ImportAgentReviewRejected
 				item.AgentReviewReason = qualityFlagDuplicateExistingContent
 				item.UpdatedAt = time.Now().UTC()
 				updated = append(updated, item)
+				summary.recordSkip(qualityFlagDuplicateExistingContent)
 				continue
 			}
 			if _, ok := seenContentKeys[key]; ok {
@@ -146,6 +165,7 @@ func (s *ImportService) commitReadyJob(ctx context.Context, jobID string) (Impor
 				item.AgentReviewReason = qualityFlagDuplicateContent
 				item.UpdatedAt = time.Now().UTC()
 				updated = append(updated, item)
+				summary.recordSkip(qualityFlagDuplicateContent)
 				continue
 			}
 			seenContentKeys[key] = struct{}{}
@@ -155,6 +175,7 @@ func (s *ImportService) commitReadyJob(ctx context.Context, jobID string) (Impor
 			item.AgentReviewReason = strings.Join(quality.Flags, ",")
 			item.UpdatedAt = time.Now().UTC()
 			updated = append(updated, item)
+			summary.recordSkip(quality.Flags...)
 			continue
 		}
 		items = append(items, item.Item)
@@ -163,16 +184,26 @@ func (s *ImportService) commitReadyJob(ctx context.Context, jobID string) (Impor
 		updated = append(updated, item)
 	}
 	if err := s.writer.Upsert(ctx, items); err != nil {
-		return s.failJob(ctx, job, err)
+		return s.failCommitJob(ctx, job, summary, "question_upsert_failed", err)
 	}
-	if err := s.embedCommittedItems(ctx, items); err != nil {
-		return s.failJob(ctx, job, err)
+	embeddingSynced, embeddingFailed, embeddingErrs := s.embedCommittedItems(ctx, items)
+	summary.EmbeddingSynced = embeddingSynced
+	summary.EmbeddingFailed = embeddingFailed
+	for _, errText := range embeddingErrs {
+		summary.EmbeddingErrors = append(summary.EmbeddingErrors, errText)
+	}
+	if embeddingFailed > 0 {
+		summary.FailureReasons["embedding_failed"] += embeddingFailed
 	}
 	if err := s.imports.UpdateItems(ctx, updated); err != nil {
-		return s.failJob(ctx, job, err)
+		summary.Imported = len(items)
+		return s.keepCommitRecoverable(ctx, job, summary, "import_item_update_failed", err)
 	}
 	job.Status = ImportStatusCommitted
 	job.ImportedItems = len(items)
+	job.Error = ""
+	summary.Imported = len(items)
+	job = attachImportCommitSummary(job, summary)
 	return s.imports.UpdateJob(ctx, job)
 }
 
@@ -199,12 +230,12 @@ func (s *ImportService) ensureNoPendingHumanReview(ctx context.Context, jobID st
 	return nil
 }
 
-func activeQuestionContentKeys(ctx context.Context, source any) (map[string]struct{}, error) {
+func activeQuestionContentKeys(ctx context.Context, source any) (map[string]string, error) {
 	store, ok := source.(Store)
 	if !ok {
 		return nil, nil
 	}
-	keys := map[string]struct{}{}
+	keys := map[string]string{}
 	cursor := ""
 	for {
 		result, err := store.List(ctx, Filter{Status: "active", Limit: 100, Cursor: cursor})
@@ -214,7 +245,7 @@ func activeQuestionContentKeys(ctx context.Context, source any) (map[string]stru
 		for _, item := range result.Items {
 			key := questionContentDedupeKey(item.Content)
 			if key != "" {
-				keys[key] = struct{}{}
+				keys[key] = item.ID
 			}
 		}
 		if result.NextCursor == "" {
@@ -228,31 +259,140 @@ func activeQuestionContentKeys(ctx context.Context, source any) (map[string]stru
 	return keys, nil
 }
 
-func (s *ImportService) embedCommittedItems(ctx context.Context, items []Item) error {
-	if s.embedder == nil || len(items) == 0 {
+func contentKeySet(keys map[string]string) map[string]struct{} {
+	if len(keys) == 0 {
 		return nil
+	}
+	out := make(map[string]struct{}, len(keys))
+	for key := range keys {
+		out[key] = struct{}{}
+	}
+	return out
+}
+
+func newImportCommitSummary(matched int) importCommitSummary {
+	return importCommitSummary{
+		Matched:        matched,
+		FailureReasons: map[string]int{},
+	}
+}
+
+func (s *ImportService) failCommitJob(ctx context.Context, job ImportJob, summary importCommitSummary, reason string, err error) (ImportJob, error) {
+	summary.recordFailure(reason)
+	job = attachImportCommitSummary(job, summary)
+	return s.failJob(ctx, job, err)
+}
+
+func (s *ImportService) keepCommitRecoverable(ctx context.Context, job ImportJob, summary importCommitSummary, reason string, err error) (ImportJob, error) {
+	summary.recordFailure(reason)
+	job = attachImportCommitSummary(job, summary)
+	job.Status = ImportStatusCommitting
+	job.Error = err.Error()
+	updated, updateErr := s.imports.UpdateJob(ctx, job)
+	if updateErr != nil {
+		return updated, errors.Join(err, updateErr)
+	}
+	return updated, err
+}
+
+func attachImportCommitSummary(job ImportJob, summary importCommitSummary) ImportJob {
+	job.Metadata = cloneStringMap(job.Metadata)
+	if job.Metadata == nil {
+		job.Metadata = map[string]string{}
+	}
+	raw, _ := json.Marshal(summary)
+	job.Metadata[ImportMetadataCommitSummary] = string(raw)
+	return job
+}
+
+func (s *importCommitSummary) recordFailure(reason string) {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "commit_failed"
+	}
+	if s.FailureReasons == nil {
+		s.FailureReasons = map[string]int{}
+	}
+	s.FailureReasons[reason]++
+}
+
+func (s *importCommitSummary) recordSkip(reasons ...string) {
+	s.Skipped++
+	if s.FailureReasons == nil {
+		s.FailureReasons = map[string]int{}
+	}
+	recorded := false
+	for _, reason := range reasons {
+		reason = strings.TrimSpace(reason)
+		if reason == "" {
+			continue
+		}
+		s.FailureReasons[reason]++
+		recorded = true
+	}
+	if !recorded {
+		s.FailureReasons["skipped"]++
+	}
+}
+
+func importItemStatusSkipReason(status string) string {
+	switch status {
+	case ImportItemStatusInvalid:
+		return "invalid"
+	case ImportItemStatusRejected:
+		return "item_rejected"
+	case ImportItemStatusImported:
+		return "already_imported"
+	default:
+		if strings.TrimSpace(status) == "" {
+			return "missing_status"
+		}
+		return "status_" + status
+	}
+}
+
+func importItemReviewSkipReason(item ImportItem) string {
+	if normalizedImportReviewStatus(item.ReviewStatus) == ImportReviewStatusRejected {
+		return "review_rejected"
+	}
+	switch item.AgentReviewStatus {
+	case ImportAgentReviewRejected:
+		if item.AgentReviewReason != "" {
+			return item.AgentReviewReason
+		}
+		return "agent_rejected"
+	case ImportAgentReviewNeedsHumanReview:
+		return ImportAgentReviewNeedsHumanReview
+	default:
+		return "not_accepted"
+	}
+}
+
+func (s *ImportService) embedCommittedItems(ctx context.Context, items []Item) (int, int, []string) {
+	if s.embedder == nil || len(items) == 0 {
+		return 0, 0, nil
 	}
 	writer, ok := s.writer.(EmbeddingWriter)
 	if !ok {
-		return nil
+		return 0, 0, nil
 	}
 	// 向量写入是提交后的增强步骤：题库 item 先 upsert 成功，再补 embedding。
-	// 如果 embedding 失败，整个 job 标记失败，避免出现“题库有题但检索不到”的隐性坏状态。
+	// 如果 embedding 失败，正式题库事实保留，并通过 item/job 诊断状态暴露。
 	texts := make([]string, len(items))
 	for i, item := range items {
 		texts[i] = embedText(item)
 	}
 	vectors, err := s.embedder.Embed(ctx, texts)
 	if err != nil {
-		return fmt.Errorf("embed imported questions: %w", err)
+		return s.markCommittedEmbeddingsFailed(ctx, items, fmt.Errorf("embed imported questions: %w", err))
 	}
 	if len(vectors) != len(items) {
-		return fmt.Errorf("embed imported questions: got %d vectors, want %d", len(vectors), len(items))
+		return s.markCommittedEmbeddingsFailed(ctx, items, fmt.Errorf("embed imported questions: got %d vectors, want %d", len(vectors), len(items)))
 	}
 	out := make([]ItemEmbedding, 0, len(items))
 	for i, item := range items {
 		if len(vectors[i]) != s.embedder.Dimension() {
-			return fmt.Errorf("%w: question %s vector dim %d, want %d", embedding.ErrDimensionMismatch, item.ID, len(vectors[i]), s.embedder.Dimension())
+			return s.markCommittedEmbeddingsFailed(ctx, items, fmt.Errorf("%w: question %s vector dim %d, want %d", embedding.ErrDimensionMismatch, item.ID, len(vectors[i]), s.embedder.Dimension()))
 		}
 		out = append(out, ItemEmbedding{
 			ID:     item.ID,
@@ -260,7 +400,24 @@ func (s *ImportService) embedCommittedItems(ctx context.Context, items []Item) e
 			Model:  s.embedder.Name(),
 		})
 	}
-	return writer.UpsertEmbeddings(ctx, out)
+	if err := writer.UpsertEmbeddings(ctx, out); err != nil {
+		return s.markCommittedEmbeddingsFailed(ctx, items, err)
+	}
+	return len(items), 0, nil
+}
+
+func (s *ImportService) markCommittedEmbeddingsFailed(ctx context.Context, items []Item, err error) (int, int, []string) {
+	ids := make([]string, 0, len(items))
+	for _, item := range items {
+		ids = append(ids, item.ID)
+	}
+	errorsOut := []string{err.Error()}
+	if failureWriter, ok := s.writer.(EmbeddingFailureWriter); ok {
+		if markErr := failureWriter.MarkEmbeddingsFailed(ctx, ids, err); markErr != nil {
+			errorsOut = append(errorsOut, markErr.Error())
+		}
+	}
+	return 0, len(items), errorsOut
 }
 
 func importItemAccepted(item ImportItem) bool {
