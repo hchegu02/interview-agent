@@ -1,0 +1,15 @@
+{
+  "change": "harden-rag-import-fact-flow",
+  "phase": "design",
+  "mode": "compact",
+  "canonical_spec": "openspec",
+  "generated_by": "comet-handoff.sh",
+  "context_hash": "fd75416a8c57c3da13ccc9bea4f4214684effb424eb44b1ab50ed5af4832686e",
+  "files": [
+    { "path": "openspec/changes/harden-rag-import-fact-flow/proposal.md", "sha256": "1ae377ce02a88621f3606059333e5dceb124cfa35918a69dd9e3f5b68282461e" },
+    { "path": "openspec/changes/harden-rag-import-fact-flow/design.md", "sha256": "b820a78620b6727db04f6e640da1789bd8108cc63e5caa2e51bba1cf829de559" },
+    { "path": "openspec/changes/harden-rag-import-fact-flow/tasks.md", "sha256": "7659fa950a93485ea25910d680ed52ba9386afcecb122b18be1a7b6a920f91aa" },
+    { "path": "openspec/changes/harden-rag-import-fact-flow/specs/question-bank-import-enrichment/spec.md", "sha256": "d9d1ec963acea3c422618e52e921e35dda687fc9d4eb161871e07b66202870c0" },
+    { "path": "openspec/changes/harden-rag-import-fact-flow/specs/rag-retrieval-enhancement/spec.md", "sha256": "5c736e0c93ac71f9ed201fd5bb612927193f60018d34152fe6c0a1c72f108d9c" }
+  ]
+}
