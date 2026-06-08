@@ -812,6 +812,70 @@ func TestImportService_ImportLocalQuestionOnlyUsesLLMEnrichment(t *testing.T) {
 	})
 }
 
+func TestParseQuestionBankItemsToleratesLLMScalarDrift(t *testing.T) {
+	raw := []byte(`{"items":[{
+		"id":"go-001",
+		"content":"请解释 Go slice 的 len 和 cap。",
+		"tags":"go,slice",
+		"skill_category":"go",
+		"difficulty":"4",
+		"expected_points":"说明 len；说明 cap",
+		"rubric":"能说明底层数组和扩容",
+		"sample_answer":"slice 包含指针、长度和容量。",
+		"follow_up_hints":"扩容规则是什么？"
+	}]}`)
+	items, err := parseQuestionBankItems("generated.json", raw)
+	if err != nil {
+		t.Fatalf("parseQuestionBankItems: %v", err)
+	}
+	if got := items[0].Difficulty; got != 4 {
+		t.Fatalf("Difficulty = %d, want 4", got)
+	}
+	if got := items[0].Rubric["general"]; got != "能说明底层数组和扩容" {
+		t.Fatalf("Rubric general = %q", got)
+	}
+	if got := items[0].ExpectedPoints; len(got) != 2 || got[0] != "说明 len" {
+		t.Fatalf("ExpectedPoints = %+v", got)
+	}
+}
+
+func TestParseQuestionBankItemsToleratesRubricArray(t *testing.T) {
+	raw := []byte(`{"items":[{
+		"id":"go-rubric-array-001",
+		"content":"Go defer 的执行顺序是什么？",
+		"skill_category":"go",
+		"difficulty":3,
+		"rubric":["说明 LIFO","说明参数立即求值"]
+	}]}`)
+	items, err := parseQuestionBankItems("generated.json", raw)
+	if err != nil {
+		t.Fatalf("parseQuestionBankItems: %v", err)
+	}
+	if got := items[0].Rubric["point_1"]; got != "说明 LIFO" {
+		t.Fatalf("Rubric point_1 = %q", got)
+	}
+	if got := items[0].Rubric["point_2"]; got != "说明参数立即求值" {
+		t.Fatalf("Rubric point_2 = %q", got)
+	}
+}
+
+func TestParseQuestionBankItemsRejectsUnsupportedFlexibleStringList(t *testing.T) {
+	raw := []byte(`{"items":[{
+		"id":"go-bad-tags-001",
+		"content":"Go map 的并发安全问题是什么？",
+		"skill_category":"go",
+		"difficulty":3,
+		"tags":{"primary":"go"}
+	}]}`)
+	_, err := parseQuestionBankItems("generated.json", raw)
+	if err == nil {
+		t.Fatal("parseQuestionBankItems should reject unsupported tags shape")
+	}
+	if !strings.Contains(err.Error(), "tags") {
+		t.Fatalf("error = %v, want tags context", err)
+	}
+}
+
 func TestImportService_ImportLocalQuestionOnlyWithoutLLMFallsBackToDefaults(t *testing.T) {
 	ctx := context.Background()
 	store := NewMemoryStore(nil)

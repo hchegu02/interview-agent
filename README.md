@@ -296,10 +296,54 @@ OTel tracing 后端尚未接入；当前已有 trace id 和 Graph/LLM 指标回�
 
 ## Docker
 
-启动依赖：
+启动完整 mock 单实例：
 
 ```powershell
-docker compose up -d
+docker compose up -d --build
+```
+
+默认会启动：
+
+- `postgres`：PostgreSQL + pgvector
+- `redis`：Redis 7
+- `app`：Go 后端 + 已构建的 Web 静态资源，监听 `http://127.0.0.1:8080`
+
+只启动依赖：
+
+```powershell
+docker compose up -d postgres redis
+```
+
+启动三实例集群模拟：
+
+```powershell
+docker compose --profile cluster up -d --build
+```
+
+集群 nginx 默认监听：
+
+```text
+http://127.0.0.1:18080
+```
+
+如需调整端口，复制 `compose.env.example` 为 `.env` 后修改 `COMPOSE_INTERVIEW_APP_PORT` 或 `COMPOSE_INTERVIEW_CLUSTER_PORT`。Compose 输入变量使用 `COMPOSE_` 前缀，容器内仍会注入应用识别的 `INTERVIEW_*` 环境变量，避免本机调试用的 `INTERVIEW_*` 污染容器配置。
+
+可选启动本地 BGE-M3 embedding 服务：
+
+```powershell
+docker compose --profile bge up -d --build bge
+```
+
+BGE 服务默认监听 `http://127.0.0.1:8000`，容器内 OpenAI-compatible base URL 是 `http://bge:8000/v1`。首次启动会下载模型，耗时和磁盘占用取决于本机网络与缓存；因此 BGE 不放入默认 `docker compose up`。
+
+如果要让 app 使用 compose 内的 BGE，把 `.env` 中 embedding 配置改成：
+
+```text
+COMPOSE_INTERVIEW_EMBEDDING_MODE=real
+COMPOSE_INTERVIEW_EMBEDDING_BASE_URL=http://bge:8000/v1
+COMPOSE_INTERVIEW_EMBEDDING_MODEL=BAAI/bge-m3
+COMPOSE_INTERVIEW_EMBEDDING_DIMENSION=1024
+COMPOSE_INTERVIEW_EMBEDDING_API_KEY=dummy
 ```
 
 数据库迁移 SQL 在 `migrations/` 下。题库 seed 位于 `seeds/question_bank.json`。
