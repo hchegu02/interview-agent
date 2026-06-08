@@ -3,11 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"math"
+	"os"
 	"strings"
 	"testing"
 
+	"interview-agent/internal/domain"
 	"interview-agent/internal/embedding"
 	"interview-agent/internal/questionbank"
 	"interview-agent/internal/retriever"
@@ -25,6 +28,189 @@ func TestRetrievalMetrics(t *testing.T) {
 	}
 	if ndcg := ndcgAt(got, rel, 10); ndcg <= 0 || ndcg > 1 {
 		t.Fatalf("ndcg = %f", ndcg)
+	}
+}
+
+func TestSanitizeQueryTextRedactsSensitiveFragments(t *testing.T) {
+	raw := `联系 me@example.com 手机 13800138000 地址 https://example.com/a?b=c api_key=sk-live token:"abc123"`
+	got := sanitizeQueryText(raw)
+	for _, forbidden := range []string{"me@example.com", "13800138000", "https://example.com", "sk-live", "abc123"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("sanitizeQueryText leaked %q in %q", forbidden, got)
+		}
+	}
+	for _, want := range []string{"[REDACTED_EMAIL]", "[REDACTED_PHONE]", "[REDACTED_URL]", "[REDACTED_SECRET]"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("sanitizeQueryText = %q, want %s", got, want)
+		}
+	}
+}
+
+func TestExportQueriesFromSessions(t *testing.T) {
+	sessions := []domain.Session{{
+		ID: "sess-1",
+		CandidatePool: []domain.Question{{
+			ID:            "redis-001",
+			Tags:          []string{"redis", "cache"},
+			SkillCategory: "redis",
+		}},
+		RetrievalTrace: &domain.RetrievalTrace{
+			Query:         "Redis 缓存击穿 token=abc123",
+			OriginalQuery: "联系 me@example.com 讨论 Redis",
+			Final:         []domain.RetrievalResultTrace{{ID: "redis-002"}},
+		},
+	}}
+
+	got := exportQueriesFromSessions(sessions)
+	if len(got) != 1 {
+		t.Fatalf("queries = %+v, want one", got)
+	}
+	if got[0].ID != "sess-1:retrieval" || got[0].Skill != "redis" || len(got[0].CandidateIDs) != 2 {
+		t.Fatalf("query = %+v", got[0])
+	}
+	if strings.Contains(got[0].Query, "abc123") || strings.Contains(got[0].OriginalQuery, "me@example.com") {
+		t.Fatalf("query was not sanitized: %+v", got[0])
+	}
+}
+
+func TestBuildCandidatePoolsFromSessionsMergesSources(t *testing.T) {
+	sessions := []domain.Session{{
+		ID:            "sess-pool",
+		CandidatePool: []domain.Question{{ID: "q1"}, {ID: "q2"}},
+		RetrievalTrace: &domain.RetrievalTrace{
+			Query: "Go GMP 调度",
+			Final: []domain.RetrievalResultTrace{
+				{ID: "q2", Rank: 1, Score: 0.9},
+			},
+			Stages: []domain.RetrievalStageTrace{{
+				Stage: "vector",
+				Items: []domain.RetrievalResultTrace{
+					{ID: "q1", Rank: 1, Score: 0.7},
+					{ID: "q3", Rank: 2, Score: 0.4},
+				},
+			}},
+		},
+	}}
+
+	bank := []questionbank.Item{
+		{ID: "q3", Content: "Go GMP 调度模型", Tags: []string{"go"}},
+		{ID: "q4", Content: "Redis AOF 持久化", Tags: []string{"redis"}},
+	}
+	got := buildCandidatePoolsFromSessions(sessions, bank)
+	if len(got) != 1 || len(got[0].Candidates) != 4 {
+		t.Fatalf("candidate pools = %+v, want one pool with four candidates", got)
+	}
+	byID := map[string]candidatePoolCandidate{}
+	for _, candidate := range got[0].Candidates {
+		byID[candidate.ID] = candidate
+	}
+	if byID["q2"].Sources["candidate_pool"].Rank != 2 || byID["q2"].Sources["final"].Rank != 1 {
+		t.Fatalf("q2 sources = %+v", byID["q2"].Sources)
+	}
+	if byID["q2"].Rank != 1 || byID["q2"].Score != 0.9 {
+		t.Fatalf("q2 rank/score = rank:%d score:%f", byID["q2"].Rank, byID["q2"].Score)
+	}
+	if byID["q1"].Sources["stage:vector"].Rank != 1 || byID["q3"].Sources["stage:vector"].Rank != 2 {
+		t.Fatalf("stage sources = q1:%+v q3:%+v", byID["q1"].Sources, byID["q3"].Sources)
+	}
+	if byID["q3"].Sources["keyword"].Rank != 1 {
+		t.Fatalf("q3 sources = %+v, want keyword source", byID["q3"].Sources)
+	}
+	if byID["q4"].Sources["random_negative"].Rank != 1 {
+		t.Fatalf("q4 sources = %+v, want random_negative source", byID["q4"].Sources)
+	}
+}
+
+func TestCandidatePoolCandidatesReuseExistingMetrics(t *testing.T) {
+	pool := candidatePoolRecord{
+		QueryID: "query-metrics",
+		Candidates: []candidatePoolCandidate{
+			{ID: "q-noise", Rank: 1},
+			{ID: "q-hit", Rank: 2},
+			{ID: "q-late", Rank: 6},
+		},
+	}
+	var returned []string
+	for _, candidate := range pool.Candidates {
+		returned = append(returned, candidate.ID)
+	}
+
+	got := scoreReturnedIDs(caseResult{
+		ID:          pool.QueryID,
+		RelevantIDs: []string{"q-hit", "q-late"},
+	}, returned, 10)
+
+	if !got.HitAt5 || !got.HitAt10 {
+		t.Fatalf("hit metrics = hit@5:%v hit@10:%v", got.HitAt5, got.HitAt10)
+	}
+	if got.RecallAt5 != 1 || got.RecallAt10 != 1 || got.MRRAtK != 0.5 || got.NDCGAtK <= 0 {
+		t.Fatalf("metrics = recall@5:%f recall@10:%f mrr:%f ndcg:%f", got.RecallAt5, got.RecallAt10, got.MRRAtK, got.NDCGAtK)
+	}
+}
+
+func TestRunExportQueriesWritesJSONL(t *testing.T) {
+	dir := t.TempDir()
+	sessionsPath := dir + "/sessions.jsonl"
+	outPath := dir + "/queries.jsonl"
+	raw := `{"id":"sess-jsonl","retrieval_trace":{"query":"Redis AOF https://secret.local"}}
+`
+	if err := os.WriteFile(sessionsPath, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), options{Mode: "export-queries", SessionsPath: sessionsPath, OutFile: outPath}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	out, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got exportedQuery
+	if err := json.Unmarshal(bytes.TrimSpace(out), &got); err != nil {
+		t.Fatalf("unmarshal output %q: %v", out, err)
+	}
+	if got.SessionID != "sess-jsonl" || strings.Contains(got.Query, "secret.local") {
+		t.Fatalf("exported query = %+v", got)
+	}
+}
+
+func TestRunBuildCandidatePoolAcceptsExportedQueries(t *testing.T) {
+	dir := t.TempDir()
+	queriesPath := dir + "/queries.jsonl"
+	outPath := dir + "/pools.jsonl"
+	raw := `{"id":"query-1","session_id":"sess-1","query":"Redis AOF token=abc123","candidate_ids":["redis-001"],"tags":["redis"],"skill":"redis"}
+`
+	if err := os.WriteFile(queriesPath, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), options{
+		Mode:        "build-candidate-pool",
+		QueriesPath: queriesPath,
+		OutFile:     outPath,
+		SeedPath:    "../../seeds/question_bank.json",
+	}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("code = %d stdout=%q stderr=%q", code, stdout.String(), stderr.String())
+	}
+	out, err := os.ReadFile(outPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got candidatePoolRecord
+	if err := json.Unmarshal(bytes.TrimSpace(out), &got); err != nil {
+		t.Fatalf("unmarshal output %q: %v", out, err)
+	}
+	if got.QueryID != "query-1" || strings.Contains(got.Query, "abc123") {
+		t.Fatalf("candidate pool record = %+v", got)
+	}
+	byID := map[string]candidatePoolCandidate{}
+	for _, candidate := range got.Candidates {
+		byID[candidate.ID] = candidate
+	}
+	if byID["redis-001"].Sources["exported_query"].Rank != 1 {
+		t.Fatalf("redis-001 sources = %+v", byID["redis-001"].Sources)
 	}
 }
 

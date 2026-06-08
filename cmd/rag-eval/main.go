@@ -104,11 +104,16 @@ type groupGateOptions struct {
 }
 
 type options struct {
-	CasesPath  string
-	ConfigPath string
-	K          int
-	OutDir     string
-	SeedPath   string
+	Mode         string
+	CasesPath    string
+	ConfigPath   string
+	K            int
+	OutDir       string
+	OutFile      string
+	SessionsPath string
+	QueriesPath  string
+	SeedPath     string
+	LiveTopK     int
 
 	MinRecallAt5  float64
 	MinRecallAt10 float64
@@ -136,11 +141,16 @@ type stageCaseBase struct {
 
 func main() {
 	opts := options{}
+	flag.StringVar(&opts.Mode, "mode", "eval", "mode: eval, export-queries, build-candidate-pool")
 	flag.StringVar(&opts.CasesPath, "cases", "testdata/rag/golden_queries.jsonl", "golden query JSONL path")
 	flag.StringVar(&opts.ConfigPath, "config", "config/config.yaml.example", "config YAML path")
 	flag.IntVar(&opts.K, "k", 10, "top-K cutoff")
 	flag.StringVar(&opts.OutDir, "out", "tmp/eval/rag", "output directory")
+	flag.StringVar(&opts.OutFile, "out-file", "", "JSONL output path for export-queries or build-candidate-pool mode")
+	flag.StringVar(&opts.SessionsPath, "sessions", "", "session JSON or JSONL path for export-queries or build-candidate-pool mode")
+	flag.StringVar(&opts.QueriesPath, "queries", "", "exported queries JSONL path for build-candidate-pool mode")
 	flag.StringVar(&opts.SeedPath, "seed", "seeds/question_bank.json", "seed path used when PG is not configured")
+	flag.IntVar(&opts.LiveTopK, "live-top-k", 0, "optional live retriever top-K for build-candidate-pool; 0 disables")
 	flag.Float64Var(&opts.MinRecallAt5, "min-recall-at-5", 0, "fail when recall@5 is below this threshold; 0 disables")
 	flag.Float64Var(&opts.MinRecallAt10, "min-recall-at-10", 0, "fail when recall@10 is below this threshold; 0 disables")
 	flag.Float64Var(&opts.MinMRRAtK, "min-mrr-at-k", 0, "fail when MRR@K is below this threshold; 0 disables")
@@ -159,6 +169,16 @@ func main() {
 }
 
 func run(ctx context.Context, opts options, stdout, stderr io.Writer) int {
+	switch strings.TrimSpace(opts.Mode) {
+	case "", "eval":
+	case "export-queries":
+		return runExportQueries(opts, stdout, stderr)
+	case "build-candidate-pool":
+		return runBuildCandidatePool(ctx, opts, stdout, stderr)
+	default:
+		fmt.Fprintf(stderr, "ERROR: unsupported -mode %q\n", opts.Mode)
+		return 2
+	}
 	if opts.K <= 0 {
 		opts.K = 10
 	}

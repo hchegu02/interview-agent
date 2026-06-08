@@ -7,10 +7,10 @@
 
 ## 2. RAG Eval 真实 Query 和 Candidate Pool
 
-- [ ] 2.1 调研当前 session/RetrievalTrace 持久化入口，确定真实 query 导出的最小事实源。
-- [ ] 2.2 为 `cmd/rag-eval` 增加真实 query 导出模式，输出脱敏 JSONL，并覆盖邮箱、手机号、URL、secret 片段清洗测试。
-- [ ] 2.3 为 `cmd/rag-eval` 增加 candidate pool 构建模式，合并 live/stage/keyword/random-negative 候选并保留来源 rank/score。
-- [ ] 2.4 增加标注输入指标计算或复用现有指标计算路径，覆盖 recall@k、hit@k、MRR 或 nDCG 的回归测试。
+- [x] 2.1 调研当前 session/RetrievalTrace 持久化入口，确定真实 query 导出的最小事实源。
+- [x] 2.2 为 `cmd/rag-eval` 增加真实 query 导出模式，输出脱敏 JSONL，并覆盖邮箱、手机号、URL、secret 片段清洗测试。
+- [x] 2.3 为 `cmd/rag-eval` 增加 candidate pool 构建模式，合并 live/stage/keyword/random-negative 候选并保留来源 rank/score。
+- [x] 2.4 增加标注输入指标计算或复用现有指标计算路径，覆盖 recall@k、hit@k、MRR 或 nDCG 的回归测试。
 
 ## 3. Runtime Retrieval Decision Policy
 
