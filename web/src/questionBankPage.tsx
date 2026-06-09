@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from "react";
 import { apiClient } from "./apiClient";
-import { importDiffRows, importSourceLabel, reviewStatus, reviewStatusLabel } from "./questionBankImportView";
+import { QuestionBankReviewWorkbench } from "./questionBankReviewWorkbench";
 import { DetailList, PageHeader, Rubric, Select } from "./sharedView";
 import type { QuestionBankImportJob, QuestionBankImportItem, QuestionBankItem, QuestionFacets } from "./types";
 
@@ -132,38 +132,25 @@ export function QuestionBankPage({ jumpId, adminDefault }: { jumpId: string; adm
   return (
     <section className="page questions-page">
       <PageHeader eyebrow="题库工作区" title="题库管理" />
-      <section className="import-workbench">
-        <div className="import-actions">
-          <div>
-            <p className="eyebrow">导入流水线</p>
-            <h2>先暂存校验，再提交进 RAG 题库。</h2>
-          </div>
-          <div className="segmented">
-            <button className={importSource === "question_bank" ? "active" : ""} onClick={() => setImportSource("question_bank")}>本地题库</button>
-            <button className={importSource === "document" ? "active" : ""} onClick={() => setImportSource("document")}>文档生成</button>
-          </div>
-          <input
-            ref={importFileRef}
-            className="visually-hidden"
-            type="file"
-            accept=".json,.csv,.md,.markdown,.txt,.pdf,.docx,text/plain,text/markdown,application/json,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-            onChange={(evt) => uploadImport(evt.target.files?.[0])}
-          />
-          <button className="secondary" disabled={importBusy} onClick={() => importFileRef.current?.click()}>{importBusy ? "处理中" : "上传导入"}</button>
-        </div>
-        <div className="import-grid">
-          <div className="import-list">
-            {imports.length ? imports.map((job) => (
-              <button key={job.id} className={`import-row ${job.id === selectedImportId ? "active" : ""}`} onClick={() => setSelectedImportId(job.id)}>
-                <strong>{job.filename || job.id}</strong>
-                <span>{importSourceLabel(job.source_type)} · {job.status}</span>
-                <em>{job.valid_items}/{job.total_items} 有效</em>
-              </button>
-            )) : <div className="empty-state">暂无导入任务</div>}
-          </div>
-          <ImportDetail jobs={imports} selectedId={selectedImportId} items={importItems} busy={importBusy} commitImport={commitImport} reviewImport={reviewImport} />
-        </div>
-      </section>
+      <input
+        ref={importFileRef}
+        className="visually-hidden"
+        type="file"
+        accept=".json,.csv,.md,.markdown,.txt,.pdf,.docx,text/plain,text/markdown,application/json,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        onChange={(evt) => uploadImport(evt.target.files?.[0])}
+      />
+      <QuestionBankReviewWorkbench
+        jobs={imports}
+        selectedId={selectedImportId}
+        items={importItems}
+        busy={importBusy}
+        source={importSource}
+        onSourceChange={setImportSource}
+        onSelectJob={setSelectedImportId}
+        onUploadClick={() => importFileRef.current?.click()}
+        onCommit={commitImport}
+        onReview={reviewImport}
+      />
       <div className="question-toolbar">
         <input value={query} onChange={(evt) => setQuery(evt.target.value)} placeholder="搜索题干、标签或编号" />
         <Select value={skill} onChange={setSkill} label="全部技能" values={facets.skill_categories} />
@@ -180,81 +167,6 @@ export function QuestionBankPage({ jumpId, adminDefault }: { jumpId: string; adm
         <QuestionDetail item={selected} admin={admin} />
       </div>
     </section>
-  );
-}
-
-function ImportDetail({ jobs, selectedId, items, busy, commitImport, reviewImport }: {
-  jobs: QuestionBankImportJob[];
-  selectedId: string;
-  items: QuestionBankImportItem[];
-  busy: boolean;
-  commitImport: (id: string) => void;
-  reviewImport: (id: string, action: string, itemIds?: string[]) => void;
-}) {
-  const job = jobs.find((item) => item.id === selectedId);
-  if (!job) return <aside className="import-detail"><div className="empty-state">选择导入任务</div></aside>;
-  const accepted = items.filter((item) => item.status === "valid" && reviewStatus(item) === "accepted").length;
-  const rejected = items.filter((item) => item.status === "valid" && reviewStatus(item) === "rejected").length;
-  return (
-    <aside className="import-detail">
-      <div className="import-detail-head">
-        <div>
-          <strong>{job.status}</strong>
-          <span>{job.id}</span>
-        </div>
-        <button className="primary" disabled={busy || job.status !== "ready" || accepted === 0} onClick={() => commitImport(job.id)}>提交入库</button>
-      </div>
-      <div className="import-stats">
-        <span>切片 {job.total_chunks}</span>
-        <span>有效 {job.valid_items}</span>
-        <span>接受 {accepted}</span>
-        <span>拒绝 {rejected}</span>
-        <span>无效 {job.invalid_items}</span>
-        <span>已入库 {job.imported_items}</span>
-      </div>
-      <div className="import-review-toolbar">
-        <button className="secondary" disabled={busy || job.status !== "ready"} onClick={() => reviewImport(job.id, "accept_all_valid")}>接受全部有效</button>
-        <button className="secondary" disabled={busy || job.status !== "ready"} onClick={() => reviewImport(job.id, "accept_complete_valid")}>接受字段完整</button>
-        <button className="secondary" disabled={busy || job.status !== "ready"} onClick={() => reviewImport(job.id, "reject_all_valid")}>拒绝全部有效</button>
-      </div>
-      {job.error && <p className="system-line error">{job.error}</p>}
-      <div className="import-items">
-        {items.map((item) => (
-          <article key={item.id} className={`import-item ${item.status} review-${reviewStatus(item)}`}>
-            <div>
-              <strong>{item.question_id}</strong>
-              <span>{item.status} · {reviewStatusLabel(reviewStatus(item))}</span>
-            </div>
-            <p>{item.item.content || "空题干"}</p>
-            {item.status === "valid" && (
-              <div className="import-item-actions">
-                <button className={reviewStatus(item) === "accepted" ? "active" : ""} disabled={busy || job.status !== "ready"} onClick={() => reviewImport(job.id, "accept", [item.id])}>接受</button>
-                <button className={reviewStatus(item) === "rejected" ? "active danger" : "danger"} disabled={busy || job.status !== "ready"} onClick={() => reviewImport(job.id, "reject", [item.id])}>拒绝</button>
-              </div>
-            )}
-            <ImportDiff item={item} />
-            {!!item.errors?.length && <em>{item.errors.join("；")}</em>}
-          </article>
-        ))}
-      </div>
-    </aside>
-  );
-}
-
-function ImportDiff({ item }: { item: QuestionBankImportItem }) {
-  const rows = importDiffRows(item);
-  if (!rows.length) return null;
-  return (
-    <div className="import-diff">
-      {rows.map((row) => (
-        <div key={row.key} className="import-diff-row">
-          <span>{row.label}</span>
-          <code>{row.before || "空"}</code>
-          <code>{row.after || "空"}</code>
-          <em>{row.source}</em>
-        </div>
-      ))}
-    </div>
   );
 }
 

@@ -362,8 +362,21 @@ export type QuestionBankImportJob = {
   invalid_items: number;
   imported_items: number;
   error?: string;
+  metadata?: {
+    commit_summary?: QuestionBankImportCommitSummary;
+    [key: string]: unknown;
+  };
   created_at: string;
   updated_at: string;
+};
+
+export type QuestionBankImportCommitSummary = {
+  imported?: number;
+  skipped?: number;
+  rejected?: number;
+  embedded?: number;
+  embedding_failed?: number;
+  [key: string]: unknown;
 };
 
 export type QuestionBankImportFieldProvenanceSource =
@@ -390,6 +403,8 @@ export type QuestionBankImportItem = {
   question_id: string;
   status: string;
   review_status: "accepted" | "rejected";
+  agent_review_status?: "accepted" | "rejected" | string;
+  agent_review_reason?: string;
   item: QuestionBankItem;
   original_item?: QuestionBankItem;
   field_provenance?: QuestionBankImportFieldProvenance;
