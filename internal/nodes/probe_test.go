@@ -63,6 +63,34 @@ func TestProbeAsk_Success_SuspendsAndRecordsFollowUp(t *testing.T) {
 	}
 }
 
+func TestProbeAsk_LowInformationWeakRecallUsesClarificationWithoutLLM(t *testing.T) {
+	stub := &stubChatModel{}
+	sess := buildProbeAskSession(true, 0)
+	sess.Rounds[0].Answer = "不知道"
+	sess.CandidatePool = []domain.Question{{ID: "go-002", Content: "Go channel"}}
+	sess.RetrievalTrace = &domain.RetrievalTrace{
+		Final: []domain.RetrievalResultTrace{{ID: "go-002", Rank: 1, Score: 0.1}},
+	}
+	node := NewProbeAskNode(stub, ProbeAskOptions{})
+
+	err := node(context.Background(), sess)
+	if !errors.Is(err, graph.ErrSuspended) {
+		t.Fatalf("expected ErrSuspended, got %v", err)
+	}
+	if stub.idx != 0 {
+		t.Fatalf("LLM should not be called for deterministic clarification, called %d", stub.idx)
+	}
+	if len(sess.Rounds[0].FollowUps) != 1 {
+		t.Fatalf("followups = %+v", sess.Rounds[0].FollowUps)
+	}
+	if !strings.Contains(sess.Rounds[0].FollowUps[0].Question, "信息量较少") {
+		t.Fatalf("followup question = %q", sess.Rounds[0].FollowUps[0].Question)
+	}
+	if sess.WorkingMemory.DegradedReasons["retrieval_decision"] != "weak_recall_low_information_answer" {
+		t.Fatalf("degraded reasons = %+v", sess.WorkingMemory.DegradedReasons)
+	}
+}
+
 func TestProbeAskPatchNode_SuccessReturnsSuspendPatch(t *testing.T) {
 	stub := &stubChatModel{responses: []string{
 		`{"question":"work stealing 的触发时机和窃取目标是怎么选的?","reason":"候选人没讲 work stealing,需要确认深度"}`,

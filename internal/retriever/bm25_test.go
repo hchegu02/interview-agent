@@ -21,6 +21,20 @@ func TestBM25RetrieverRanksExactTechnicalTerm(t *testing.T) {
 	}
 }
 
+func TestBM25RetrieverExcludesIDs(t *testing.T) {
+	r := NewBM25Retriever([]Result{
+		{ID: "go-gmp", Content: "Go GMP 调度模型", Category: "go", Tags: []string{"go"}},
+		{ID: "go-channel", Content: "Go channel 调度", Category: "go", Tags: []string{"go"}},
+	})
+	got, err := r.Retrieve(nil, Query{Text: "Go 调度", ExcludeIDs: []string{"go-gmp"}, K: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != "go-channel" {
+		t.Fatalf("got %+v, want go-channel only", got)
+	}
+}
+
 func TestBM25RetrieverReturnsEmptyForEmptyQuery(t *testing.T) {
 	r := NewBM25Retriever([]Result{{ID: "go-gmp", Content: "Go GMP"}})
 	got, err := r.Retrieve(nil, Query{Text: "", K: 5})

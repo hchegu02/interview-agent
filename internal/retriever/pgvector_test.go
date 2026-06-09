@@ -308,6 +308,7 @@ func TestRetrieveSQLIncludesQuestionBankHardFilters(t *testing.T) {
 		"difficulty >= $8",
 		"difficulty <= $9",
 		"tags && $10::text[]",
+		"NOT (id = ANY($13::text[]))",
 		"embedding IS NOT NULL",
 		"status = 'active'",
 		"embedding_status = 'embedded'",

@@ -63,11 +63,15 @@ func (r *BM25Retriever) Retrieve(ctx context.Context, q Query) ([]Result, error)
 		score  float64
 	}
 	var scoredDocs []scored
+	excluded := queryStringSet(q.ExcludeIDs)
 	for i, doc := range r.docs {
 		if ctx != nil {
 			if err := ctx.Err(); err != nil {
 				return nil, err
 			}
+		}
+		if _, ok := excluded[strings.ToLower(strings.TrimSpace(doc.ID))]; ok {
+			continue
 		}
 		score := r.scoreDoc(tokens, i)
 		if score <= 0 {
@@ -91,6 +95,17 @@ func (r *BM25Retriever) Retrieve(ctx context.Context, q Query) ([]Result, error)
 		out = append(out, item.result)
 	}
 	return out, nil
+}
+
+func queryStringSet(items []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(items))
+	for _, item := range items {
+		item = strings.ToLower(strings.TrimSpace(item))
+		if item != "" {
+			out[item] = struct{}{}
+		}
+	}
+	return out
 }
 
 func (r *BM25Retriever) scoreDoc(query []string, idx int) float64 {

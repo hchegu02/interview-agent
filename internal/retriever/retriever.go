@@ -31,6 +31,7 @@ type Query struct {
 	DifficultyMin   int
 	DifficultyMax   int
 	FilterTags      []string
+	ExcludeIDs      []string
 
 	// VectorCandidates / TagCandidates 控制两路召回宽度，调权时偶尔会改。
 	// 0 时走默认：VectorCandidates = K * 5, TagCandidates = K * 3

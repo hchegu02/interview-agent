@@ -102,16 +102,18 @@ func NewPickNextPatchNode(model llm.ChatModel, opts PickNextOptions) graph.Patch
 		viewSess := *sess
 		viewSess.WorkingMemory = mem
 
-		// 1. 过滤候选:去掉已问过的题
-		asked := make(map[string]struct{}, len(sess.Rounds))
-		for i := range sess.Rounds {
-			asked[sess.Rounds[i].Question.ID] = struct{}{}
-		}
-		pool := make([]domain.Question, 0, len(sess.CandidatePool))
-		for _, q := range sess.CandidatePool {
-			if _, ok := asked[q.ID]; !ok {
-				pool = append(pool, q)
-			}
+		// 1. 运行时检索决策:去掉已问过的题,并记录低信息回答/弱召回诊断。
+		retrievalDecision := decideRuntimeRetrieval(RetrievalDecisionInput{
+			Answer:          lastCompletedAnswer(sess),
+			CandidatePool:   sess.CandidatePool,
+			RetrievalTrace:  sess.RetrievalTrace,
+			UsedQuestionIDs: usedQuestionIDs(sess),
+			WorkingMemory:   mem,
+		})
+		recordRetrievalDecision(mem, retrievalDecision)
+		pool := retrievalDecision.Selected
+		if retrievalDecision.Strategy == retrievalStrategyClarifyLowInformation && retrievalDecision.DegradedReason != "" {
+			markDegradedReason(mem, "pick", retrievalDecision.DegradedReason)
 		}
 
 		// 2. 终止判定
@@ -119,6 +121,9 @@ func NewPickNextPatchNode(model llm.ChatModel, opts PickNextOptions) graph.Patch
 			reason := "已达最大轮次,转生成报告"
 			if len(pool) == 0 {
 				reason = "候选题池已耗尽,转生成报告"
+			}
+			if retrievalDecision.Reason != "" {
+				reason += "；" + retrievalDecision.Reason
 			}
 			decision := &domain.Decision{
 				Action:    domain.ActionEnd,

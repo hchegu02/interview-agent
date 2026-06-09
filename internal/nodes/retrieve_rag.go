@@ -244,6 +244,7 @@ func NewRetrieveRAGPatchNode(
 			DifficultyMin:    filterDifficultyMin(sess.QuestionBankFilter),
 			DifficultyMax:    filterDifficultyMax(sess.QuestionBankFilter),
 			FilterTags:       filterTags(sess.QuestionBankFilter),
+			ExcludeIDs:       usedQuestionIDs(sess),
 			VectorCandidates: opts.VectorCandidates,
 			TagCandidates:    opts.TagCandidates,
 		}
@@ -257,6 +258,17 @@ func NewRetrieveRAGPatchNode(
 		}
 		if len(results) == 0 {
 			mem := workingMemoryWithDegradedReason(sess.WorkingMemory, "rag", "retrieve returned 0 results")
+			pool := cloneFallback(targetDiff, sess.QuestionBankFilter)
+			outputSummary = fmt.Sprintf("candidate_pool=%d", len(pool))
+			return domain.StatePatch{CandidatePool: &pool, RetrievalTrace: trace, WorkingMemory: mem}, nil
+		}
+		results, excluded := filterRetrievedResults(results, query.ExcludeIDs)
+		if excluded > 0 && trace != nil {
+			trace.FallbackReasons = append(trace.FallbackReasons, fmt.Sprintf("excluded_used_questions=%d", excluded))
+			trace.Final = resultTraceFromResults(results)
+		}
+		if len(results) == 0 {
+			mem := workingMemoryWithDegradedReason(sess.WorkingMemory, "rag", "all retrieved results were already used")
 			pool := cloneFallback(targetDiff, sess.QuestionBankFilter)
 			outputSummary = fmt.Sprintf("candidate_pool=%d", len(pool))
 			return domain.StatePatch{CandidatePool: &pool, RetrievalTrace: trace, WorkingMemory: mem}, nil
@@ -278,6 +290,35 @@ func NewRetrieveRAGPatchNode(
 		outputSummary = fmt.Sprintf("candidate_pool=%d", len(pool))
 		return domain.StatePatch{CandidatePool: &pool, RetrievalTrace: trace}, nil
 	}
+}
+
+func filterRetrievedResults(results []retriever.Result, excludeIDs []string) ([]retriever.Result, int) {
+	excludedIDs := stringSetFold(excludeIDs)
+	if len(excludedIDs) == 0 {
+		return results, 0
+	}
+	out := make([]retriever.Result, 0, len(results))
+	excluded := 0
+	for _, result := range results {
+		if _, ok := excludedIDs[strings.ToLower(strings.TrimSpace(result.ID))]; ok {
+			excluded++
+			continue
+		}
+		out = append(out, result)
+	}
+	return out, excluded
+}
+
+func resultTraceFromResults(results []retriever.Result) []domain.RetrievalResultTrace {
+	out := make([]domain.RetrievalResultTrace, 0, len(results))
+	for i, result := range results {
+		out = append(out, domain.RetrievalResultTrace{
+			ID:    result.ID,
+			Rank:  i + 1,
+			Score: result.Score,
+		})
+	}
+	return out
 }
 
 func retrieveWithTrace(ctx context.Context, r retriever.Retriever, q retriever.Query) ([]retriever.Result, *domain.RetrievalTrace, error) {

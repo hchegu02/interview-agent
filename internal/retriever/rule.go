@@ -55,6 +55,9 @@ func (r *RuleRetriever) Retrieve(ctx context.Context, q Query) ([]Result, error)
 }
 
 func ruleMatchesHardFilters(doc Result, q Query) bool {
+	if ruleContainsFold(q.ExcludeIDs, doc.ID) {
+		return false
+	}
 	if len(q.SkillCategories) > 0 && !ruleContainsFold(q.SkillCategories, doc.Category) {
 		return false
 	}

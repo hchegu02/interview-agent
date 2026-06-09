@@ -34,6 +34,20 @@ func TestRuleRetrieverMatchesTags(t *testing.T) {
 	}
 }
 
+func TestRuleRetrieverExcludesIDs(t *testing.T) {
+	r := NewRuleRetriever([]Result{
+		{ID: "go-gmp", Content: "Go GMP", Category: "go", Difficulty: 3, Tags: []string{"go"}},
+		{ID: "go-channel", Content: "Go channel", Category: "go", Difficulty: 3, Tags: []string{"go"}},
+	})
+	got, err := r.Retrieve(nil, Query{Tags: []string{"go"}, ExcludeIDs: []string{"go-gmp"}, K: 5})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].ID != "go-channel" {
+		t.Fatalf("got %+v, want go-channel only", got)
+	}
+}
+
 func TestRuleRetrieverSkillCategoryIsHardFilter(t *testing.T) {
 	r := NewRuleRetriever([]Result{
 		{ID: "redis-zset", Content: "Redis ZSet", Category: "redis", Difficulty: 3, Tags: []string{"zset"}},

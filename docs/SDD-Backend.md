@@ -176,10 +176,41 @@ RAG 输出应写入：
 - `Session.CandidatePool`
 - `Session.RetrievalTrace`
 - `WorkingMemory.DegradedReasons`
+- `WorkingMemory.Notes["retrieval_decision"]`，记录运行时检索决策摘要
 
 如果 RAG 为空、错误或 rerank 失败，系统应降级到 fallback 题，不应直接中断面试。
 
-### 7.1 题库生成链路
+### 7.1 题库导入 contract
+
+题库导入支持版本化 JSON 包 `question_bank_import.v1`，也继续兼容旧的数组或 wrapped items 输入。导入 contract 的边界是“解析和暂存”，不是直接发布正式题库：
+
+```text
+JSON input
+  -> parse / normalize / field compatibility
+  -> import job staging
+  -> human review / agent review
+  -> commit publishing transaction
+  -> question_bank + embedding sync
+```
+
+当前兼容规则：
+
+- `schema_version` 显式为 `question_bank_import.v1` 时启用严格 contract 字段语义；未声明版本的旧 JSON 保持宽松兼容。
+- `difficulty` 支持数字和数字字符串。
+- `tags`、`expected_points`、`role_tags`、`follow_up_hints` 支持数组或逗号、英文分号、中文分号分隔字符串。
+- `rubric` 支持 map、array、string，归一化后进入 import item 的可审核字段。
+- 字段存在但类型不支持时必须返回结构化错误，错误包含字段名、路径和 raw value 摘要，不能静默吞掉坏 schema。
+- `metadata`、`source_ref`、`source_refs` 等来源信息保留到 import job/item 的 provenance，供 review 和 commit 审计。
+
+review/commit 边界：
+
+- 解析成功只创建暂存 import job，不写正式 `question_bank`。
+- 人工 accept 或满足完整有效项策略后才允许 commit。
+- commit 是发布事务：正式写入前重新执行重复题、质量门禁和状态检查。
+- commit summary 写入 import job metadata，至少包含 `matched`、`imported`、`skipped`、`embedding_synced`、`embedding_failed`、`failure_reasons`、`embedding_errors`。
+- embedding 失败不回滚已发布题目；题目保留在正式题库中，`embedding_status=failed`，清理旧 vector/model/embedded_at，后续 reindex/retry 负责恢复。
+
+### 7.2 题库生成链路
 
 题库生成用于把本地 Markdown、PDF、DOCX、TXT 等文档导入后的切片转成可审核题目。生成任务状态在 PG 模式下写入 `question_bank_generation_jobs`，生成结果仍复用 `question_bank_import_jobs/chunks/items` 进入审核区：
 
@@ -213,6 +244,31 @@ MVP 限制：
 - 配置 PG 时 generation job 状态可跨请求和服务重启查询；未配置 PG 时仍使用进程内内存 store。
 - 当前 scoped retrieval 是轻量词项匹配，不等同于面试出题时的 pgvector/BM25/RRF RAG pipeline。
 - 生成阶段依赖 LLM；没有 LLM model 时不会伪造候选题。
+
+### 7.3 RAG eval 真实 query 和 candidate pool
+
+`cmd/rag-eval` 默认 `-mode eval` 保持旧 golden case 评估行为；新增两个离线模式服务真实业务回放：
+
+- `-mode export-queries -sessions <path> -out-file <path>`：从 session JSON / JSONL 读取 `Session.RetrievalTrace`，导出脱敏 JSONL。输出包含 `id`、`session_id`、`query`、`original_query`、`skill`、`tags`、`candidate_ids`。脱敏覆盖邮箱、手机号、URL 和常见 secret/token/password 片段。
+- `-mode build-candidate-pool -sessions <path>|-queries <path> -out-file <path>`：构建候选池标注输入，合并 `candidate_pool`、`final`、`stage:<name>`、`keyword`、`random_negative`，并在显式 `-live-top-k > 0` 时追加 live retriever 候选。
+- candidate pool 候选保留全局 `rank/score` 和 `sources` 内各来源的 `rank/score`，供人工标注和后续指标计算复用现有 recall/hit/MRR/nDCG 路径。
+- `-live-top-k` 默认 0，离线路径不连接 embedding、PG 或外部服务。
+
+### 7.4 Runtime Retrieval Decision Policy
+
+出题和追问不直接机械消费 RAG 结果。`internal/nodes/retrieval_decision.go` 提供运行时检索决策层，输入当前回答、`CandidatePool`、`RetrievalTrace`、已用题 ID 和 `WorkingMemory`，输出：
+
+- `strategy`：当前为 `ask_new`、`clarify_low_information`、`end`。
+- `include_context`：弱召回时关闭，避免把低置信检索上下文放大给 LLM。
+- `selected` / `consumed_ids`：过滤后的候选和被已用题排除的题。
+- `reason` / `degraded_reason`：写入 `WorkingMemory.Notes["retrieval_decision"]` 和 `WorkingMemory.DegradedReasons["retrieval_decision"]`。
+
+接入边界：
+
+- `retrieve_rag` 构造 `retriever.Query.ExcludeIDs`，PGVector、BM25、Rule retriever 都按该字段排除已问过题；节点返回前再做一次本地硬过滤。
+- `pick_next` 在 LLM/rule 选题前调用策略层，先过滤已用题，再记录低信息回答、弱召回、候选耗尽等诊断。
+- `probe_ask` 遇到“低信息回答 + 弱召回”时不调用 LLM 生成具体技术追问，而是发出固定澄清追问，要求候选人补充核心思路和可确认细节。
+- 旧 Session 没有 `RetrievalTrace` 时按弱召回诊断处理，但不阻断出题；这保证恢复兼容。
 
 ## 8. LLM 与 rerank 边界
 
@@ -292,6 +348,8 @@ rerank 用于：
 - RAG 检索指标。
 - breaker degraded 状态。
 - retrieval trace。
+- runtime retrieval decision：`WorkingMemory.Notes["retrieval_decision"]` 和 `WorkingMemory.DegradedReasons["retrieval_decision"]`。
+- import schema / commit summary：import job metadata 中的字段路径错误、commit summary、embedding failure 统计。
 - hook/tool/verification 事件。
 
 降级策略：
@@ -302,6 +360,12 @@ rerank 用于：
 - SSE 断开：不影响 Session，前端可重新拉取。
 - 文档解析失败：返回错误，不创建错误 Session。
 
+后续运维边界：
+
+- quota/cost guard 应接在 LLM、embedding、rerank 和 live RAG eval 调用边界，不能绕过节点降级语义。
+- Admin operations 只能操作 import job、question bank、embedding reindex 和脱敏 eval 数据，不应直接改写运行中 Session 的 Agent 决策事实。
+- 脱敏 query / candidate pool 导出默认落本地文件，生产保留策略应在导出命令或后台任务层控制，不把原始 secret 写入 eval artifact。
+
 ## 12. 验证体系
 
 后端验证命令：
@@ -309,6 +373,8 @@ rerank 用于：
 ```powershell
 go test ./... -count=1
 go run ./cmd/rag-eval -cases testdata/rag/golden_queries.jsonl -config config/config.yaml.example -out tmp/eval/rag -min-recall-at-5 0.70 -min-recall-at-10 0.80 -min-mrr-at-k 0.90 -min-ndcg-at-k 0.75 -min-group-cases 3 -min-group-recall-at-5 0.50 -min-stage-recall-at-5 vector=0.70,bm25=0.65,rule=0.60,rrf=0.75,rerank=0.70 -min-stage-mrr-at-k rrf=0.88,rerank=0.90
+go run ./cmd/rag-eval -mode export-queries -sessions tmp/eval/sessions.jsonl -out-file tmp/eval/rag/queries.jsonl
+go run ./cmd/rag-eval -mode build-candidate-pool -queries tmp/eval/rag/queries.jsonl -out-file tmp/eval/rag/candidate_pool.jsonl
 go run ./cmd/questionbank-lint -seed seeds/question_bank.json -min-expected-points 3 -min-scenario-ratio 0.8
 go run ./cmd/agent-verify -session testdata/agent_verify/pass_session.json -tool-events testdata/agent_verify/pass_tool_events.json -memory-observations testdata/agent_verify/pass_memory_observations.json
 ```
@@ -740,6 +806,7 @@ evaluate
 - `retrieve_rag` 读取 `WorkingMemory.Difficulty.Current` 推导 RAG 基础目标难度：easy -> 2，medium -> 3，hard -> 4。
 - `pick_next` prompt 显式包含当前动态难度和目标题目难度，LLM 选题时优先选择接近目标难度的候选题。
 - `pick_next` 规则降级路径也会优先选择接近当前动态难度的题，同等难度距离下再按技能 coverage 选择。
+- `pick_next` 进入 LLM/rule 选题前先执行 Runtime Retrieval Decision Policy，处理已用题排除、弱召回和低信息回答诊断；该策略层不替代动态难度和技能 coverage 选题，只负责事实过滤和上下文注入边界。
 - RAG 仍会在动态目标难度上叠加 `GapStrategy` 微调；用户设置的 `QuestionBankFilter.DifficultyMin/DifficultyMax` 继续作为硬过滤条件传给 retriever。
 - `/api/interview/start`、`/api/interview/answer`、Session 详情和 SSE snapshot/progress 事件会返回 `working_memory` 白名单快照，用于前端只读展示动态难度、预算、弱项和降级状态。
 

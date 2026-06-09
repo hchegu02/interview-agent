@@ -2,6 +2,7 @@ package nodes
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"interview-agent/internal/domain"
@@ -299,6 +300,50 @@ func TestAgentLoop_SingleProbe(t *testing.T) {
 	// 主答 75 + 追答 70 加权 (0.7/0.3) ≈ 73.5 → coverage[go] ≈ 0.735
 	if cov := sess.WorkingMemory.SkillCoverage["go"]; cov < 0.7 || cov > 0.76 {
 		t.Errorf("coverage[go] = %v, expected ~0.735 (weighted main+followup)", cov)
+	}
+}
+
+func TestAgentLoop_LowInformationWeakRecallClarifiesBeforeProbeLLM(t *testing.T) {
+	stub := &stubChatModel{responses: []string{
+		pickQ1,
+		evalGood,
+		criticProbe,
+		probeEvalEnd,
+		reflectEnd,
+	}}
+	r := buildAgentSubgraph(t, stub)
+	sess := buildAgentSession(agentSamplePool(), 8, 4)
+	sess.RetrievalTrace = &domain.RetrievalTrace{
+		Final: []domain.RetrievalResultTrace{{ID: "q1", Rank: 1, Score: 0.1}},
+	}
+
+	_ = r.Invoke(context.Background(), sess)
+	fillMainAnswer(t, sess, "不知道")
+	if err := r.Resume(context.Background(), sess); err != nil {
+		t.Fatalf("resume to deterministic clarification: %v", err)
+	}
+	if sess.CurrentNode != NodeProbeAsk {
+		t.Fatalf("expected suspend at probe_ask, got %q", sess.CurrentNode)
+	}
+	if len(sess.Rounds[0].FollowUps) != 1 {
+		t.Fatalf("followups = %+v", sess.Rounds[0].FollowUps)
+	}
+	if got := sess.Rounds[0].FollowUps[0].Question; !strings.Contains(got, "信息量较少") {
+		t.Fatalf("followup question = %q", got)
+	}
+	if stub.idx != 3 {
+		t.Fatalf("probe_ask should not call LLM; calls = %d", stub.idx)
+	}
+
+	fillFollowUpAnswer(t, sess, "补充回答")
+	if err := r.Resume(context.Background(), sess); err != nil {
+		t.Fatalf("resume to report: %v", err)
+	}
+	if sess.Report == nil {
+		t.Fatal("did not reach report")
+	}
+	if sess.WorkingMemory.DegradedReasons["retrieval_decision"] != "weak_recall_low_information_answer" {
+		t.Fatalf("degraded reasons = %+v", sess.WorkingMemory.DegradedReasons)
 	}
 }
 

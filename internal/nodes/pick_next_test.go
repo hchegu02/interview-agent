@@ -341,6 +341,36 @@ func TestPickNext_FiltersAlreadyAsked(t *testing.T) {
 	}
 }
 
+func TestPickNext_RecordsRetrievalDecisionForWeakRecallAndUsedQuestions(t *testing.T) {
+	stub := &stubChatModel{responses: []string{
+		`{"next_question_id":"go-002","reasoning":"换一道 go 题"}`,
+	}}
+	pool := samplePool()
+	sess := buildPickSession(1, 8, pool)
+	sess.RetrievalTrace = &domain.RetrievalTrace{
+		Final: []domain.RetrievalResultTrace{{ID: "go-002", Rank: 1, Score: 0.1}},
+	}
+	sess.Rounds = []domain.AnswerRound{
+		{RoundID: "r1", Question: pool[0], Answer: "不知道"},
+	}
+	node := NewPickNextNode(stub, PickNextOptions{})
+
+	err := node(context.Background(), sess)
+	if !errors.Is(err, graph.ErrSuspended) {
+		t.Fatalf("got %v", err)
+	}
+	if got := sess.PendingDecision.NextQuestionID; got != "go-002" {
+		t.Fatalf("picked %s, want go-002", got)
+	}
+	note := sess.WorkingMemory.Notes[retrievalDecisionNoteKey]
+	if !strings.Contains(note, "clarify_low_information") || !strings.Contains(note, "已排除") {
+		t.Fatalf("retrieval decision note = %q", note)
+	}
+	if sess.WorkingMemory.DegradedReasons["retrieval_decision"] != "weak_recall_low_information_answer" {
+		t.Fatalf("degraded reasons = %+v", sess.WorkingMemory.DegradedReasons)
+	}
+}
+
 func TestPickNext_ReflectTopicNarrowsPoolAndClears(t *testing.T) {
 	pool := samplePool()
 	sess := buildPickSession(1, 8, pool)

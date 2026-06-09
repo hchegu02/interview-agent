@@ -115,6 +115,28 @@ func NewProbeAskPatchNode(model llm.ChatModel, opts ProbeAskOptions) graph.Patch
 			}
 			return domain.StatePatch{}, nil
 		}
+		retrievalDecision := decideRuntimeRetrieval(RetrievalDecisionInput{
+			Answer:          round.Answer,
+			CandidatePool:   sess.CandidatePool,
+			RetrievalTrace:  sess.RetrievalTrace,
+			UsedQuestionIDs: usedQuestionIDs(sess),
+			WorkingMemory:   mem,
+		})
+		recordRetrievalDecision(mem, retrievalDecision)
+		if retrievalDecision.Strategy == retrievalStrategyClarifyLowInformation && retrievalDecision.WeakRecall {
+			followUp := &domain.FollowUp{
+				Question: "你刚才的回答信息量较少，请先补充你的核心思路、关键步骤和你能确认的技术细节。",
+				Reason:   retrievalDecision.Reason,
+				AskedAt:  time.Now(),
+			}
+			mem.ProbesUsed++
+			patch := domain.StatePatch{
+				AppendCurrentFollowUp: followUp,
+				WorkingMemory:         mem,
+			}
+			return patch, graph.SuspendWithPatch(fmt.Errorf("probe_ask: waiting for low-information clarification (probes_used=%d): %w",
+				mem.ProbesUsed, graph.ErrSuspended))
+		}
 
 		question, reason, err := probeAskByLLM(ctx, model, round, opts)
 		if err != nil {

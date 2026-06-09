@@ -475,6 +475,24 @@ func TestRetrieveRAG_Success(t *testing.T) {
 	}
 }
 
+func TestRetrieveRAG_ExcludesUsedQuestions(t *testing.T) {
+	embedder := &stubEmbedder{dim: 1024}
+	r := newFakeRetriever([]string{"go-001", "go-002"}, nil)
+	node := NewRetrieveRAGNode(embedder, r, RetrieveRAGOptions{TopK: 10})
+
+	sess := buildRAGSession([]string{"go"}, []string{"go"})
+	sess.Rounds = []domain.AnswerRound{{Question: domain.Question{ID: "go-001"}}}
+	if err := node(context.Background(), sess); err != nil {
+		t.Fatalf("node failed: %v", err)
+	}
+	if len(r.lastQ.ExcludeIDs) != 1 || r.lastQ.ExcludeIDs[0] != "go-001" {
+		t.Fatalf("exclude ids = %+v", r.lastQ.ExcludeIDs)
+	}
+	if len(sess.CandidatePool) != 1 || sess.CandidatePool[0].ID != "go-002" {
+		t.Fatalf("candidate pool should filter used question, got %+v", sess.CandidatePool)
+	}
+}
+
 func TestRetrieveRAG_SavesRetrievalTraceWhenSearcherAvailable(t *testing.T) {
 	embedder := &stubEmbedder{dim: 1024}
 	r := &fakePipelineRetriever{

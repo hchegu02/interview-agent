@@ -65,6 +65,7 @@ func NewPGVectorRetriever(pool *pgxpool.Pool, fusion Fusion) *PGVectorRetriever 
 //	$10 = hard tags-overlap filter (text[])
 //	$11 = raw query text (text)
 //	$12 = text candidate limit (int)
+//	$13 = excluded question ids (text[])
 //
 // 关键 design notes：
 //   - vector_candidates 用 MATERIALIZED 强制物化，避免 PG 把 CTE 内联导致
@@ -87,6 +88,7 @@ WITH vector_candidates AS MATERIALIZED (
       AND ($8::int = 0 OR difficulty >= $8)
       AND ($9::int = 0 OR difficulty <= $9)
       AND (cardinality($10::text[]) = 0 OR tags && $10::text[])
+      AND (cardinality($13::text[]) = 0 OR NOT (id = ANY($13::text[])))
     ORDER BY embedding <=> $1::vector
     LIMIT $4
 ),
@@ -103,6 +105,7 @@ tag_candidates AS MATERIALIZED (
       AND ($8::int = 0 OR difficulty >= $8)
       AND ($9::int = 0 OR difficulty <= $9)
       AND (cardinality($10::text[]) = 0 OR tags && $10::text[])
+      AND (cardinality($13::text[]) = 0 OR NOT (id = ANY($13::text[])))
     LIMIT $5
 ),
 text_candidates AS MATERIALIZED (
@@ -118,6 +121,7 @@ text_candidates AS MATERIALIZED (
       AND ($8::int = 0 OR difficulty >= $8)
       AND ($9::int = 0 OR difficulty <= $9)
       AND (cardinality($10::text[]) = 0 OR tags && $10::text[])
+      AND (cardinality($13::text[]) = 0 OR NOT (id = ANY($13::text[])))
     ORDER BY similarity(content, $11::text) DESC
     LIMIT $12
 ),
@@ -234,7 +238,8 @@ func (r *PGVectorRetriever) retrieveCandidates(ctx context.Context, q Query) ([]
 		_ = err
 	}
 
-	rows, err := tx.Query(ctx, retrieveSQL, vecLit, canonical, diff, vecN, tagN, skillCategories, scenarios, diffMin, diffMax, filterTags, q.Text, textN)
+	excludeIDs := compactQueryStrings(q.ExcludeIDs)
+	rows, err := tx.Query(ctx, retrieveSQL, vecLit, canonical, diff, vecN, tagN, skillCategories, scenarios, diffMin, diffMax, filterTags, q.Text, textN, excludeIDs)
 	if err != nil {
 		return nil, fmt.Errorf("query: %w", err)
 	}
